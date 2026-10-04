@@ -22,6 +22,7 @@
     "@effect/language-service": "latest",
     "@effect/tsgo": "latest",
     "@mpsuesser/oxlint-plugin-effect": "latest",
+    "@types/bun": "^1.4.2",
     "oxfmt": "latest",
     "oxlint": "latest",
     "typescript": "^7.0.2"
