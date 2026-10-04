@@ -2,6 +2,7 @@ import alchemy from "alchemy";
 import {
   AccessApplication,
   AccessPolicy,
+  AccessServiceToken,
   Ai,
   DurableObjectNamespace,
   Worker,
@@ -36,11 +37,19 @@ const policy = await AccessPolicy("owner", {
   include: [accountMemberRule as AccessRule],
 });
 
+export const testToken = await AccessServiceToken("test-client", {
+  duration: "720h",
+});
+const testPolicy = await AccessPolicy("test-policy", {
+  decision: "non_identity",
+  include: [{ service_token: { token_id: testToken } }],
+});
+
 export const access = await AccessApplication("studio", {
   type: "self_hosted",
   domain: hostname,
   allowedIdps: [cloudflareIdp.id],
-  policies: [policy],
+  policies: [policy, testPolicy],
 });
 
 export const worker = await Worker("api", {
