@@ -1,0 +1,29 @@
+{
+  "name": "automations",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint .",
+    "format": "oxfmt .",
+    "format:check": "oxfmt --check .",
+    "test": "bun test",
+    "prepare": "effect-tsgo patch"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "latest",
+    "@earendil-works/pi-durable": "latest",
+    "agents": "latest",
+    "alchemy": "0.94.0",
+    "effect": "^4.0.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "latest",
+    "@effect/language-service": "latest",
+    "@effect/tsgo": "latest",
+    "@mpsuesser/oxlint-plugin-effect": "latest",
+    "oxfmt": "latest",
+    "oxlint": "latest",
+    "typescript": "^7.0.2"
+  }
+}
