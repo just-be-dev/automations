@@ -1,0 +1,138 @@
+:root {
+  font:
+    16px/1.5 system-ui,
+    sans-serif;
+  color: #e5edf5;
+  background: #101722;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+}
+header {
+  padding: 24px 5%;
+  border-bottom: 1px solid #2a3b4c;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+h1 {
+  font-size: 24px;
+  margin: 0;
+  letter-spacing: -0.04em;
+}
+header span {
+  color: #7fe2c7;
+}
+main {
+  max-width: 1300px;
+  margin: auto;
+  padding: 32px 5%;
+  display: grid;
+  grid-template-columns: minmax(300px, 1fr) minmax(300px, 1fr);
+  gap: 28px;
+}
+section {
+  background: #182331;
+  border: 1px solid #344459;
+  border-radius: 16px;
+  padding: 24px;
+  min-height: 440px;
+}
+h2 {
+  margin: 0 0 8px;
+  font-size: 19px;
+}
+p {
+  color: #a8bac9;
+  margin: 0 0 20px;
+}
+label {
+  display: block;
+  color: #a8bac9;
+  font-size: 13px;
+  margin: 16px 0 6px;
+}
+input,
+textarea {
+  width: 100%;
+  padding: 12px;
+  background: #101b28;
+  color: #e5edf5;
+  border: 1px solid #4b6073;
+  border-radius: 8px;
+  font: inherit;
+}
+textarea {
+  min-height: 110px;
+  resize: vertical;
+}
+button {
+  background: #7fe2c7;
+  border: 0;
+  border-radius: 8px;
+  padding: 11px 18px;
+  color: #10212a;
+  font-weight: 700;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}
+.secondary {
+  background: #283e4d;
+  color: #e5edf5;
+}
+.row {
+  display: flex;
+  gap: 10px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+#messages {
+  min-height: 170px;
+  max-height: 330px;
+  overflow: auto;
+  border-left: 2px solid #3c5766;
+  padding: 0 14px;
+  white-space: pre-wrap;
+  color: #d1dfeb;
+}
+.node {
+  border: 1px solid #506e80;
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: #203446;
+}
+.node b {
+  display: block;
+}
+.node small {
+  color: #7fe2c7;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+.arrow {
+  text-align: center;
+  color: #7fe2c7;
+  font-size: 23px;
+  line-height: 1.5;
+}
+#status {
+  margin: 18px 0;
+  color: #7fe2c7;
+}
+#status.error {
+  color: #ff9e9e;
+}
+@media (max-width: 800px) {
+  main {
+    grid-template-columns: 1fr;
+  }
+  section {
+    min-height: auto;
+  }
+}

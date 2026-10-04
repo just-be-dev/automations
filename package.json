@@ -3,6 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint .",
     "format": "oxfmt .",
@@ -13,18 +16,25 @@
   "dependencies": {
     "@earendil-works/pi-ai": "latest",
     "@earendil-works/pi-durable": "latest",
+    "@effect/platform-browser": "4.0.0",
+    "@foldkit/ui": "0.165.0",
     "agents": "latest",
     "alchemy": "0.94.0",
-    "effect": "^4.0.0"
+    "effect": "^4.0.0",
+    "foldkit": "0.165.0"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
     "@effect/language-service": "latest",
     "@effect/tsgo": "latest",
+    "@foldkit/devtools-mcp": "0.24.0",
+    "@foldkit/oxlint-plugin": "0.15.1",
+    "@foldkit/vite-plugin": "0.26.0",
     "@mpsuesser/oxlint-plugin-effect": "latest",
     "@types/bun": "^1.4.2",
     "oxfmt": "latest",
     "oxlint": "latest",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vite": "8.3.2"
   }
 }

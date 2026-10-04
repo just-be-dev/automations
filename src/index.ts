@@ -1,7 +1,7 @@
-import { page } from "./page.ts";
 export { AutomationAgent } from "./agent.ts";
 
 interface Env {
+  ASSETS: Fetcher;
   AUTOMATIONS: DurableObjectNamespace<import("./agent.ts").AutomationAgent>;
 }
 
@@ -11,14 +11,15 @@ const json = (value: unknown, status = 200) =>
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === "/" && request.method === "GET")
-      return new Response(page, {
-        headers: {
-          "content-type": "text/html; charset=utf-8",
-          "content-security-policy":
-            "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'",
-        },
-      });
+    if (url.pathname === "/" || url.pathname.startsWith("/assets/")) {
+      const asset = await env.ASSETS.fetch(request);
+      const response = new Response(asset.body, asset);
+      response.headers.set(
+        "content-security-policy",
+        "default-src 'none'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'",
+      );
+      return response;
+    }
     const parts = url.pathname.split("/").filter(Boolean);
     if (
       parts[0] !== "api" ||

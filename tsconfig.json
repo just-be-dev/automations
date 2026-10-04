@@ -11,8 +11,19 @@
     "strict": true,
     "skipLibCheck": true,
     "noUncheckedIndexedAccess": true,
-    "types": ["@cloudflare/workers-types", "bun"],
-    "plugins": [{ "name": "@effect/language-service" }]
+    "types": ["@cloudflare/workers-types", "bun", "vite/client"],
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "allowedDuplicatedPackages": ["effect-oxlint"],
+        "overrides": [
+          {
+            "include": ["src/ui/main.ts"],
+            "options": { "allowedUnstableApis": ["effect/http"] }
+          }
+        ]
+      }
+    ]
   },
-  "include": ["src/**/*.ts", "alchemy.run.ts", "oxlint.config.ts"]
+  "include": ["src/**/*.ts", "alchemy.run.ts", "oxlint.config.ts", "vite.config.ts"]
 }

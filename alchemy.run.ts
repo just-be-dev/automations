@@ -4,6 +4,7 @@ import {
   AccessPolicy,
   AccessServiceToken,
   Ai,
+  Assets,
   DurableObjectNamespace,
   Worker,
   createCloudflareApi,
@@ -57,7 +58,9 @@ export const worker = await Worker("api", {
   entrypoint: "./src/index.ts",
   compatibilityDate: "2026-10-04",
   compatibilityFlags: ["nodejs_compat"],
+  assets: { run_worker_first: true },
   bindings: {
+    ASSETS: await Assets({ path: "./dist" }),
     AI: Ai(),
     AUTOMATIONS: DurableObjectNamespace<AutomationAgent>("AutomationAgent", {
       className: "AutomationAgent",
