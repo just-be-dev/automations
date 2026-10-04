@@ -7,44 +7,54 @@ A single-tenant Cloudflare Worker for designing and running sequential automatio
 ```sh
 mise trust && mise install
 bun run typecheck && bun run lint && bun run test
-bun run dev     # UI with hot reload; /api proxies to a local Worker on :8787
-bun run build   # required before each deploy
+mise run dev    # alchemy dev: local Workers, Durable Object, and Vite with hot reload
 ```
 
-The UI uses Foldkit and `@foldkit/ui`, built by Vite with the Foldkit plugin. Run `bun run build` before each Alchemy deployment; Alchemy uploads `dist/` through the Worker's `ASSETS` binding. Run `mise run dev` (`alchemy dev`) to develop locally: Alchemy emulates the Worker and Durable Object, proxies the AI binding to Workers AI, and starts Vite with hot reload, proxying `/api` to the Worker. Dev mode skips Cloudflare Access and needs Cloudflare credentials only for Workers AI; run `alchemy login cloudflare` first, or set `ALCHEMY_PROFILE` to a profile that has them. `bun run preview` serves the production UI build.
+Infrastructure and server code share one [Alchemy 2](https://alchemy.run) Effect program:
+
+- `alchemy.run.ts` declares the Stack and the `Studio` Foldkit website.
+- `src/api.ts` is the Effect-native `Api` Worker.
+- `src/automation.ts` is the Durable Object that designs and runs automations with pi.
+
+`mise run dev` runs everything locally on stage `dev_$USER` and prints the Studio URL. Dev mode skips Cloudflare Access, but it needs Cloudflare credentials for Workers AI. Run `bun alchemy profile edit --add Cloudflare` once, or set `ALCHEMY_PROFILE` to a profile that already has them.
 
 Agent instructions are in `AGENTS.md` and `src/ui/AGENTS.md`.
 
 ## Deploy
 
-Requires Cloudflare Zero Trust, Workers AI, and an Alchemy profile with `access:write`.
+Requires Cloudflare Zero Trust, Workers AI, and an Alchemy profile that can manage Workers and Access.
 
 ```sh
-ALCHEMY_PASSWORD=... bun alchemy deploy ./alchemy.run.ts --profile automations
+bun alchemy deploy --stage prod
 ```
 
-Keep `ALCHEMY_PASSWORD`; it decrypts local state on later deploys. The Worker is published at `automations-studio.<subdomain>.workers.dev` behind Cloudflare Access, which only admits members of your Cloudflare account. Deployment also creates a 30-day Access service token for machine testing (send it as `CF-Access-Client-Id` / `CF-Access-Client-Secret`). Never commit it.
+The first deploy offers to bootstrap Alchemy's Cloudflare-hosted state store. Alchemy builds the UI with Vite and deploys two Workers:
+
+- `Studio` serves the UI. It is the only public hostname and sits behind Cloudflare Access, which admits members of your Cloudflare account.
+- `Api` has no public URL. Studio forwards `/api/*` to it over a service binding.
+
+Deploys also create a 30-day Access service token for machine testing. Send it as `CF-Access-Client-Id` / `CF-Access-Client-Secret`, and read it with `bun alchemy state`. Never commit it.
 
 ## Usage
 
-Open the Worker URL, enter an automation ID, describe a process, review the graph, and save. Runs always use the last saved snapshot, not the current draft.
+Open the Studio URL, enter an automation ID, describe a process, review the graph, and save. Runs always use the last saved snapshot, not the current draft.
 
 ```sh
-curl -X POST "$WORKER_URL/api/automations/orders/events/order.created" \
+curl -X POST "$STUDIO_URL/api/automations/orders/events/order.created" \
   -H "Cookie: CF_Authorization=$CF_ACCESS_JWT" -H "Content-Type: application/json" \
   -d '{"input":{"orderId":"123"}}'
 ```
 
-| Endpoint                                    | Purpose                  |
-| ------------------------------------------- | ------------------------ |
-| `GET /api/automations/:id`                  | Inspect an automation    |
-| `POST /api/automations/:id/start`           | Start a run manually     |
-| `POST /api/automations/:id/events/:event`   | Trigger a run by event   |
-| `GET /api/automations/:id/runs/:runId`      | Inspect a run            |
+| Endpoint                                  | Purpose                |
+| ----------------------------------------- | ---------------------- |
+| `GET /api/automations/:id`                | Inspect an automation  |
+| `POST /api/automations/:id/start`         | Start a run manually   |
+| `POST /api/automations/:id/events/:event` | Trigger a run by event |
+| `GET /api/automations/:id/runs/:runId`    | Inspect a run          |
 
 ## Caveats
 
 - Webhook steps are delivered **at least once**, so receiving endpoints must be idempotent.
 - Webhook steps POST the input and earlier results to a public HTTPS URL. Don't put secrets in step definitions.
-- Pi and PiHarness are beta ([docs](https://developers.cloudflare.com/agents/harnesses/pi/)). Pin versions before production use.
-- The project stays on Alchemy 0.94; Alchemy 2 is a separate beta API.
+- Runs advance through Alchemy durable callbacks. If the object is evicted mid-step, the step runs again; agent steps reuse their pi request ID instead of prompting twice.
+- pi-ai, pi-durable, and Alchemy 2 are beta. Pin versions before production use.

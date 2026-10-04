@@ -3,9 +3,9 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "alchemy dev ./alchemy.run.ts",
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy",
     "build": "vite build",
-    "preview": "vite preview --host 0.0.0.0",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint .",
     "format": "oxfmt .",
@@ -17,14 +17,12 @@
     "@earendil-works/pi-ai": "latest",
     "@earendil-works/pi-durable": "latest",
     "@effect/platform-browser": "4.0.0",
+    "@effect/platform-bun": "4.0.0",
     "@foldkit/ui": "0.165.0",
     "agents": "latest",
-    "alchemy": "0.94.0",
+    "alchemy": "2.0.0-beta.80",
     "effect": "^4.0.0",
     "foldkit": "0.165.0"
-  },
-  "overrides": {
-    "workerd": "1.20261001.1"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",
@@ -39,5 +37,8 @@
     "oxlint": "latest",
     "typescript": "^7.0.2",
     "vite": "8.3.2"
+  },
+  "overrides": {
+    "workerd": "1.20261001.1"
   }
 }

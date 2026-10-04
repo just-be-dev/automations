@@ -5,7 +5,7 @@
 These instructions apply to `src/ui/` and its descendants. The UI uses Foldkit, a framework built on Effect-TS and architected like Elm.
 
 - Do not vendor the Foldkit repository or offer to add a subtree. Import from installed npm packages.
-- Keep browser definitions in `src/ui/main.ts` and runtime boot in `src/ui/entry.ts`; the Worker remains in `src/index.ts`. `bun run build` produces the assets Alchemy uploads.
+- Keep browser definitions in `src/ui/main.ts` and runtime boot in `src/ui/entry.ts`. Server code lives outside `src/ui/` (see the root `AGENTS.md`). Alchemy runs the Vite build for the Studio Worker on deploy and the Vite dev server under `alchemy dev`. `bun run build` is only a local check.
 - Keep Foldkit architectural lint rules scoped to `src/ui/`.
 - Use installed package types and upstream source at the `foldkit@<installed-version>` GitHub tag, not `main`. Source and examples are authoritative when these conventions or online docs disagree with the installed APIs.
 

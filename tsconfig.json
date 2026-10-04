@@ -18,7 +18,7 @@
         "allowedDuplicatedPackages": ["effect-oxlint"],
         "overrides": [
           {
-            "include": ["src/ui/main.ts"],
+            "include": ["src/ui/main.ts", "src/api.ts", "src/automation.ts"],
             "options": { "allowedUnstableApis": ["effect/http"] }
           }
         ]

@@ -1,95 +1,53 @@
-import alchemy from "alchemy";
-import {
-  AccessApplication,
-  AccessPolicy,
-  AccessServiceToken,
-  Ai,
-  Assets,
-  DurableObjectNamespace,
-  Worker,
-  createCloudflareApi,
-  getAccountSubdomain,
-  type AccessRule,
-} from "alchemy/cloudflare";
-import type { AutomationAgent } from "./src/agent.ts";
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import Api from "./src/api.ts";
 
-const app = await alchemy("automations");
+/** Machine access for smoke tests: send `CF-Access-Client-Id` / `CF-Access-Client-Secret`. */
+export const TestClient = Cloudflare.Access.ServiceToken("TestClient", { duration: "720h" });
 
-// Protects the deployed hostname with Cloudflare Access. Local development is not
-// exposed beyond this machine, so `alchemy dev` skips it.
-const protect = async () => {
-  const api = await createCloudflareApi();
-  const hostname = `automations-studio.${await getAccountSubdomain(api)}.workers.dev`;
+/**
+ * The Foldkit UI. Static assets are served directly; `/api/*` runs `src/edge.ts`, which forwards
+ * to the Api Worker over a service binding. Deployed stages sit behind Cloudflare Access, which
+ * admits members of the Cloudflare account and the test service token. `alchemy dev` runs locally
+ * without Access.
+ */
+export const Studio = Cloudflare.Website.Foldkit(
+  "Studio",
+  Effect.gen(function* () {
+    const dev = yield* Alchemy.ALCHEMY_DEV.pipe(Effect.orDie);
+    const access = dev
+      ? undefined
+      : yield* Effect.map(TestClient, (token) => ({
+          policies: [
+            {
+              decision: "allow" as const,
+              include: [{ cloudflareAccountMember: token.accountId }],
+            },
+            {
+              decision: "non_identity" as const,
+              include: [{ serviceToken: token.serviceTokenId }],
+            },
+          ],
+        }));
+    return {
+      main: "src/edge.ts",
+      env: { API: Api },
+      assets: { runWorkerFirst: ["/api/*"] },
+      compatibility: { date: "2026-10-04" },
+      access,
+    };
+  }),
+);
 
-  // Cloudflare creates its account sign-in provider with an empty name; manage only
-  // this application's policy and use the existing account-scoped provider by ID.
-  const idpsResponse = await api.get(`/accounts/${api.accountId}/access/identity_providers`);
-  if (!idpsResponse.ok) throw new Error("Could not list Cloudflare Access identity providers");
-  const idps = (await idpsResponse.json()) as {
-    result: { id: string; type: string; config?: { restrict_to_account_members?: boolean } }[];
-  };
-  const cloudflareIdps = idps.result.filter(
-    (idp) => idp.type === "cloudflare" && idp.config?.restrict_to_account_members === true,
-  );
-  const cloudflareIdp = cloudflareIdps[0];
-  if (!cloudflareIdp || cloudflareIdps.length !== 1)
-    throw new Error("Expected one account-member Cloudflare sign-in provider");
+export type StudioEnv = Cloudflare.InferEnv<typeof Studio>;
 
-  // SAFETY: Cloudflare supports this selector, but Alchemy 0.94's AccessRule union predates it.
-  const accountMemberRule: unknown = { cloudflare_account_member: {} };
-  const policy = await AccessPolicy("owner", {
-    decision: "allow",
-    include: [accountMemberRule as AccessRule],
-  });
-
-  const testToken = await AccessServiceToken("test-client", {
-    duration: "720h",
-  });
-  const testPolicy = await AccessPolicy("test-policy", {
-    decision: "non_identity",
-    include: [{ service_token: { token_id: testToken } }],
-  });
-
-  const access = await AccessApplication("studio", {
-    type: "self_hosted",
-    domain: hostname,
-    allowedIdps: [cloudflareIdp.id],
-    policies: [policy, testPolicy],
-  });
-
-  return { hostname, testToken, access };
-};
-
-export const protection = app.local ? undefined : await protect();
-
-export const worker = await Worker("api", {
-  // Dev mode reaches Workers AI through a preview session on `<name>.<subdomain>.workers.dev`;
-  // a separate name keeps that session off the Access-protected production hostname.
-  name: app.local ? "automations-studio-dev" : "automations-studio",
-  entrypoint: "./src/index.ts",
-  compatibilityDate: "2026-10-04",
-  compatibilityFlags: ["nodejs_compat"],
-  assets: { run_worker_first: true },
-  bindings: {
-    // In development, Vite serves the UI and proxies `/api` to this Worker.
-    ...(app.local ? {} : { ASSETS: await Assets({ path: "./dist" }) }),
-    AI: Ai(),
-    AUTOMATIONS: DurableObjectNamespace<AutomationAgent>("AutomationAgent", {
-      className: "AutomationAgent",
-      sqlite: true,
-    }),
-  },
-  url: true,
-  previewSubdomains: false,
-});
-
-if (protection && worker.url && new URL(worker.url).hostname !== protection.hostname)
-  throw new Error("Worker hostname does not match the Access application");
-
-if (app.local && worker.url)
-  await app.spawn("ui", {
-    cmd: "vite",
-    env: { ...process.env, API_ORIGIN: worker.url } as Record<string, string>,
-  });
-
-await app.finalize();
+export default Alchemy.Stack(
+  "automations",
+  { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  Effect.gen(function* () {
+    yield* Api;
+    const studio = yield* Studio;
+    return { url: studio.url };
+  }),
+);

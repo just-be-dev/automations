@@ -1,13 +1,11 @@
 import { defineConfig } from "vite";
 import { foldkit } from "@foldkit/vite-plugin";
 
+// Alchemy runs Vite for the Studio Worker (`Cloudflare.Website.Foldkit` in alchemy.run.ts) and layers
+// its Cloudflare integration on top of this config, in both `alchemy dev` and `alchemy deploy`.
 export default defineConfig({
   plugins: [foldkit()],
-  optimizeDeps: { include: ["effect", "effect/http"] },
+  optimizeDeps: { entries: ["src/ui/entry.ts"], include: ["effect", "effect/http"] },
   resolve: { dedupe: ["effect", "foldkit"] },
-  server: {
-    // `alchemy dev` sets API_ORIGIN to the local Worker it starts.
-    proxy: { "/api": process.env.API_ORIGIN ?? "http://127.0.0.1:8787" },
-    watch: { ignored: ["**/.alchemy/**"] },
-  },
+  server: { watch: { ignored: ["**/.alchemy/**"] } },
 });
