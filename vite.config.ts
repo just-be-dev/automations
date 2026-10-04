@@ -6,6 +6,8 @@ export default defineConfig({
   optimizeDeps: { include: ["effect", "effect/http"] },
   resolve: { dedupe: ["effect", "foldkit"] },
   server: {
-    proxy: { "/api": "http://127.0.0.1:8787" },
+    // `alchemy dev` sets API_ORIGIN to the local Worker it starts.
+    proxy: { "/api": process.env.API_ORIGIN ?? "http://127.0.0.1:8787" },
+    watch: { ignored: ["**/.alchemy/**"] },
   },
 });

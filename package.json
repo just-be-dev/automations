@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite --host 0.0.0.0",
+    "dev": "alchemy dev ./alchemy.run.ts",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "typecheck": "tsc --noEmit",
@@ -22,6 +22,9 @@
     "alchemy": "0.94.0",
     "effect": "^4.0.0",
     "foldkit": "0.165.0"
+  },
+  "overrides": {
+    "workerd": "1.20261001.1"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "latest",

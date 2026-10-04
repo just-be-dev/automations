@@ -14,53 +14,65 @@ import {
 import type { AutomationAgent } from "./src/agent.ts";
 
 const app = await alchemy("automations");
-const api = await createCloudflareApi();
-const hostname = `automations-studio.${await getAccountSubdomain(api)}.workers.dev`;
 
-// Cloudflare creates its account sign-in provider with an empty name; manage only
-// this application's policy and use the existing account-scoped provider by ID.
-const idpsResponse = await api.get(`/accounts/${api.accountId}/access/identity_providers`);
-if (!idpsResponse.ok) throw new Error("Could not list Cloudflare Access identity providers");
-const idps = (await idpsResponse.json()) as {
-  result: { id: string; type: string; config?: { restrict_to_account_members?: boolean } }[];
+// Protects the deployed hostname with Cloudflare Access. Local development is not
+// exposed beyond this machine, so `alchemy dev` skips it.
+const protect = async () => {
+  const api = await createCloudflareApi();
+  const hostname = `automations-studio.${await getAccountSubdomain(api)}.workers.dev`;
+
+  // Cloudflare creates its account sign-in provider with an empty name; manage only
+  // this application's policy and use the existing account-scoped provider by ID.
+  const idpsResponse = await api.get(`/accounts/${api.accountId}/access/identity_providers`);
+  if (!idpsResponse.ok) throw new Error("Could not list Cloudflare Access identity providers");
+  const idps = (await idpsResponse.json()) as {
+    result: { id: string; type: string; config?: { restrict_to_account_members?: boolean } }[];
+  };
+  const cloudflareIdps = idps.result.filter(
+    (idp) => idp.type === "cloudflare" && idp.config?.restrict_to_account_members === true,
+  );
+  const cloudflareIdp = cloudflareIdps[0];
+  if (!cloudflareIdp || cloudflareIdps.length !== 1)
+    throw new Error("Expected one account-member Cloudflare sign-in provider");
+
+  // SAFETY: Cloudflare supports this selector, but Alchemy 0.94's AccessRule union predates it.
+  const accountMemberRule: unknown = { cloudflare_account_member: {} };
+  const policy = await AccessPolicy("owner", {
+    decision: "allow",
+    include: [accountMemberRule as AccessRule],
+  });
+
+  const testToken = await AccessServiceToken("test-client", {
+    duration: "720h",
+  });
+  const testPolicy = await AccessPolicy("test-policy", {
+    decision: "non_identity",
+    include: [{ service_token: { token_id: testToken } }],
+  });
+
+  const access = await AccessApplication("studio", {
+    type: "self_hosted",
+    domain: hostname,
+    allowedIdps: [cloudflareIdp.id],
+    policies: [policy, testPolicy],
+  });
+
+  return { hostname, testToken, access };
 };
-const cloudflareIdps = idps.result.filter(
-  (idp) => idp.type === "cloudflare" && idp.config?.restrict_to_account_members === true,
-);
-const cloudflareIdp = cloudflareIdps[0];
-if (!cloudflareIdp || cloudflareIdps.length !== 1)
-  throw new Error("Expected one account-member Cloudflare sign-in provider");
 
-// SAFETY: Cloudflare supports this selector, but Alchemy 0.94's AccessRule union predates it.
-const accountMemberRule: unknown = { cloudflare_account_member: {} };
-const policy = await AccessPolicy("owner", {
-  decision: "allow",
-  include: [accountMemberRule as AccessRule],
-});
-
-export const testToken = await AccessServiceToken("test-client", {
-  duration: "720h",
-});
-const testPolicy = await AccessPolicy("test-policy", {
-  decision: "non_identity",
-  include: [{ service_token: { token_id: testToken } }],
-});
-
-export const access = await AccessApplication("studio", {
-  type: "self_hosted",
-  domain: hostname,
-  allowedIdps: [cloudflareIdp.id],
-  policies: [policy, testPolicy],
-});
+export const protection = app.local ? undefined : await protect();
 
 export const worker = await Worker("api", {
-  name: "automations-studio",
+  // Dev mode reaches Workers AI through a preview session on `<name>.<subdomain>.workers.dev`;
+  // a separate name keeps that session off the Access-protected production hostname.
+  name: app.local ? "automations-studio-dev" : "automations-studio",
   entrypoint: "./src/index.ts",
   compatibilityDate: "2026-10-04",
   compatibilityFlags: ["nodejs_compat"],
   assets: { run_worker_first: true },
   bindings: {
-    ASSETS: await Assets({ path: "./dist" }),
+    // In development, Vite serves the UI and proxies `/api` to this Worker.
+    ...(app.local ? {} : { ASSETS: await Assets({ path: "./dist" }) }),
     AI: Ai(),
     AUTOMATIONS: DurableObjectNamespace<AutomationAgent>("AutomationAgent", {
       className: "AutomationAgent",
@@ -71,7 +83,13 @@ export const worker = await Worker("api", {
   previewSubdomains: false,
 });
 
-if (worker.url && new URL(worker.url).hostname !== hostname)
+if (protection && worker.url && new URL(worker.url).hostname !== protection.hostname)
   throw new Error("Worker hostname does not match the Access application");
+
+if (app.local && worker.url)
+  await app.spawn("ui", {
+    cmd: "vite",
+    env: { ...process.env, API_ORIGIN: worker.url } as Record<string, string>,
+  });
 
 await app.finalize();
