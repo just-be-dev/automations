@@ -146,8 +146,8 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
       });
 
       const chat = Effect.fn("Automation.chat")(function* (message: string) {
-        if (!message.trim() || message.length > 4000) {
-          return yield* new AutomationError({ message: "Message must be 1–4000 characters" });
+        if (!message.trim() || message.length > 10_000) {
+          return yield* new AutomationError({ message: "Message must be 1–10,000 characters" });
         }
         const text = yield* pi.prompt({ text: `${designInstructions}\n\nUser: ${message}` });
         const draft = yield* decodeDraft(text);

@@ -1,138 +1,115 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* foldcn base style (https://foldcn.elianiva.com/docs/foldcn), with the palette replaced by a
+   warm paper-and-ink theme and dark mode keyed on the OS preference instead of a `.dark` class. */
+
+@custom-variant dark (@media (prefers-color-scheme: dark));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-signal: var(--signal);
+  --color-success: var(--success);
+  --color-grid: var(--grid);
+
+  --font-sans: "IBM Plex Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-heading: var(--font-sans);
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
 :root {
-  font:
-    16px/1.5 system-ui,
-    sans-serif;
-  color: #e5edf5;
-  background: #101722;
+  --radius: 0.375rem;
+
+  --background: oklch(0.972 0.007 85);
+  --foreground: oklch(0.235 0.012 60);
+  --card: oklch(0.993 0.004 85);
+  --card-foreground: var(--foreground);
+  --popover: var(--card);
+  --popover-foreground: var(--foreground);
+  --primary: oklch(0.235 0.012 60);
+  --primary-foreground: oklch(0.975 0.006 85);
+  --secondary: oklch(0.93 0.01 80);
+  --secondary-foreground: var(--foreground);
+  --muted: oklch(0.945 0.009 82);
+  --muted-foreground: oklch(0.52 0.014 65);
+  --accent: var(--muted);
+  --accent-foreground: var(--foreground);
+  --destructive: oklch(0.55 0.19 30);
+  --destructive-foreground: oklch(0.97 0.01 30);
+  --border: oklch(0.885 0.012 78);
+  --input: oklch(0.86 0.013 76);
+  --ring: oklch(0.64 0.17 45);
+  --signal: oklch(0.64 0.17 45);
+  --success: oklch(0.56 0.11 150);
+  --grid: oklch(0.86 0.012 78);
 }
-* {
-  box-sizing: border-box;
-}
-body {
-  margin: 0;
-}
-header {
-  padding: 24px 5%;
-  border-bottom: 1px solid #2a3b4c;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-h1 {
-  font-size: 24px;
-  margin: 0;
-  letter-spacing: -0.04em;
-}
-header span {
-  color: #7fe2c7;
-}
-main {
-  max-width: 1300px;
-  margin: auto;
-  padding: 32px 5%;
-  display: grid;
-  grid-template-columns: minmax(300px, 1fr) minmax(300px, 1fr);
-  gap: 28px;
-}
-section {
-  background: #182331;
-  border: 1px solid #344459;
-  border-radius: 16px;
-  padding: 24px;
-  min-height: 440px;
-}
-h2 {
-  margin: 0 0 8px;
-  font-size: 19px;
-}
-p {
-  color: #a8bac9;
-  margin: 0 0 20px;
-}
-label {
-  display: block;
-  color: #a8bac9;
-  font-size: 13px;
-  margin: 16px 0 6px;
-}
-input,
-textarea {
-  width: 100%;
-  padding: 12px;
-  background: #101b28;
-  color: #e5edf5;
-  border: 1px solid #4b6073;
-  border-radius: 8px;
-  font: inherit;
-}
-textarea {
-  min-height: 110px;
-  resize: vertical;
-}
-button {
-  background: #7fe2c7;
-  border: 0;
-  border-radius: 8px;
-  padding: 11px 18px;
-  color: #10212a;
-  font-weight: 700;
-  cursor: pointer;
-}
-button:disabled {
-  opacity: 0.5;
-  cursor: wait;
-}
-.secondary {
-  background: #283e4d;
-  color: #e5edf5;
-}
-.row {
-  display: flex;
-  gap: 10px;
-  margin-top: 14px;
-  flex-wrap: wrap;
-}
-#messages {
-  min-height: 170px;
-  max-height: 330px;
-  overflow: auto;
-  border-left: 2px solid #3c5766;
-  padding: 0 14px;
-  white-space: pre-wrap;
-  color: #d1dfeb;
-}
-.node {
-  border: 1px solid #506e80;
-  border-radius: 10px;
-  padding: 14px 16px;
-  background: #203446;
-}
-.node b {
-  display: block;
-}
-.node small {
-  color: #7fe2c7;
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-}
-.arrow {
-  text-align: center;
-  color: #7fe2c7;
-  font-size: 23px;
-  line-height: 1.5;
-}
-#status {
-  margin: 18px 0;
-  color: #7fe2c7;
-}
-#status.error {
-  color: #ff9e9e;
-}
-@media (max-width: 800px) {
-  main {
-    grid-template-columns: 1fr;
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: oklch(0.185 0.008 60);
+    --foreground: oklch(0.925 0.01 85);
+    --card: oklch(0.215 0.009 60);
+    --primary: oklch(0.925 0.01 85);
+    --primary-foreground: oklch(0.2 0.008 60);
+    --secondary: oklch(0.29 0.01 60);
+    --muted: oklch(0.255 0.009 60);
+    --muted-foreground: oklch(0.68 0.012 75);
+    --destructive: oklch(0.7 0.16 30);
+    --destructive-foreground: oklch(0.25 0.05 30);
+    --border: oklch(0.32 0.01 60);
+    --input: oklch(0.36 0.011 60);
+    --ring: oklch(0.72 0.15 50);
+    --signal: oklch(0.72 0.15 50);
+    --success: oklch(0.72 0.12 150);
+    --grid: oklch(0.3 0.01 60);
   }
-  section {
-    min-height: auto;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
   }
+  html,
+  body,
+  #root {
+    @apply h-full;
+  }
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+  }
+  [data-leave] {
+    --tw-animation-fill-mode: both;
+  }
+}
+
+@utility dot-grid {
+  background-image: radial-gradient(var(--grid) 1px, transparent 1px);
+  background-size: 16px 16px;
+  background-position: -8px -8px;
 }

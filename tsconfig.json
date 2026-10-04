@@ -11,6 +11,7 @@
     "strict": true,
     "skipLibCheck": true,
     "noUncheckedIndexedAccess": true,
+    "paths": { "@/*": ["./src/ui/*"] },
     "types": ["@cloudflare/workers-types", "bun", "vite/client"],
     "plugins": [
       {

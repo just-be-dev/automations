@@ -9,6 +9,16 @@ These instructions apply to `src/ui/` and its descendants. The UI uses Foldkit, 
 - Keep Foldkit architectural lint rules scoped to `src/ui/`.
 - Use installed package types and upstream source at the `foldkit@<installed-version>` GitHub tag, not `main`. Source and examples are authoritative when these conventions or online docs disagree with the installed APIs.
 
+## Styling and foldcn
+
+The UI is styled with Tailwind CSS v4 and [foldcn](https://foldcn.elianiva.com), a shadcn-style registry of copy-paste Foldkit components. Agent docs live at https://foldcn.elianiva.com/llms.txt, and every page has a Markdown twin at `/docs/<name>.md`.
+
+- Vendored components live in `src/ui/components/ui/`, and `cn` and `icon` live in `src/ui/lib/`. Import them through the `@/` alias, which maps to `src/ui/` in `tsconfig.json` and `vite.config.ts`. This project owns the copies, so edit them as needed.
+- Add a component with `bunx shadcn@latest add @foldcn/<name>`. `components.json` already registers the namespace. Review the diff afterwards, because the CLI may also edit `src/ui/styles.css` or `package.json`.
+- Never install the `@foldcn/foldcn` base item. It pins older `foldkit`, `@foldkit/ui`, and `effect` versions that conflict with the exact pins here. Its theme mapping is already in `src/ui/styles.css`.
+- Theme tokens are the CSS variables in `src/ui/styles.css`: a warm paper-and-ink palette plus `signal`, `success`, and `grid`. Dark mode follows `prefers-color-scheme`, so the `dark:` variant needs no `.dark` class. Use tokens such as `bg-card` and `text-muted-foreground` instead of raw colors.
+- Fonts are self-hosted through Fontsource and imported in `entry.ts`. The CSP in `public/_headers` allows only `font-src 'self'`, so don't load fonts or stylesheets from a CDN.
+
 Upstream paths below are relative to [the Foldkit repository at `foldkit@0.165.0`](https://github.com/foldkit/foldkit/tree/foldkit@0.165.0), not this project:
 
 - `examples/`: runnable examples for idiomatic patterns.

@@ -47,9 +47,9 @@ test("chat reviews the returned draft and saves that automation", () => {
       }),
     ),
     model((current) => {
-      expect(current.conversation).toBe(
-        "Start by describing what should happen.\n\nYou: Summarize orders\nAgent: Review these steps.",
-      );
+      expect(current.conversation).toEqual([
+        { id: 0, prompt: "Summarize orders", reply: "Review these steps." },
+      ]);
       expect(current.maybeDraft).toEqual(Option.some(workflow));
       expect(current.messageInput).toBe("");
     }),
@@ -160,4 +160,26 @@ test("invalid IDs and saving without a draft return errors without requests", ()
     _tag: "Failed",
     error: "Create a draft first",
   });
+});
+
+test("messages up to 10,000 characters are sent and longer ones are rejected", () => {
+  const longest = "a".repeat(10_000);
+  const withInput = (messageInput: string) =>
+    modifyFields(init().model, { messageInput: () => messageInput });
+
+  story(
+    update,
+    given(withInput(longest)),
+    message(Message.ClickedSend()),
+    Command.expectExact(
+      SendMessage({ automationId: "my-automation", revision: 0, message: longest }),
+    ),
+    Command.resolve(SendMessage, Message.FailedRequest({ revision: 0, error: "Offline" })),
+  );
+
+  const rejected = update(withInput(`${longest}a`), Message.ClickedSend());
+  expect(rejected.model.activity).toEqual(
+    expect.objectContaining({ _tag: "Failed", error: "Message must be 1–10,000 characters" }),
+  );
+  expect(rejected.commands).toBeUndefined();
 });
