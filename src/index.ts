@@ -3,7 +3,6 @@ export { AutomationAgent } from "./agent.ts";
 
 interface Env {
   AUTOMATIONS: DurableObjectNamespace<import("./agent.ts").AutomationAgent>;
-  API_TOKEN: ReturnType<StringConstructor>;
 }
 
 const json = (value: unknown, status = 200) =>
@@ -20,8 +19,6 @@ export default {
             "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'",
         },
       });
-    if (!env.API_TOKEN || request.headers.get("authorization") !== `Bearer ${env.API_TOKEN}`)
-      return json({ error: "Unauthorized" }, 401);
     const parts = url.pathname.split("/").filter(Boolean);
     if (
       parts[0] !== "api" ||

@@ -13,16 +13,16 @@ mise exec -- bun run lint
 mise exec -- bun run test
 ```
 
-Set `API_TOKEN` to a long, random secret in your local shell (do not commit it); authenticate with Cloudflare for Alchemy deployment. `mise exec -- bun alchemy.run.ts` deploys the Worker, AI binding, and SQLite Durable Object through Alchemy. Deployment requires Cloudflare credentials and a Workers AI-enabled account. Cloudflare's PiHarness is beta; pin/validate package versions before production use. The model defaults to `@cf/moonshotai/kimi-k2.7-code`.
+Enable Cloudflare Zero Trust on the account, then authenticate Alchemy with Cloudflare. `mise exec -- bun alchemy.run.ts` provisions the Cloudflare identity provider (adopting the account's existing provider if present), an Access policy restricted to **members of the current Cloudflare account**, and the protected application **before** publishing the Worker at `automations-studio.<your-account-subdomain>.workers.dev`. Alchemy discovers the subdomain using the authenticated Cloudflare account; no application token or email allowlist is needed. It also provisions the AI binding and SQLite Durable Object. Deployment requires Cloudflare credentials with Access permissions and a Workers AI-enabled account. Preview subdomains are disabled. Cloudflare's PiHarness is beta; pin/validate package versions before production use. The model defaults to `@cf/moonshotai/kimi-k2.7-code`.
 
-Open the Worker URL, enter the shared API token and an automation ID, describe a process, review the graph, then save. The saved snapshot (not later drafts) runs when **Start manually** is clicked. The browser never stores the token. To trigger a saved workflow with event `order.created`:
+Open the Worker URL, sign in through Cloudflare Access, enter an automation ID, describe a process, review the graph, then save. The saved snapshot (not later drafts) runs when **Start manually** is clicked. To trigger a saved workflow with event `order.created` from an authenticated browser session, POST:
 
 ```sh
 curl -X POST "$WORKER_URL/api/automations/orders/events/order.created" \
-  -H "Authorization: Bearer $API_TOKEN" -H "Content-Type: application/json" \
+  -H "Cookie: CF_Authorization=$CF_ACCESS_JWT" -H "Content-Type: application/json" \
   -d '{"input":{"orderId":"123"}}'
 ```
 
-You can also POST `/api/automations/orders/start` with the same JSON body, inspect `/api/automations/orders` and GET `/api/automations/orders/runs/<run-id>`. Events are authenticated HTTP callbacks; this version does not subscribe to third-party event sources or schedule timers. Both triggers use the same shared bearer token. HTTP steps send the input and previous results to a public HTTPS URL. Do not put secrets in step definitions. Restrict deployment access and add stronger tenant/auth and endpoint allowlisting before exposing untrusted users.
+You can also POST `/api/automations/orders/start` with the same JSON body, inspect `/api/automations/orders` and GET `/api/automations/orders/runs/<run-id>`. Events are Access-protected HTTP callbacks; this version does not subscribe to third-party event sources or schedule timers. For an unattended external event source, configure a Cloudflare Access service token and add a narrowly scoped service-auth policy; the Cloudflare-account-member policy here intentionally rejects unauthenticated webhooks. HTTP steps send the input and previous results to a public HTTPS URL. Do not put secrets in step definitions. Add tenant isolation and endpoint allowlisting before exposing untrusted users.
 
 The source-of-truth IR is a validated list of `agent` and `webhook` steps. `graph()` derives nodes and edges for human review, and saving freezes the current draft. Cloudflare's [PiHarness changelog](https://developers.cloudflare.com/changelog/post/2026-10-02-pi-harness/), [Pi docs](https://developers.cloudflare.com/agents/harnesses/pi/), and [Alchemy documentation](https://alchemy.run/migrating-from-v1) describe the beta APIs used here. The project uses Alchemy 0.94 because Alchemy 2 is a separate beta API with different Worker declarations.
