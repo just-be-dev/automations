@@ -1,7 +1,6 @@
 import alchemy from "alchemy";
 import {
   AccessApplication,
-  AccessIdentityProvider,
   AccessPolicy,
   Ai,
   DurableObjectNamespace,
@@ -13,15 +12,22 @@ import {
 import type { AutomationAgent } from "./src/agent.ts";
 
 const app = await alchemy("automations");
-const hostname = `automations-studio.${await getAccountSubdomain(await createCloudflareApi())}.workers.dev`;
+const api = await createCloudflareApi();
+const hostname = `automations-studio.${await getAccountSubdomain(api)}.workers.dev`;
 
-const cloudflare = await AccessIdentityProvider("cloudflare", {
-  type: "cloudflare",
-  name: "Cloudflare",
-  config: { restrict_to_account_members: true },
-  adopt: true,
-  delete: false,
-});
+// Cloudflare creates its account sign-in provider with an empty name; manage only
+// this application's policy and use the existing account-scoped provider by ID.
+const idpsResponse = await api.get(`/accounts/${api.accountId}/access/identity_providers`);
+if (!idpsResponse.ok) throw new Error("Could not list Cloudflare Access identity providers");
+const idps = (await idpsResponse.json()) as {
+  result: { id: string; type: string; config?: { restrict_to_account_members?: boolean } }[];
+};
+const cloudflareIdps = idps.result.filter(
+  (idp) => idp.type === "cloudflare" && idp.config?.restrict_to_account_members === true,
+);
+const cloudflareIdp = cloudflareIdps[0];
+if (!cloudflareIdp || cloudflareIdps.length !== 1)
+  throw new Error("Expected one account-member Cloudflare sign-in provider");
 
 // SAFETY: Cloudflare supports this selector, but Alchemy 0.94's AccessRule union predates it.
 const accountMemberRule: unknown = { cloudflare_account_member: {} };
@@ -33,7 +39,7 @@ const policy = await AccessPolicy("owner", {
 export const access = await AccessApplication("studio", {
   type: "self_hosted",
   domain: hostname,
-  allowedIdps: [cloudflare],
+  allowedIdps: [cloudflareIdp.id],
   policies: [policy],
 });
 
