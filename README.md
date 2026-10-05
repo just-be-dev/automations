@@ -33,7 +33,7 @@ The first deploy offers to bootstrap Alchemy's Cloudflare-hosted state store. Al
 - `Studio` serves the UI. It is the only public hostname and sits behind Cloudflare Access, which admits members of your Cloudflare account.
 - `Api` has no public URL. Studio forwards `/api/*` to it over a service binding.
 
-It also creates `AutomationsDatabase`, a D1 database that lists the automations and holds the entity types, the entities, and which automations subscribe to each type. Alchemy applies the migrations in `migrations/` on every deploy. They seed an `employee` type and two employees.
+It also creates `AutomationsDatabase`, a D1 database that lists the automations and holds the entity types, the entities, the templates, and which automations subscribe to each type. Alchemy applies the migrations in `migrations/` on every deploy. They seed an `employee` type, two employees, and two welcome-email templates.
 
 Deploys also create a 30-day Access service token for machine testing. Send it as `CF-Access-Client-Id` / `CF-Access-Client-Secret`, and read it with `bun alchemy state`. Never commit it.
 
@@ -55,6 +55,8 @@ curl -X PUT "$STUDIO_URL/api/entities/employee/ada" \
 
 The response lists the runs the change `triggered`. People answer human steps from the run in the studio, or with `POST .../tasks/:stepId`.
 
+Templates hold approved wording, such as the standard welcome email, with slots the automation fills (`hire → employee`). The designer uses a template whenever one fits instead of writing the text, and picks one per case with a `match`, for example a different welcome email by role. Write them with `PUT /api/templates/:name` (see [Templates](docs/workflow-dsl.md#templates)). Editing a template changes runs that start afterwards; runs already going keep the wording they started with.
+
 | Endpoint                                                   | Purpose                                       |
 | ---------------------------------------------------------- | --------------------------------------------- |
 | `GET /api/overview`                                        | Each automation's trigger and runs in flight  |
@@ -71,6 +73,8 @@ The response lists the runs the change `triggered`. People answer human steps fr
 | `DELETE /api/entities/types/:type`                         | Delete a type nothing depends on              |
 | `DELETE /api/entities/:type/:id`                           | Delete an entity (starts no runs)             |
 | `POST /api/mcp`                                            | The entity store as an MCP server             |
+| `GET /api/templates`, `GET /api/templates/:name`           | List or read templates                        |
+| `PUT /api/templates/:name`, `DELETE /api/templates/:name`  | Create, replace, or delete a template         |
 
 ### Entity store
 
@@ -91,4 +95,5 @@ Deployed stages sit behind Access, so send the service token as headers (`--head
 - Chat is asynchronous: `POST /chat` returns `202` with a `pendingChat`, and the reply and new draft appear on `GET /api/automations/:id` once `pendingChat` is gone. Until then the response includes `progress`, a plain phrase such as "Planning the steps…". If the agent fails, `pendingChat` stays with `status: "failed"` and an `error` until the next message.
 - Runs advance through Alchemy durable callbacks that replay them from a journal in the Durable Object's storage. If the Durable Object is evicted mid-step, that step runs again; agent steps reuse their pi request ID instead of prompting twice.
 - Workflows and runs written before entity-based triggers were discarded; the Automation object drops them when it reads them.
+- Templates are managed through the API only; the studio shows which template a step uses but has no template editor yet. A run whose saved workflow no longer checks against the templates and entity types (for example, a template it uses was deleted) is recorded as failed instead of starting.
 - pi-ai, pi-durable, and Alchemy 2 are beta. Pin versions before production use.

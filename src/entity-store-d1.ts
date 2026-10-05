@@ -7,13 +7,15 @@ import * as Schema from "effect/Schema";
 import { AutomationsDatabase } from "./automation-index.ts";
 import { EntityData, EntityType, type EntityRecord } from "./entities.ts";
 import { EntityStore, EntityStoreError, makeEntityStore } from "./entity-store.ts";
+import { Template } from "./templates.ts";
 
 /**
- * The `EntityStore` on D1, in the `entity_types`, `entities`, and `entity_subscriptions` tables
- * (see `migrations/`).
+ * The `EntityStore` on D1, in the `entity_types`, `entities`, `entity_subscriptions`, and
+ * `templates` tables (see `migrations/`).
  */
 
 const TypeRow = Schema.Struct({ definition: Schema.fromJsonString(EntityType) });
+const TemplateRow = Schema.Struct({ definition: Schema.fromJsonString(Template) });
 const EntityRow = Schema.Struct({
   type: Schema.String,
   id: Schema.String,
@@ -155,6 +157,30 @@ export const EntityStoreD1 = Effect.gen(function* () {
               .bind(type)
               .all(),
           ).pipe(Effect.map((found) => found.map((row) => row.automation_id))),
+        listTemplates: rows(
+          "listTemplates",
+          TemplateRow,
+          db.prepare("SELECT definition FROM templates ORDER BY name").all(),
+        ).pipe(Effect.map((found) => found.map((row) => row.definition))),
+        writeTemplate: (template) =>
+          query(
+            "writeTemplate",
+            Effect.gen(function* () {
+              const updatedAt = yield* Clock.currentTimeMillis;
+              yield* db
+                .prepare(
+                  `INSERT INTO templates (name, definition, updated_at) VALUES (?, ?, ?)
+                   ON CONFLICT (name) DO UPDATE SET definition = excluded.definition, updated_at = excluded.updated_at`,
+                )
+                .bind(template.name, JSON.stringify(template), updatedAt)
+                .run();
+            }),
+          ),
+        deleteTemplate: (name) =>
+          query(
+            "deleteTemplate",
+            db.prepare("DELETE FROM templates WHERE name = ?").bind(name).run(),
+          ).pipe(Effect.asVoid),
       });
     }),
   );

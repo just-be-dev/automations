@@ -248,6 +248,64 @@ describe("RunAutomation", () => {
     expect(lowSteps["triage"]).toEqual({ matched: null });
   });
 
+  test("an action's match supplies the inputs of the first case that fits, or otherwise", async () => {
+    const notify = workflow({
+      id: "notify",
+      title: "Notify",
+      kind: "action",
+      use: "slack.sendMessage",
+      with: { to: "{{employee.manager}}" },
+      match: {
+        on: "employee.priority",
+        cases: [
+          { when: { op: "equals", value: "high" }, with: { text: "Now: {{employee.name}}" } },
+          { when: { op: "exists" }, with: { text: "Soon" } },
+        ],
+        otherwise: { with: { text: "Whenever" } },
+      },
+    });
+
+    const high = makeHarness();
+    const highSteps = await runTest(high, Effect.flatMap(start(high, notify), finalSteps));
+    expect(highSteps["notify"]).toEqual({ sent: { to: "grace", text: "Now: Ada" } });
+
+    const low = makeHarness();
+    const lowSubject = { ...ada, data: { ...ada.data, priority: "low" } };
+    const lowSteps = await runTest(low, Effect.flatMap(start(low, notify, lowSubject), finalSteps));
+    expect(lowSteps["notify"]).toEqual({ sent: { to: "grace", text: "Soon" } });
+
+    const unset = makeHarness();
+    const unsetSubject = { ...ada, data: { ...ada.data, priority: null } };
+    const unsetSteps = await runTest(
+      unset,
+      Effect.flatMap(start(unset, notify, unsetSubject), finalSteps),
+    );
+    expect(unsetSteps["notify"]).toEqual({ sent: { to: "grace", text: "Whenever" } });
+  });
+
+  test("an action whose template wasn't expanded fails instead of sending", async () => {
+    const harness = makeHarness();
+    const result = await runTest(
+      harness,
+      Effect.flatMap(
+        start(
+          harness,
+          workflow({
+            id: "welcome",
+            title: "Welcome",
+            kind: "action",
+            use: "email.send",
+            with: { to: "{{employee}}" },
+            template: { use: "welcome_email", with: { hire: "{{employee}}" } },
+          }),
+        ),
+        outcome,
+      ),
+    );
+    expect(Exit.isExit(result) && Exit.isFailure(result)).toBe(true);
+    expect(harness.calls).toEqual([]);
+  });
+
   test("an if step compares dates with now", async () => {
     const harness = makeHarness();
     await runTest(

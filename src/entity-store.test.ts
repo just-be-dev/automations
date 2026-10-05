@@ -58,6 +58,33 @@ describe("EntityStore", () => {
     expect(unknown.message).toBe("Unknown entity type contractor");
   });
 
+  test("stores templates that check against the entity types, and deletes them", async () => {
+    const welcome = {
+      name: "welcome",
+      label: "Welcome",
+      description: "Welcomes a new hire.",
+      slots: [{ name: "hire", label: "New hire", type: "ref", to: "employee" }],
+      content: { subject: "Welcome, {{hire.name}}" },
+    } as const;
+    const result = await run(
+      Effect.gen(function* () {
+        const entities = yield* EntityStore;
+        const invalid = yield* Effect.flip(
+          entities.putTemplate({ ...welcome, content: { subject: "Welcome, {{hire.nickname}}" } }),
+        );
+        yield* entities.putTemplate(welcome);
+        const stored = yield* entities.getTemplate("welcome");
+        yield* entities.deleteTemplate("welcome");
+        return { invalid, stored, remaining: yield* entities.listTemplates };
+      }),
+    );
+    expect(result.invalid.message).toBe(
+      "{{hire.nickname}}: employee has no field nickname (fields: name, start_date)",
+    );
+    expect(result.stored).toEqual(welcome);
+    expect(result.remaining).toEqual([]);
+  });
+
   test("tracks which automations subscribe to a type", async () => {
     const subscribers = await run(
       Effect.gen(function* () {
@@ -117,13 +144,20 @@ describe("EntityStore types", () => {
         const entities = yield* EntityStore;
         yield* entities.putType(team);
         yield* entities.subscribe("onboarding", "employee");
+        yield* entities.putTemplate({
+          name: "welcome",
+          label: "Welcome",
+          description: "Welcomes a new hire.",
+          slots: [{ name: "hire", label: "New hire", type: "ref", to: "employee" }],
+          content: { subject: "Welcome, {{hire.name}}" },
+        });
         const blocked = yield* Effect.flip(entities.deleteType("employee"));
         const deletedTeam = yield* entities.deleteType("team");
         return { blocked, deletedTeam, types: yield* entities.listTypes };
       }),
     );
     expect(result.blocked.message).toBe(
-      "Can't delete employee: it still has 1 entity; team.lead points to it; automations watch it: onboarding",
+      "Can't delete employee: it still has 1 entity; team.lead points to it; template slots point to it: welcome.hire; automations watch it: onboarding",
     );
     expect(result.types.map((type) => type.name)).toEqual(["employee"]);
   });

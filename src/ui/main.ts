@@ -60,17 +60,22 @@ import {
   Run,
   RunStatus,
   RunSummary,
+  patternCondition,
   subjectType,
   TitledRun,
   templateParts,
   workflowRefs,
   Workflow,
   type ActionInput,
+  type ActionMatch,
+  type ActionStep,
   type Comparison,
   type Condition,
   type HumanField,
+  type InputSource,
   type RunStep,
   type Step,
+  type TemplateUse,
   type Trigger,
   type ValueType,
 } from "../workflow.ts";
@@ -2312,6 +2317,79 @@ const actionInputView = (value: ActionInput, h: HtmlBuilder<Message>) =>
         ", ",
       );
 
+const inputListView = (
+  label: string,
+  inputs: Readonly<Record<string, ActionInput>>,
+  isExpanded: boolean,
+  h: HtmlBuilder<Message>,
+) =>
+  h.ul(
+    [h.AriaLabel(label), h.Class("flex flex-col gap-0.5 text-xs")],
+    Array.map(Object.entries(inputs), ([name, value]) =>
+      h.keyed("li")(
+        name,
+        [h.Class(cn("text-muted-foreground", isExpanded ? "break-words" : "line-clamp-1"))],
+        [h.span([h.Class("font-mono text-sand-11")], [`${name}: `]), ...actionInputView(value, h)],
+      ),
+    ),
+  );
+
+const templateUseView = (use: TemplateUse, h: HtmlBuilder<Message>) =>
+  h.p(
+    [h.Class("text-xs text-muted-foreground")],
+    [
+      "Template ",
+      h.span([h.Class(cn(chipClass, "text-foreground")), h.Title("A stored template")], [use.use]),
+      ...Array.flatMap(Object.entries(use.with), ([slot, value]) => [
+        ` · ${slot}: `,
+        ...templateView(value, h),
+      ]),
+    ],
+  );
+
+const inputSourceView = (
+  label: string,
+  source: InputSource,
+  isExpanded: boolean,
+  h: HtmlBuilder<Message>,
+) => [
+  source.template === undefined ? h.empty : templateUseView(source.template, h),
+  source.with === undefined ? h.empty : inputListView(label, source.with, isExpanded, h),
+];
+
+const matchCaseClass = "flex flex-col gap-1 border-l border-border pl-2.5";
+
+const matchView = (
+  action: ActionStep,
+  match: ActionMatch,
+  isExpanded: boolean,
+  h: HtmlBuilder<Message>,
+) =>
+  h.ol(
+    [h.AriaLabel(`${action.title} cases`), h.Class("flex flex-col gap-1.5")],
+    [
+      ...Array.map(match.cases, (branch, index) =>
+        h.li(
+          [h.Class(matchCaseClass)],
+          [
+            h.div(
+              [h.Class("text-xs text-muted-foreground")],
+              ["If ", ...conditionView(patternCondition(match.on, branch.when), h)],
+            ),
+            ...inputSourceView(`Case ${index + 1} inputs`, branch, isExpanded, h),
+          ],
+        ),
+      ),
+      h.li(
+        [h.Class(matchCaseClass)],
+        [
+          h.div([h.Class("text-xs text-muted-foreground")], ["Otherwise"]),
+          ...inputSourceView("Otherwise inputs", match.otherwise, isExpanded, h),
+        ],
+      ),
+    ],
+  );
+
 const simulatedTagView = (h: HtmlBuilder<Message>) =>
   badge({ variant: "secondary", className: "h-4 px-1.5 text-[10px]" }, ["Simulated"], h);
 
@@ -2361,23 +2439,9 @@ const stepDetailView = (step: Step, isExpanded: boolean, h: HtmlBuilder<Message>
               [h.Class("flex items-center gap-2 text-xs text-muted-foreground")],
               [operationTitle(action.use), isSimulated(action.use) ? simulatedTagView(h) : h.empty],
             ),
-            h.ul(
-              [h.AriaLabel(`${action.title} inputs`), h.Class("flex flex-col gap-0.5 text-xs")],
-              Array.map(Object.entries(action.with), ([name, value]) =>
-                h.keyed("li")(
-                  name,
-                  [
-                    h.Class(
-                      cn("text-muted-foreground", isExpanded ? "break-words" : "line-clamp-1"),
-                    ),
-                  ],
-                  [
-                    h.span([h.Class("font-mono text-sand-11")], [`${name}: `]),
-                    ...actionInputView(value, h),
-                  ],
-                ),
-              ),
-            ),
+            inputListView(`${action.title} inputs`, action.with, isExpanded, h),
+            action.template === undefined ? h.empty : templateUseView(action.template, h),
+            action.match === undefined ? h.empty : matchView(action, action.match, isExpanded, h),
           ],
         ),
       wait: (wait) =>

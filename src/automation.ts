@@ -44,6 +44,7 @@ import {
   type Subject,
 } from "./entities.ts";
 import { openPiAgent } from "./pi.ts";
+import { expandTemplates } from "./templates.ts";
 import {
   conditionRefs,
   Exchange,
@@ -216,7 +217,7 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
           }),
         );
 
-      const catalog = entities.listTypes.pipe(Effect.map((types) => ({ types })));
+      const catalog = Effect.all({ types: entities.listTypes, templates: entities.listTemplates });
 
       const loadEntity = (type: string, id: string) =>
         entities
@@ -377,12 +378,38 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         }),
       );
 
+      /**
+       * Starts a run of the saved workflow. Entity types and templates may have changed since the
+       * save, so the workflow is checked again, and a run that no longer checks is recorded as
+       * failed instead of starting. The run executes the workflow with its templates expanded, so
+       * it keeps the wording it started with.
+       */
       const beginRun = Effect.fn("Automation.beginRun")(function* (
-        workflow: Workflow,
+        saved: Workflow,
         subject: Subject | null,
       ) {
         const id = crypto.randomUUID();
         const startedAt = yield* Clock.currentTimeMillis;
+        const current = yield* catalog;
+        const prepared = yield* checkWorkflow(current, saved).pipe(
+          Effect.flatMap((checked) => expandTemplates(checked, current.templates)),
+          Effect.result,
+        );
+        if (Result.isFailure(prepared)) {
+          const run: Run = {
+            id,
+            workflow: saved,
+            subject,
+            status: "failed",
+            steps: {},
+            tasks: [],
+            error: `The saved workflow no longer fits the entity types and templates. Update it and save again.\n${prepared.failure.message}`,
+            startedAt,
+          };
+          yield* writeRun(run);
+          return { id, status: run.status };
+        }
+        const workflow = prepared.success;
         const payload = { runId: id, workflow, subject };
         const executionId = yield* RunAutomation.executionId(payload);
         const run: Run = {
@@ -585,7 +612,7 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         return { pendingChat: pending };
       });
 
-      /** Saves the draft once it checks against the current entity types. */
+      /** Saves the draft once it checks against the current entity types and templates. */
       const save = Effect.fn("Automation.save")(function* () {
         const draft = yield* readWorkflow("draft");
         if (draft === undefined) {

@@ -73,7 +73,7 @@ const DefineEntityType = Tool.make("define_entity_type", {
 
 const DeleteEntityType = Tool.make("delete_entity_type", {
   description:
-    "Deletes an entity type. Fails while it has entities, another type refers to it, or a saved automation watches it.",
+    "Deletes an entity type. Fails while it has entities, another type or a template slot refers to it, or a saved automation watches it.",
   parameters: TypeParams,
   success: Schema.Struct({ deleted: EntityName }),
   failure: EntityFailure,

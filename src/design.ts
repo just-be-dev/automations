@@ -21,7 +21,9 @@ Trigger, one of:
 Prefer an entity trigger whenever the process starts because some record changed.
 
 Every step has an "id" (letters, digits, - and _), a short "title", and a "kind". IDs must be unique across the WHOLE workflow, nested steps included, and stay stable between turns. Steps in a list run in order. The kinds:
-- {"kind":"action","use":"<operation>","with":{"<input>":"..."}}: performs a connection operation (listed below). Each input is text that may contain {{refs}}; a value that is exactly one {{ref}} passes that value through unchanged (use this for people). "people" inputs are lists, such as ["{{employee}}", "{{employee.manager}}"].
+- {"kind":"action","use":"<operation>","with":{"<input>":"..."},"template":TemplateUse,"match":Match}: performs a connection operation (listed below). Each input is text that may contain {{refs}}; a value that is exactly one {{ref}} passes that value through unchanged (use this for people). "people" inputs are lists, such as ["{{employee}}", "{{employee.manager}}"]. "template" and "match" are optional:
+  - TemplateUse: {"use":"<template>","with":{"<slot>":"..."}} fills the inputs its content names (listed with each template below) from a stored template; give the other inputs in "with", never the same input twice. Fill every slot: a slot marked → takes exactly one {{ref}} to an entity of that type, such as "{{employee}}" or "{{employee.manager}}"; any other slot takes text that may contain {{refs}}.
+  - Match: {"on":Ref,"cases":[{"when":Pattern,"with":{...},"template":TemplateUse}, ...],"otherwise":{"with":{...},"template":TemplateUse}} supplies the inputs that vary: the first of 1–8 cases whose pattern fits the value at "on", else "otherwise", which is required. Each case gives "with", "template", or both; the step's own "with" and "template" keep what every case shares. Example: one email.send step whose "with" is {"to":"{{employee}}"}, matching on "employee.role" to pick a template per role.
 - {"kind":"agent","instruction":"...","output":{"fields":[{"name":"snake_case","type":"text" or "number" or "boolean" or "date" or "datetime","description":"..."}]}}: an AI agent does work that needs judgment or writing, given the subject and earlier results. "output" is optional; with it the agent answers with those fields, recorded as steps.<id>.output.<field>; without it, steps.<id>.output is text. Agents can't contact anyone or anything: use action steps for that.
 - {"kind":"wait","duration":"3 days"} or {"kind":"wait","until":"employee.start_date","offset":"-7 days"}: pauses the run for a while, or until a date shifted by an optional offset. Durations are "<number> minutes|hours|days|weeks"; offsets may start with "-".
 - {"kind":"parallel","branches":[[Step, ...], [Step, ...]]}: 2–8 branches run at the same time; the run continues once every branch finishes.
@@ -33,12 +35,16 @@ Refs read what the run knows. The trigger's entity type is a root: "employee.sta
 
 Condition: {"ref":Ref,"op":"equals" or "notEquals" or "greaterThan" or "lessThan" or "contains","value":any JSON} or {"ref":Ref,"op":"before" or "after","value":"now" or a date} or {"ref":Ref,"op":"exists"} or {"all":[Condition, ...]} or {"any":[Condition, ...]} or {"not":Condition}.
 
+Pattern: a Condition without "ref", because the match names the value once in "on": {"op":"contains","value":"engineer"}, {"op":"exists"}, {"any":[Pattern, ...]}, and so on. Comparisons are case-sensitive, so cover the spellings you expect, such as {"any":[{"op":"contains","value":"engineer"},{"op":"contains","value":"Engineer"}]}.
+
 ${describeCatalog(catalog)}
 
 Design guidance:
 - Automate everything that can be automated, and keep people for what only a person can do. Around each human step, add the automation that makes it easy: calendar events that remind them, an agent that proposes an answer (for example a meeting time chosen from calendar.findTimes) prefilled as a field default they can keep or change, an action that does the work once they confirm, and a follow-up on Slack that checks it happened.
 - Assign every human step to a specific person with "assignee", and set "notify" so they hear about it.
 - Use wait steps for timing instead of asking an agent to schedule something; use parallel for independent work; branch with if or decide instead of describing branches in prose. Keep lists flat when nesting adds nothing. Nest at most 4 levels deep and use at most 60 steps in total.
+- Prefer templates to writing messages yourself: they hold wording the team has approved. Whenever a template fits a message, use it instead of writing the text in "with" or asking an agent step to write it, and read each template's description to see who it is for. Write your own text only when no template fits, and say so in your reply.
+- When the right template or inputs depend on who the run is about (for example a welcome email that differs by role), use one action with a match, not an if step with near-copies of the same action. Put the most specific cases first and the general template in "otherwise". When telling the cases apart takes judgment, add a decide step first and match on steps.<id>.choice.
 - Never invent URLs; ask for them.
 
 No secrets in the workflow.`;
@@ -86,6 +92,7 @@ export const progressPhrases = {
   people: "Figuring out who's involved…",
   paths: "Mapping out the different paths…",
   connections: "Connecting your other tools…",
+  messages: "Choosing the right messages…",
   checking: "Double-checking the details…",
   writing: "Writing up your automation…",
 } as const;
@@ -116,6 +123,7 @@ const PickedPhrase = Schema.Literals([
   "people",
   "paths",
   "connections",
+  "messages",
   "checking",
 ]);
 
@@ -131,6 +139,7 @@ export const progressQuestion = {
     people: "Approvals, people who provide information, or who gets notified",
     paths: "Conditions, branches, or decisions between options",
     connections: "Sending information to other services or web addresses",
+    messages: "Templates, the wording of messages, or who gets which message",
     checking: "Reviewing, verifying, or correcting details",
   },
 } as const satisfies {

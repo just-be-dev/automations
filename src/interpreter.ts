@@ -11,9 +11,11 @@ import {
 } from "effect/workflow";
 import { Subject } from "./entities.ts";
 import {
+  actionTemplates,
   durationMillis,
   holds,
   loneRef,
+  patternCondition,
   renderTemplate,
   RunState,
   stepRefs,
@@ -35,7 +37,9 @@ import {
  *
  * - Before a step runs, the refs it reads are resolved in an Activity, so a replay sees the same
  *   values even if an entity changed since.
- * - agent, action, and decide steps are Activities, so a replayed run reuses their results.
+ * - agent, action, and decide steps are Activities, so a replayed run reuses their results. An
+ *   action's match picks its case from the resolved values, before its Activity. Templates are
+ *   expanded before a run starts (`expandTemplates`), so an action that still uses one fails.
  * - parallel branches run concurrently and merge what they recorded.
  * - wait steps are DurableClocks.
  * - human steps park on a DurableDeferred until `respondToHuman` completes it.
@@ -219,8 +223,15 @@ const runResolved = (
     case "action":
       return Effect.gen(function* () {
         const runner = yield* StepRunner;
+        if (actionTemplates(step).length > 0) {
+          return yield* failed(step, "Its templates weren't expanded before the run started");
+        }
+        const source = yield* matchedSource(step, values);
         const inputs = Object.fromEntries(
-          Object.entries(step.with).map(([name, value]) => [name, renderInput(value, values)]),
+          Object.entries({ ...step.with, ...source?.with }).map(([name, value]) => [
+            name,
+            renderInput(value, values),
+          ]),
         );
         const output = yield* Activity.make({
           name: step.id,
@@ -263,6 +274,18 @@ const runResolved = (
       return askHuman(step, state, values);
   }
 };
+
+/** The inputs a match supplies: its first case whose pattern fits, else `otherwise`. */
+const matchedSource = Effect.fnUntraced(function* (step: ActionStep, values: Values) {
+  const match = step.match;
+  if (match === undefined) {
+    return undefined;
+  }
+  const conditions = match.cases.map((branch) => patternCondition(match.on, branch.when));
+  const time = conditions.some(usesNow) ? yield* now(step) : Number.NaN;
+  const matched = conditions.findIndex((condition) => holds(condition, (ref) => values[ref], time));
+  return match.cases[matched] ?? match.otherwise;
+});
 
 const runIf = Effect.fnUntraced(function* (step: IfStep, state: RunState, values: Values) {
   const time = step.cases.some((branch) => usesNow(branch.when)) ? yield* now(step) : Number.NaN;

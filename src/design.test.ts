@@ -22,6 +22,7 @@ const catalog: Catalog = {
       ],
     },
   ],
+  templates: [],
 };
 
 const draft = (until: string) =>

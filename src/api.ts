@@ -21,6 +21,7 @@ import {
 import { EntityStore, type EntityChange } from "./entity-store.ts";
 import { EntityStoreD1 } from "./entity-store-d1.ts";
 import type { AutomationOverview } from "./workflow.ts";
+import { Template } from "./templates.ts";
 
 const MAX_BODY_BYTES = 32_000;
 
@@ -31,6 +32,7 @@ const RunParams = Schema.Struct({ ...AutomationParams.fields, runId: Schema.Stri
 const TaskParams = Schema.Struct({ ...RunParams.fields, stepId: Schema.String });
 const TypeParams = Schema.Struct({ type: EntityName });
 const EntityParams = Schema.Struct({ type: EntityName, entityId: EntityId });
+const TemplateParams = Schema.Struct({ name: EntityName });
 const ChatBody = Schema.Struct({ message: Schema.optionalKey(Schema.String) });
 const StartBody = Schema.Struct({ subject: Schema.optionalKey(EntityId) });
 const EntityBody = Schema.Struct({ data: EntityData });
@@ -382,11 +384,73 @@ export default class Api extends Cloudflare.Worker<Api>()(
       ),
     ]);
 
+    const templateRoutes = HttpRouter.addAll(
+      [
+        HttpRouter.route(
+          "GET",
+          "/",
+          withEntities(EntityStore.use((entities) => entities.listTemplates)),
+        ),
+        HttpRouter.route(
+          "GET",
+          "/:name",
+          withEntities(
+            Effect.gen(function* () {
+              const { name } = yield* pathParams(TemplateParams);
+              const entities = yield* EntityStore;
+              const found = yield* entities.getTemplate(name);
+              if (found === undefined) {
+                return yield* new NotFound({ message: "Template not found" });
+              }
+              return found;
+            }),
+          ),
+        ),
+        // Creates or replaces a template once it checks against the entity types. Saved
+        // workflows pick up the new wording on their next run.
+        HttpRouter.route(
+          "PUT",
+          "/:name",
+          withEntities(
+            Effect.gen(function* () {
+              const { name } = yield* pathParams(TemplateParams);
+              const body = yield* limitedBody(Template);
+              if (body.name !== name) {
+                return yield* new BadRequest({ message: "The template's name must match the URL" });
+              }
+              const entities = yield* EntityStore;
+              return yield* entities.putTemplate(body);
+            }),
+          ),
+        ),
+        HttpRouter.route(
+          "DELETE",
+          "/:name",
+          withEntities(
+            Effect.gen(function* () {
+              const { name } = yield* pathParams(TemplateParams);
+              const entities = yield* EntityStore;
+              yield* entities.deleteTemplate(name);
+              return { ok: true };
+            }),
+          ),
+        ),
+      ],
+      { prefix: "/api/templates" },
+    );
+
     const fallback = HttpRouter.add("*", "*", json({ error: "Not found" }, 404));
 
     return {
       fetch: yield* HttpRouter.toHttpEffect(
-        Layer.mergeAll(automationRoutes, entityRoutes, overviewRoute, mcpRoutes, fallback),
+        Layer.mergeAll(
+          automationRoutes,
+          entityRoutes,
+          overviewRoute,
+          mcpRoutes,
+          templateRoutes,
+          fallback,
+        ),
       ),
     };
   }).pipe(Effect.provide(Cloudflare.D1.QueryDatabaseBinding)),

@@ -136,14 +136,16 @@ export const renderTemplate = (text: string, values: Readonly<Record<string, Sch
     })
     .join("");
 
-export type Comparison =
-  | "equals"
-  | "notEquals"
-  | "greaterThan"
-  | "lessThan"
-  | "contains"
-  | "before"
-  | "after";
+export const Comparison = Schema.Literals([
+  "equals",
+  "notEquals",
+  "greaterThan",
+  "lessThan",
+  "contains",
+  "before",
+  "after",
+]);
+export type Comparison = typeof Comparison.Type;
 
 /**
  * A deterministic check against what the run knows. `before` and `after` compare dates; their
@@ -159,19 +161,7 @@ export type Condition =
 const Conditions = Schema.Array(Schema.suspend((): Schema.Codec<Condition> => Condition));
 
 export const Condition: Schema.Codec<Condition> = Schema.Union([
-  Schema.Struct({
-    ref: Ref,
-    op: Schema.Literals([
-      "equals",
-      "notEquals",
-      "greaterThan",
-      "lessThan",
-      "contains",
-      "before",
-      "after",
-    ]),
-    value: Schema.Json,
-  }),
+  Schema.Struct({ ref: Ref, op: Comparison, value: Schema.Json }),
   Schema.Struct({ ref: Ref, op: Schema.Literal("exists") }),
   Schema.Struct({ all: Conditions }),
   Schema.Struct({ any: Conditions }),
@@ -196,6 +186,37 @@ export const usesNow = (condition: Condition): boolean =>
       : "any" in condition
         ? condition.any.some(usesNow)
         : usesNow(condition.not);
+
+/**
+ * A condition on one value that a `match` names once in `on`, so its comparisons carry no ref of
+ * their own.
+ */
+export type Pattern =
+  | { readonly op: Comparison; readonly value: Schema.Json }
+  | { readonly op: "exists" }
+  | { readonly all: ReadonlyArray<Pattern> }
+  | { readonly any: ReadonlyArray<Pattern> }
+  | { readonly not: Pattern };
+
+const Patterns = Schema.Array(Schema.suspend((): Schema.Codec<Pattern> => Pattern));
+
+export const Pattern: Schema.Codec<Pattern> = Schema.Union([
+  Schema.Struct({ op: Comparison, value: Schema.Json }),
+  Schema.Struct({ op: Schema.Literal("exists") }),
+  Schema.Struct({ all: Patterns }),
+  Schema.Struct({ any: Patterns }),
+  Schema.Struct({ not: Schema.suspend((): Schema.Codec<Pattern> => Pattern) }),
+]);
+
+/** The condition a pattern states about the value at `ref`. */
+export const patternCondition = (ref: string, pattern: Pattern): Condition =>
+  "all" in pattern
+    ? { all: pattern.all.map((inner) => patternCondition(ref, inner)) }
+    : "any" in pattern
+      ? { any: pattern.any.map((inner) => patternCondition(ref, inner)) }
+      : "not" in pattern
+        ? { not: patternCondition(ref, pattern.not) }
+        : { ref, ...pattern };
 
 /** Starts a run by hand, optionally about one entity of `subject` type that the starter picks. */
 export const ManualTrigger = Schema.Struct({
@@ -275,15 +296,89 @@ const ActionInput = Schema.Union([
 ]);
 export type ActionInput = typeof ActionInput.Type;
 
-/** Performs one operation of a connection, such as `slack.sendMessage`. */
+const ActionInputs = Schema.Record(
+  Identifier(/^[a-zA-Z]{1,40}$/, "Input names are identifiers"),
+  ActionInput,
+);
+
+/**
+ * Fills an action's inputs from a stored template (`src/templates.ts`). `with` fills the template's
+ * slots: text that may contain `{{ref}}`s, or exactly one `{{ref}}` to an entity for an entity slot.
+ */
+export const TemplateUse = Schema.Struct({
+  use: EntityName,
+  with: Schema.Record(EntityName, Schema.String.check(Schema.isMaxLength(4000))),
+});
+export interface TemplateUse extends Schema.Schema.Type<typeof TemplateUse> {}
+
+/** Inputs an action takes from one case of a match: values of its own, a template, or both. */
+export const InputSource = Schema.Struct({
+  with: Schema.optionalKey(ActionInputs),
+  template: Schema.optionalKey(TemplateUse),
+});
+export interface InputSource extends Schema.Schema.Type<typeof InputSource> {}
+
+/**
+ * Picks the inputs that vary between cases, such as a different template by role: the first case
+ * whose pattern fits the value at `on`, else `otherwise`, which is required so the match always
+ * supplies its inputs.
+ */
+export const ActionMatch = Schema.Struct({
+  on: Ref,
+  cases: Schema.Array(Schema.Struct({ when: Pattern, ...InputSource.fields })).check(
+    Schema.makeFilter((cases: ReadonlyArray<unknown>) => cases.length >= 1 && cases.length <= 8, {
+      message: "A match needs 1–8 cases",
+    }),
+  ),
+  otherwise: InputSource,
+});
+export interface ActionMatch extends Schema.Schema.Type<typeof ActionMatch> {}
+
+/**
+ * Performs one operation of a connection, such as `slack.sendMessage`. Its inputs come from `with`,
+ * from `template`, and from the case of `match` that applies.
+ */
 export const ActionStep = Schema.Struct({
   id: StepId,
   title: StepTitle,
   kind: Schema.Literal("action"),
   use: Identifier(/^[a-z]+\.[a-zA-Z]+$/, 'An action uses an operation such as "email.send"'),
-  with: Schema.Record(Identifier(/^[a-zA-Z]{1,40}$/, "Input names are identifiers"), ActionInput),
+  with: ActionInputs,
+  template: Schema.optionalKey(TemplateUse),
+  match: Schema.optionalKey(ActionMatch),
 });
 export interface ActionStep extends Schema.Schema.Type<typeof ActionStep> {}
+
+/**
+ * Where an action's inputs come from on each path it may take: the step's own `with` and
+ * `template`, plus one case of its match. Without a match there is one path.
+ */
+export const actionPaths = (
+  step: ActionStep,
+): ReadonlyArray<{ readonly label: string; readonly sources: ReadonlyArray<InputSource> }> => {
+  const own: InputSource =
+    step.template === undefined
+      ? { with: step.with }
+      : { with: step.with, template: step.template };
+  return step.match === undefined
+    ? [{ label: "", sources: [own] }]
+    : [
+        ...step.match.cases.map((branch, index) => ({
+          label: `case ${index + 1}`,
+          sources: [own, branch],
+        })),
+        { label: "otherwise", sources: [own, step.match.otherwise] },
+      ];
+};
+
+const matchSources = (step: ActionStep): ReadonlyArray<InputSource> =>
+  step.match === undefined ? [] : [...step.match.cases, step.match.otherwise];
+
+/** Every template an action uses, its match's cases included. */
+export const actionTemplates = (step: ActionStep): ReadonlyArray<TemplateUse> =>
+  [step, ...matchSources(step)].flatMap((source) =>
+    source.template === undefined ? [] : [source.template],
+  );
 
 export const WaitForStep = Schema.Struct({
   id: StepId,
@@ -474,7 +569,13 @@ export const stepTemplates = (step: Step): ReadonlyArray<string> => {
     case "agent":
       return [step.title, step.instruction];
     case "action":
-      return [step.title, ...Object.values(step.with).flatMap(actionInputText)];
+      return [
+        step.title,
+        ...[step, ...matchSources(step)].flatMap((source) =>
+          Object.values(source.with ?? {}).flatMap(actionInputText),
+        ),
+        ...actionTemplates(step).flatMap((use) => Object.values(use.with)),
+      ];
     case "decide":
       return [step.title, step.question];
     case "human":
@@ -490,6 +591,7 @@ export const stepRefs = (step: Step): ReadonlyArray<string> => [
     ...stepTemplates(step).flatMap(templateRefs),
     ...(step.kind === "wait" && "until" in step ? [step.until] : []),
     ...(step.kind === "if" ? step.cases.flatMap((branch) => conditionRefs(branch.when)) : []),
+    ...(step.kind === "action" && step.match !== undefined ? [step.match.on] : []),
     ...(step.kind === "human" && step.assignee !== undefined ? [step.assignee] : []),
   ]),
 ];

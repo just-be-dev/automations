@@ -12,11 +12,13 @@ import {
   type EntityType,
   type Subject,
 } from "./entities.ts";
+import { checkTemplate, type InvalidTemplate, type Template } from "./templates.ts";
 
 /**
- * Where entity types, entities, and subscriptions to entity changes live. `EntityStore` is the
- * service steps, triggers, and the API use; `src/entity-store-d1.ts` implements it on D1, and
- * `layerMemory` below implements it in memory for tests.
+ * Where entity types, entities, templates, and subscriptions to entity changes live. Templates sit
+ * beside the types because each one is checked against them. `EntityStore` is the service steps,
+ * triggers, and the API use; `src/entity-store-d1.ts` implements it on D1, and `layerMemory` below
+ * implements it in memory for tests.
  */
 
 export class EntityStoreError extends Schema.TaggedError<EntityStoreError>()("EntityStoreError", {
@@ -43,7 +45,7 @@ export class EntityStore extends Context.Service<
     ) => Effect.Effect<EntityType, EntityStoreError | InvalidEntity>;
     /**
      * Deletes an entity type that nothing depends on: it has no entities, no other type's `ref`
-     * field points to it, and no saved automation watches it.
+     * field or template slot points to it, and no saved automation watches it.
      */
     readonly deleteType: (name: string) => Effect.Effect<void, EntityStoreError | InvalidEntity>;
     readonly listEntities: (
@@ -77,6 +79,14 @@ export class EntityStore extends Context.Service<
     ) => Effect.Effect<void, EntityStoreError>;
     /** The automations watching an entity type. */
     readonly subscribers: (type: string) => Effect.Effect<ReadonlyArray<string>, EntityStoreError>;
+    readonly listTemplates: Effect.Effect<ReadonlyArray<Template>, EntityStoreError>;
+    readonly getTemplate: (name: string) => Effect.Effect<Template | undefined, EntityStoreError>;
+    /** Creates or replaces a template once it checks against the entity types. */
+    readonly putTemplate: (
+      template: Template,
+    ) => Effect.Effect<Template, EntityStoreError | InvalidTemplate>;
+    /** Deletes a template. Saved workflows that use it fail their check when they next start. */
+    readonly deleteTemplate: (name: string) => Effect.Effect<void, EntityStoreError>;
   }
 >()("automations/EntityStore") {}
 
@@ -99,6 +109,9 @@ export interface EntityStorage {
     type: string | undefined,
   ) => Effect.Effect<void, EntityStoreError>;
   readonly subscribers: (type: string) => Effect.Effect<ReadonlyArray<string>, EntityStoreError>;
+  readonly listTemplates: Effect.Effect<ReadonlyArray<Template>, EntityStoreError>;
+  readonly writeTemplate: (template: Template) => Effect.Effect<void, EntityStoreError>;
+  readonly deleteTemplate: (name: string) => Effect.Effect<void, EntityStoreError>;
 }
 
 /** Builds the service over an implementation's storage, so every one merges and checks alike. */
@@ -123,6 +136,11 @@ export const makeEntityStore = (storage: EntityStorage) =>
               field.to === name ? [`${type.name}.${field.name}`] : [],
             ),
       );
+      const slots = (yield* storage.listTemplates).flatMap((template) =>
+        template.slots.flatMap((slot) =>
+          slot.to === name ? [`${template.name}.${slot.name}`] : [],
+        ),
+      );
       const entities = yield* storage.listEntities(name);
       const watchers = yield* storage.subscribers(name);
       const problems = [
@@ -130,6 +148,7 @@ export const makeEntityStore = (storage: EntityStorage) =>
           ? []
           : [`it still has ${entities.length} ${entities.length === 1 ? "entity" : "entities"}`]),
         ...(referrers.length === 0 ? [] : [`${referrers.join(", ")} points to it`]),
+        ...(slots.length === 0 ? [] : [`template slots point to it: ${slots.join(", ")}`]),
         ...(watchers.length === 0 ? [] : [`automations watch it: ${watchers.join(", ")}`]),
       ];
       if (problems.length > 0) {
@@ -171,12 +190,24 @@ export const makeEntityStore = (storage: EntityStorage) =>
     }),
     subscribe: storage.subscribe,
     subscribers: storage.subscribers,
+    listTemplates: storage.listTemplates,
+    getTemplate: (name) =>
+      storage.listTemplates.pipe(
+        Effect.map((templates) => templates.find((template) => template.name === name)),
+      ),
+    putTemplate: Effect.fn("EntityStore.putTemplate")(function* (template: Template) {
+      yield* checkTemplate(yield* storage.listTypes, template);
+      yield* storage.writeTemplate(template);
+      return template;
+    }),
+    deleteTemplate: storage.deleteTemplate,
   });
 
-/** An in-memory store, seeded with `types` and `entities`. */
+/** An in-memory store, seeded with `types`, `entities`, and `templates`. */
 export const layerMemory = (seed: {
   readonly types?: ReadonlyArray<EntityType>;
   readonly entities?: ReadonlyArray<EntityRecord>;
+  readonly templates?: ReadonlyArray<Template>;
 }) =>
   Layer.sync(EntityStore, () => {
     const types = new Map((seed.types ?? []).map((type) => [type.name, type]));
@@ -185,6 +216,7 @@ export const layerMemory = (seed: {
       (seed.entities ?? []).map((entity) => [key(entity.type, entity.id), entity]),
     );
     const subscriptions = new Map<string, string>();
+    const templates = new Map((seed.templates ?? []).map((template) => [template.name, template]));
     return makeEntityStore({
       listTypes: Effect.sync(() => [...types.values()]),
       putType: (type) => Effect.sync(() => void types.set(type.name, type)),
@@ -207,5 +239,8 @@ export const layerMemory = (seed: {
             watched === type ? [automationId] : [],
           ),
         ),
+      listTemplates: Effect.sync(() => [...templates.values()]),
+      writeTemplate: (template) => Effect.sync(() => void templates.set(template.name, template)),
+      deleteTemplate: (name) => Effect.sync(() => void templates.delete(name)),
     });
   });

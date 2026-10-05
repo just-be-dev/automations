@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import { describeCatalog, workflowProblems, type Catalog } from "./catalog.ts";
 import type { EntityType } from "./entities.ts";
+import type { Template } from "./templates.ts";
 import { decodeWorkflow } from "./workflow.ts";
 
 const employee: EntityType = {
@@ -16,12 +17,38 @@ const employee: EntityType = {
   ],
 };
 
-const catalog: Catalog = { types: [employee] };
+const welcome: Template = {
+  name: "welcome",
+  label: "Welcome email",
+  description: "Welcomes any new hire.",
+  slots: [{ name: "hire", label: "New hire", type: "ref", to: "employee" }],
+  content: { subject: "Welcome, {{hire.name}}", body: "Hi {{hire.name}}" },
+};
+
+const engineering: Template = {
+  ...welcome,
+  name: "engineering",
+  label: "Engineering welcome",
+  description: "Welcomes new engineers.",
+  slots: [...welcome.slots, { name: "team", label: "Team", type: "text" }],
+  content: { body: "Hi {{hire.name}}, welcome to {{team}}" },
+};
+
+const catalog: Catalog = { types: [employee], templates: [welcome, engineering] };
 
 const problems = (
   steps: ReadonlyArray<unknown>,
   trigger: unknown = { kind: "entity", entity: "employee" },
 ) => workflowProblems(catalog, Effect.runSync(decodeWorkflow({ name: "Test", trigger, steps })));
+
+const sendEmail = (fields: Record<string, unknown>) => ({
+  id: "send",
+  title: "Send",
+  kind: "action",
+  use: "email.send",
+  with: { to: "{{employee}}" },
+  ...fields,
+});
 
 const agent = (id: string, instruction = `Do ${id}`) => ({
   id,
@@ -192,6 +219,112 @@ describe("workflowProblems", () => {
     ]);
   });
 
+  test("accepts templates that fill inputs, alone or picked by a match", () => {
+    expect(
+      problems([
+        sendEmail({ template: { use: "welcome", with: { hire: "{{employee}}" } } }),
+        {
+          ...sendEmail({
+            match: {
+              on: "employee.name",
+              cases: [
+                {
+                  when: { any: [{ op: "contains", value: "eng" }, { op: "exists" }] },
+                  with: { subject: "Welcome to engineering" },
+                  template: {
+                    use: "engineering",
+                    with: { hire: "{{employee}}", team: "Platform, under {{employee.manager}}" },
+                  },
+                },
+              ],
+              otherwise: { template: { use: "welcome", with: { hire: "{{employee.manager}}" } } },
+            },
+          }),
+          id: "send-by-role",
+        },
+      ]),
+    ).toEqual([]);
+  });
+
+  test("checks which template a step uses and what fills its slots", () => {
+    expect(
+      problems([
+        sendEmail({ template: { use: "farewell", with: {} } }),
+        {
+          ...sendEmail({
+            template: { use: "welcome", with: { hire: "{{employee.name}}", desk: "4" } },
+          }),
+          id: "wrong-slot",
+        },
+        {
+          ...sendEmail({
+            template: { use: "engineering", with: { hire: "{{steps.send.messageId}}" } },
+          }),
+          id: "unfilled",
+          with: { to: "{{employee}}", subject: "Hi" },
+        },
+      ]),
+    ).toEqual([
+      "Step send uses unknown template farewell (templates: welcome, engineering)",
+      "Step send input subject is required by email.send",
+      "Step send input body is required by email.send",
+      "Step wrong-slot: template welcome has no slot desk (slots: hire)",
+      "Step wrong-slot: template welcome: slot hire takes one employee: fill it with exactly one {{ref}} that starts at the trigger's entity and leads to one employee",
+      "Step unfilled: template engineering: slot hire takes one employee: fill it with exactly one {{ref}} that starts at the trigger's entity and leads to one employee",
+      "Step unfilled: template engineering needs slot team (Team) filled",
+    ]);
+  });
+
+  test("gives each input once on every path through a match, and only text from templates", () => {
+    expect(
+      problems([
+        sendEmail({
+          with: { to: "{{employee}}", subject: "Hi" },
+          match: {
+            on: "employee.name",
+            cases: [
+              {
+                when: { op: "equals", value: "Ada" },
+                template: { use: "welcome", with: { hire: "{{employee}}" } },
+              },
+            ],
+            otherwise: { with: { to: "{{employee.manager}}" } },
+          },
+        }),
+        {
+          id: "post",
+          title: "Post",
+          kind: "action",
+          use: "http.post",
+          with: { url: "https://example.com/hook" },
+          template: { use: "engineering", with: { hire: "{{employee}}", team: "Core" } },
+        },
+      ]),
+    ).toEqual([
+      "Step send (case 1) input subject comes from both the step's with and template welcome; keep one",
+      "Step send (otherwise) input to comes from both the step's with and the case's with; keep one",
+      "Step send (otherwise) input body is required by email.send",
+      "Step post input body takes a json, which a template can't fill",
+    ]);
+  });
+
+  test("checks the ref a match reads", () => {
+    expect(
+      problems([
+        sendEmail({
+          with: { to: "{{employee}}", subject: "Hi", body: "Hi" },
+          match: {
+            on: "employee.role",
+            cases: [{ when: { op: "exists" }, with: {} }],
+            otherwise: {},
+          },
+        }),
+      ]),
+    ).toEqual([
+      "Step send: employee.role: employee has no field role (fields: name, email, start_date, manager)",
+    ]);
+  });
+
   test("checks the trigger and refs in workflows without a subject", () => {
     expect(problems([agent("a")], { kind: "entity", entity: "contractor" })).toEqual([
       "The trigger names unknown entity type contractor (types: employee)",
@@ -211,4 +344,10 @@ test("describes object types and operations for the designer", () => {
     "- employee (Employee; shown as its name): name text, email text, start_date date, manager → employee, id",
   );
   expect(description).toContain("- slack.sendMessage:");
+  expect(description).toContain(
+    "- welcome (Welcome email): Welcomes any new hire. Slots: hire → employee (New hire). Fills subject, body; fits email.send.",
+  );
+  expect(description).toContain(
+    "Slots: hire → employee (New hire), team text (Team). Fills body; fits email.send.",
+  );
 });

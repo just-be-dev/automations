@@ -5,6 +5,7 @@ An automation is a JSON `Workflow`: a name, a trigger, and a tree of steps. The 
 - **Entities** are the records a workflow is about, such as an `employee`. The `EntityStore` service keeps their types and records; its D1 layer is the implementation in use. A run's **subject** is the entity it's about.
 - **Capabilities** are what the interpreter does itself: run an agent, wait, branch, run branches in parallel, decide, and ask a person.
 - **Connections** are outside services, such as email, Slack, a calendar, or HTTP. An `action` step performs one of their operations.
+- **Templates** are approved, reusable wording, such as the standard welcome email. An `action` step fills its inputs from one, and a `match` picks a different one per case, for example by role.
 
 Values don't have to be declared up front. A step reads what the run knows when it runs: the subject's fields (following references to other entities), and what earlier steps recorded. A value only a person has is collected by a human step at the point it's needed.
 
@@ -12,9 +13,10 @@ Values don't have to be declared up front. A step reads what the run knows when 
 | -------------------------- | ---------------------------------------------------------------------- |
 | `src/workflow.ts`          | The schema, templates, and conditions                                  |
 | `src/entities.ts`          | Entity types, records, and reading paths through `ref` fields          |
-| `src/entity-store.ts`      | The `EntityStore` service, and an in-memory layer for tests            |
+| `src/entity-store.ts`      | The `EntityStore` service (entities and templates), and a memory layer |
 | `src/entity-store-d1.ts`   | The `EntityStore` layer on D1                                          |
 | `src/connections.ts`       | The connections and their operations                                   |
+| `src/templates.ts`         | Templates, their checks, and expanding them before a run               |
 | `src/catalog.ts`           | Checks a workflow against the entity types and connections             |
 | `src/design.ts`            | The designer agent's prompt                                            |
 | `src/interpreter.ts`       | `RunAutomation`, which executes a workflow                             |
@@ -144,11 +146,12 @@ Rules for the whole tree:
 - Steps nest at most 4 levels deep.
 - Step IDs (`[a-zA-Z0-9_-]{1,40}`) are unique across the whole tree.
 
-Decoding checks the shape. Before a draft is accepted and again on save, `checkWorkflow` checks it against the catalog, the entity types in the store and the connections:
+Decoding checks the shape. Before a draft is accepted, on save, and again when a run starts, `checkWorkflow` checks it against the catalog: the entity types and templates in the store, and the connections.
 
 - Every ref starts at the subject's type or at `steps`, and every field on its path exists.
 - A step only reads steps that finish before it on every path. Steps inside a `parallel` step's branches are readable after the `parallel` step. Steps inside an `if` or `decide` branch are readable only later in that same branch, because the branch may not run.
-- Action steps name a known operation, give every required input, and give no unknown ones. `people` inputs are lists, `person` inputs point at an entity with a text field named `email` (or at that field) or are an email address, and `url` inputs are literal public HTTPS URLs.
+- Action steps name a known operation. On every path through their `match`, each input comes from exactly one place (`with`, a template, or the case), every required input is there, and no unknown ones are. `people` inputs are lists, `person` inputs point at an entity with a text field named `email` (or at that field) or are an email address, and `url` inputs are literal public HTTPS URLs.
+- Templates exist and still check against the entity types, every slot is filled, and an entity slot gets exactly one `{{ref}}` to an entity of its type. A template only fills `text` inputs.
 - A human step's `assignee` is a person.
 
 The designer gets every problem back and retries once.
@@ -202,7 +205,7 @@ An entity type has a `name` and `label`, a `title` field that names an entity wh
 | `GET /api/entities/:type/:id`   | Read one entity                                                                                              |
 | `PUT /api/entities/:type/:id`   | Merge `{ "data": { … } }` over the entity, check it against its type, and start the runs its change triggers |
 
-## Refs and templates
+## Refs
 
 A ref is a dotted path with up to 5 segments after its root:
 
@@ -210,7 +213,7 @@ A ref is a dotted path with up to 5 segments after its root:
 - `employee.manager` reads a whole entity through a `ref` field, and `employee.manager.email` reads one of its fields. `employee.id` is the subject's ID.
 - `steps.<id>.<field>…` reads what an earlier step recorded, for example `steps.confirm-time.values.start`. Numeric segments index arrays.
 
-A ref is written bare where one is expected (`until`, `assignee`, conditions); `{{employee.start_date}}` is unwrapped there. In text (titles, instructions, prompts, questions, action inputs, and field defaults), refs are written as `{{employee.name}}`.
+A ref is written bare where one is expected (`until`, `assignee`, conditions, `match.on`); `{{employee.start_date}}` is unwrapped there. In text (titles, instructions, prompts, questions, action inputs, field defaults, and what fills a template's slots), refs are written as `{{employee.name}}`. The code calls such text a template string (`renderTemplate`); the stored, reusable [templates](#templates) are a different thing.
 
 Before a step runs, the refs it reads are resolved in one Activity, loading the entities that `ref` fields point to. A replay reuses those values even if the entities have changed since. When text is rendered, strings are inserted as they are, entities as their title, lists as comma-separated items, and other JSON as JSON. A ref with no value stays as written. An action input that is exactly one `{{ref}}` passes the value through unrendered, which is how a person entity reaches an operation.
 
@@ -311,6 +314,41 @@ It records `{ "approved"?: boolean, "values"?: { field: JSON }, "respondedBy"?: 
 
 Performs one connection operation. Each input in `with` is a template string, or a list of them for `people` inputs. The step records what the operation returns.
 
+An action can also take inputs from a [template](#templates) with `template: { "use", "with" }`, and pick the inputs that vary with a `match`:
+
+```json
+{
+  "id": "welcome",
+  "title": "Welcome {{employee.name}}",
+  "kind": "action",
+  "use": "email.send",
+  "with": { "to": "{{employee}}" },
+  "match": {
+    "on": "employee.role",
+    "cases": [
+      {
+        "when": {
+          "any": [
+            { "op": "contains", "value": "engineer" },
+            { "op": "contains", "value": "Engineer" }
+          ]
+        },
+        "template": {
+          "use": "engineering_welcome_email",
+          "with": { "hire": "{{employee}}", "manager": "{{employee.manager}}" }
+        }
+      }
+    ],
+    "otherwise": { "template": { "use": "welcome_email", "with": { "hire": "{{employee}}" } } }
+  }
+}
+```
+
+- `match.on` is a ref. Each of the 1–8 `cases` has a `when` pattern: a [condition](#conditions) without `ref`, because `on` names the value once (`{ "op": "contains", "value": "engineer" }`, `{ "op": "exists" }`, `all`, `any`, `not`).
+- The first case whose pattern holds supplies its `with`, its `template`, or both. When none holds, `otherwise` does; it's required, so a match always supplies its inputs.
+- The step's own `with` and `template` hold what every case shares. An input given twice on one path is a problem, not an override.
+- The case is picked from the values the step resolved, so a replay picks the same one. A pattern that compares with `"now"` reads the time once, in an Activity.
+
 | Operation              | Inputs (`?` = optional)                                                              | Records                                  |
 | ---------------------- | ------------------------------------------------------------------------------------ | ---------------------------------------- |
 | `email.send`           | `to` person, `subject`, `body`                                                       | `messageId`                              |
@@ -327,6 +365,59 @@ Email, Slack, and Calendar are **simulated**: there are no credentials yet, so t
 - Without `body`, it sends `{ "subject", "steps" }`.
 - Delivery is at least once. Every request carries an `Idempotency-Key` header that stays the same across retries, so receivers can drop duplicates.
 - It doesn't forward trace headers, times out after 30 seconds, and fails on a non-2xx status.
+
+## Templates
+
+A template is approved wording an action fills its inputs with, stored next to the entity types:
+
+```json
+{
+  "name": "engineering_welcome_email",
+  "label": "Engineering welcome email",
+  "description": "The standard welcome email for new engineers: software engineers, engineering managers, and other engineering roles. Send it to the new hire before they start.",
+  "slots": [
+    {
+      "name": "hire",
+      "label": "New hire",
+      "type": "ref",
+      "to": "employee"
+    },
+    {
+      "name": "manager",
+      "label": "Their manager",
+      "type": "ref",
+      "to": "employee"
+    }
+  ],
+  "content": {
+    "subject": "Welcome to engineering, {{hire.name}}",
+    "body": "Hi {{hire.name}},\n\nWelcome to the engineering team! You start on {{hire.start_date}}, and {{manager.name}} will be your manager.\n\nIn your first week you'll set up your development environment, pair with a teammate on a small change, and ship it to production. {{manager.name}} will walk you through the engineering handbook on day one.\n\nIf you have questions before you start, write to {{manager.email}}.\n\nSee you soon!"
+  }
+}
+```
+
+- `name` is snake_case. `label` and `description` (up to 500 characters) tell the designer who and what it's for; it reads them to decide when the template fits.
+- `slots` are its insertion points, declared like an entity type's fields. A `ref` slot (`hire → employee`) takes an entity; any other slot takes text.
+- `content` fills the action inputs of the same names, up to 4000 characters each. Its `{{refs}}` start at a slot and follow `ref` fields like any ref: `{{hire.name}}`, `{{hire.manager.email}}`. A text slot is read whole: `{{note}}`.
+- A template is checked against the entity types when it's written.
+
+An action uses one with `"template": { "use": "engineering_welcome_email", "with": { "hire": "{{employee}}", "manager": "{{employee.manager}}" } }`. Each value in `with` fills a slot:
+
+- An entity slot takes exactly one `{{ref}}` that starts at the subject's type and leads to an entity of the slot's type. The content's refs read through it, so `{{manager.name}}` reads `employee.manager.name`.
+- A text slot takes text that may contain `{{refs}}`, such as `"{{steps.draft.output}}"`.
+
+The designer prefers templates to writing text itself or adding an agent step to write it, and uses a `match` when the right template depends on the subject.
+
+When a run starts, `expandTemplates` replaces each use with the inputs its content fills, so the run's workflow carries plain text and replays the same wording after a template changes. Editing a template changes the runs that start afterwards. If a template a saved workflow uses is deleted, or no longer fits it, the next run is recorded as `failed` with the problems instead of starting.
+
+`migrations/0003_templates.sql` creates `engineering_welcome_email` and `welcome_email`, which welcomes any new hire.
+
+| Endpoint                      | Purpose                                     |
+| ----------------------------- | ------------------------------------------- |
+| `GET /api/templates`          | List templates                              |
+| `GET /api/templates/:name`    | Read one template                           |
+| `PUT /api/templates/:name`    | Create or replace a template once it checks |
+| `DELETE /api/templates/:name` | Delete a template                           |
 
 ## Conditions
 
@@ -351,7 +442,7 @@ A comparison between mismatched types is false. Conditions never call a model; u
 
 ## Run state and execution
 
-A run starts with `{ "runId", "subject": { "type", "id", "data" } | null, "steps": {} }`, and each step adds its record under `steps.<id>`. The subject is a snapshot taken when the run starts; refs through `ref` fields load the current version when the step runs.
+A run executes the saved workflow with its templates expanded. It starts with `{ "runId", "subject": { "type", "id", "data" } | null, "steps": {} }`, and each step adds its record under `steps.<id>`. The subject is a snapshot taken when the run starts; refs through `ref` fields load the current version when the step runs.
 
 `RunAutomation` maps the tree onto `effect/workflow` primitives:
 
@@ -361,7 +452,7 @@ A run starts with `{ "runId", "subject": { "type", "id", "data" } | null, "steps
 | `agent`, `action`, `decide` | An Activity, retried twice. A replay reuses its result.                    |
 | `wait`                      | A `DurableClock`. The current time is an Activity.                         |
 | `human`                     | A `DurableDeferred`, raced against a `DurableClock` when it has a timeout. |
-| `parallel`, `if`            | Plain control flow, evaluated again on every replay.                       |
+| `parallel`, `if`, `match`   | Plain control flow, evaluated again on every replay.                       |
 
 The engine in `src/durable-engine.ts` journals payloads, Activity results, deferred completions, and clock times in the Automation object's storage under `wf:<executionId>:…`. It never keeps a run in memory between events: each `advance` callback replays the run from the start, reusing everything journaled, until it completes or reaches a clock or a person. A `clock` callback fires each durable clock at its time, and answering a task completes its deferred. Both schedule another replay.
 

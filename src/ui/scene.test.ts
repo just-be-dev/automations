@@ -248,6 +248,50 @@ test("action steps name their operation, list their inputs, and flag simulated c
   );
 });
 
+test("action steps show the template they use and the inputs each match case supplies", () => {
+  const welcome: Workflow = {
+    name: "Welcome",
+    trigger: { kind: "entity", entity: "employee" },
+    steps: [
+      {
+        id: "welcome",
+        kind: "action",
+        title: "Welcome the hire",
+        use: "email.send",
+        with: { to: "{{employee}}" },
+        match: {
+          on: "employee.role",
+          cases: [
+            {
+              when: { op: "contains", value: "engineer" },
+              template: {
+                use: "engineering_welcome_email",
+                with: { hire: "{{employee}}", manager: "{{employee.manager}}" },
+              },
+            },
+          ],
+          otherwise: {
+            with: { subject: "Welcome" },
+            template: { use: "welcome_email", with: { hire: "{{employee}}" } },
+          },
+        },
+      },
+    ],
+  };
+  scene(
+    { update, view },
+    given(withDraft(welcome)),
+    expect(role("list", { name: "Welcome the hire inputs" })).toHaveText("to: employee"),
+    expect(role("list", { name: "Welcome the hire cases" })).toContainText(
+      'If employee.role contains "engineer"Template engineering_welcome_email · hire: employee · manager: employee.manager',
+    ),
+    expect(role("list", { name: "Welcome the hire cases" })).toContainText(
+      "OtherwiseTemplate welcome_email · hire: employee",
+    ),
+    expect(role("list", { name: "Otherwise inputs" })).toHaveText("subject: Welcome"),
+  );
+});
+
 test("the JSON toggle shows the draft's raw workflow", () => {
   const draft: Workflow = {
     name: "Orders",

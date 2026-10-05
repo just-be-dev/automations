@@ -1,31 +1,46 @@
 import * as Effect from "effect/Effect";
-import { connections, findOperation, type OperationInput } from "./connections.ts";
+import {
+  connections,
+  findOperation,
+  operations,
+  type Operation,
+  type OperationInput,
+} from "./connections.ts";
 import { pathTarget, type EntityField, type EntityType } from "./entities.ts";
+import { contentRefs, templateProblems, type Template } from "./templates.ts";
 import {
   InvalidWorkflow,
+  actionPaths,
+  actionTemplates,
   conditionRefs,
   isPublicHttpsUrl,
   loneRef,
   stepRefs,
   subjectType,
   templateRefs,
+  type ActionInput,
   type ActionStep,
   type Step,
+  type TemplateUse,
   type Workflow,
 } from "./workflow.ts";
 
 /**
- * What a workflow can draw on beyond its own steps: the entity types in the store. The connections are
- * static (`src/connections.ts`). The schema in `src/workflow.ts` checks a workflow's shape; this
- * module checks that it makes sense against the catalog, and describes the catalog to the
- * designer agent.
+ * What a workflow can draw on beyond its own steps: the entity types and templates in the store.
+ * The connections are static (`src/connections.ts`). The schema in `src/workflow.ts` checks a
+ * workflow's shape; this module checks that it makes sense against the catalog, and describes the
+ * catalog to the designer agent.
  */
 export interface Catalog {
   readonly types: ReadonlyArray<EntityType>;
+  readonly templates: ReadonlyArray<Template>;
 }
 
 const findType = (catalog: Catalog, name: string | undefined) =>
   catalog.types.find((type) => type.name === name);
+
+const findTemplate = (catalog: Catalog, name: string | undefined) =>
+  catalog.templates.find((template) => template.name === name);
 
 /**
  * Checks one ref. `available` holds the IDs of the steps that have finished on every path to the
@@ -135,17 +150,14 @@ const isPersonRef = (catalog: Catalog, subject: EntityType | undefined, ref: str
   );
 };
 
-const inputProblems = (
+/** Problems with one value an action step gives an input in `with`. */
+const valueProblems = (
   catalog: Catalog,
   subject: EntityType | undefined,
-  step: ActionStep,
+  where: string,
   input: OperationInput,
+  value: ActionInput,
 ): ReadonlyArray<string> => {
-  const where = `Step ${step.id} input ${input.name}`;
-  const value = step.with[input.name];
-  if (value === undefined) {
-    return input.required ? [`${where} is required by ${step.use}`] : [];
-  }
   if ((input.type === "people") !== Array.isArray(value)) {
     return [
       input.type === "people"
@@ -175,6 +187,118 @@ const inputProblems = (
   return [];
 };
 
+/**
+ * Checks the inputs an action gets on one path: each one comes from exactly one source, the
+ * operation knows it, required ones are there, and values fit their input's type. A template's
+ * content only fills text inputs.
+ */
+const pathProblems = (
+  catalog: Catalog,
+  subject: EntityType | undefined,
+  step: ActionStep,
+  operation: Operation,
+  path: ReturnType<typeof actionPaths>[number],
+): ReadonlyArray<string> => {
+  const where = `Step ${step.id}${path.label === "" ? "" : ` (${path.label})`}`;
+  // The first source is the step's own; any other is the match case's.
+  const given = path.sources.flatMap((source, index) => [
+    ...Object.keys(source.with ?? {}).map((name) => ({
+      name,
+      from: index === 0 ? "the step's with" : "the case's with",
+      byTemplate: false,
+    })),
+    ...Object.keys(findTemplate(catalog, source.template?.use)?.content ?? {}).map((name) => ({
+      name,
+      from: `template ${source.template?.use}`,
+      byTemplate: true,
+    })),
+  ]);
+  const names = [...new Set(given.map((input) => input.name))];
+  return [
+    ...names.flatMap((name) => {
+      const sources = given.filter((candidate) => candidate.name === name);
+      const input = operation.inputs.find((candidate) => candidate.name === name);
+      return [
+        ...(input === undefined ? [`${where}: ${step.use} has no input ${name}`] : []),
+        ...(sources.length > 1
+          ? [
+              `${where} input ${name} comes from both ${sources.map((source) => source.from).join(" and ")}; keep one`,
+            ]
+          : []),
+        ...(input !== undefined &&
+        input.type !== "text" &&
+        sources.some((source) => source.byTemplate)
+          ? [`${where} input ${name} takes a ${input.type}, which a template can't fill`]
+          : []),
+      ];
+    }),
+    ...operation.inputs.flatMap((input) =>
+      input.required && !names.includes(input.name)
+        ? [`${where} input ${input.name} is required by ${step.use}`]
+        : path.sources.flatMap((source) => {
+            const value = source.with?.[input.name];
+            return value === undefined
+              ? []
+              : valueProblems(catalog, subject, `${where} input ${input.name}`, input, value);
+          }),
+    ),
+  ];
+};
+
+/**
+ * Checks one template use: the template exists and still checks, every slot is filled and no
+ * other, and an entity slot gets exactly one {{ref}} to an entity of its type.
+ */
+const templateUseProblems = (
+  catalog: Catalog,
+  subject: EntityType | undefined,
+  step: ActionStep,
+  use: TemplateUse,
+): ReadonlyArray<string> => {
+  const where = `Step ${step.id}: template ${use.use}`;
+  const template = findTemplate(catalog, use.use);
+  if (template === undefined) {
+    const names = catalog.templates.map((candidate) => candidate.name).join(", ");
+    return [`Step ${step.id} uses unknown template ${use.use} (templates: ${names || "none"})`];
+  }
+  const slotNames = template.slots.map((slot) => slot.name);
+  return [
+    ...templateProblems(catalog.types, template).map((problem) => `${where}: ${problem}`),
+    ...Object.keys(use.with).flatMap((name) =>
+      slotNames.includes(name)
+        ? []
+        : [`${where} has no slot ${name} (slots: ${slotNames.join(", ") || "none"})`],
+    ),
+    ...template.slots.flatMap((slot) => {
+      const filling = use.with[slot.name];
+      if (filling === undefined) {
+        return [`${where} needs slot ${slot.name} (${slot.label}) filled`];
+      }
+      if (slot.type !== "ref") {
+        return [];
+      }
+      const ref = loneRef(filling);
+      const target =
+        ref === undefined || subject === undefined || ref.split(".")[0] !== subject.name
+          ? undefined
+          : pathTarget(catalog.types, subject, ref.split(".").slice(1));
+      if (target?.kind !== "entity" || target.type.name !== slot.to) {
+        return [
+          `${where}: slot ${slot.name} takes one ${slot.to}: fill it with exactly one {{ref}} that starts at the trigger's entity and leads to one ${slot.to}`,
+        ];
+      }
+      return contentRefs(template).flatMap((contentRef) => {
+        const [root, ...path] = contentRef.split(".");
+        return root === slot.name && ref !== undefined && ref.split(".").length + path.length > 6
+          ? [
+              `${where}: {{${contentRef}}} reaches too far through ${ref}; refs have at most 5 fields after their root`,
+            ]
+          : [];
+      });
+    }),
+  ];
+};
+
 const actionProblems = (
   catalog: Catalog,
   subject: EntityType | undefined,
@@ -184,12 +308,11 @@ const actionProblems = (
   if (operation === undefined) {
     return [`Step ${step.id} uses unknown operation ${step.use}`];
   }
-  const unknown = Object.keys(step.with).filter(
-    (name) => !operation.inputs.some((input) => input.name === name),
-  );
   return [
-    ...unknown.map((name) => `Step ${step.id}: ${step.use} has no input ${name}`),
-    ...operation.inputs.flatMap((input) => inputProblems(catalog, subject, step, input)),
+    ...new Set([
+      ...actionTemplates(step).flatMap((use) => templateUseProblems(catalog, subject, step, use)),
+      ...actionPaths(step).flatMap((path) => pathProblems(catalog, subject, step, operation, path)),
+    ]),
   ];
 };
 
@@ -308,7 +431,10 @@ export const workflowProblems = (catalog: Catalog, workflow: Workflow): Readonly
   ];
 };
 
-export const checkWorkflow = (catalog: Catalog, workflow: Workflow) => {
+export const checkWorkflow = (
+  catalog: Catalog,
+  workflow: Workflow,
+): Effect.Effect<Workflow, InvalidWorkflow> => {
   const problems = workflowProblems(catalog, workflow);
   return problems.length === 0
     ? Effect.succeed(workflow)
@@ -323,6 +449,24 @@ const describeType = (type: EntityType) =>
 const describeInput = (input: OperationInput) =>
   `${input.name}${input.required ? "" : "?"}: ${input.type} (${input.description})`;
 
+const describeSlot = (slot: Template["slots"][number]) =>
+  `${slot.name} ${slot.type === "ref" ? `→ ${slot.to}` : slot.type} (${slot.label})`;
+
+/** The operations whose text inputs take all of a template's content. */
+const operationsFitting = (template: Template) =>
+  operations.filter((operation) =>
+    Object.keys(template.content).every((name) =>
+      operation.inputs.some((input) => input.name === name && input.type === "text"),
+    ),
+  );
+
+const describeTemplate = (template: Template) => {
+  const fits = operationsFitting(template).map((operation) => operation.id);
+  return `- ${template.name} (${template.label}): ${template.description} Slots: ${
+    template.slots.map(describeSlot).join(", ") || "none"
+  }. Fills ${Object.keys(template.content).join(", ")}${fits.length === 0 ? "" : `; fits ${fits.join(", ")}`}.`;
+};
+
 /** The catalog as the designer agent reads it. */
 export const describeCatalog = (catalog: Catalog) =>
   [
@@ -336,4 +480,7 @@ export const describeCatalog = (catalog: Catalog) =>
           `- ${operation.id}: ${operation.description} Inputs: ${operation.inputs.map(describeInput).join("; ")}. Records ${operation.records}.`,
       ),
     ),
+    "",
+    "Templates (approved wording for action inputs; a slot marked → takes an entity of that type):",
+    ...(catalog.templates.length === 0 ? ["- none yet"] : catalog.templates.map(describeTemplate)),
   ].join("\n");
