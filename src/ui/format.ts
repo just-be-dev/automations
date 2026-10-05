@@ -1,0 +1,38 @@
+import type { RunStatus } from "../workflow.ts";
+
+export const withArticle = (entityType: string) => {
+  const noun = entityType.replaceAll("_", " ");
+  return `${/^[aeiou]/.test(noun) ? "an" : "a"} ${noun}`;
+};
+
+export const formatTime = (millis: number) =>
+  new Date(millis).toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+export const openTasksText = (count: number) =>
+  count === 1 ? "1 open task" : `${count} open tasks`;
+
+export const runStatusLabel: Record<RunStatus, string> = {
+  running: "Running",
+  waiting: "Waiting",
+  completed: "Completed",
+  failed: "Failed",
+};
+
+export const runStatusClass: Record<RunStatus, string> = {
+  running: "text-signal",
+  waiting: "text-sand-11",
+  completed: "text-success",
+  failed: "text-destructive",
+};
+
+export const runDotClass: Record<RunStatus, string> = {
+  running: "animate-pulse bg-signal",
+  waiting: "bg-sand-10",
+  completed: "bg-success",
+  failed: "bg-destructive",
+};

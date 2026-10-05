@@ -59,6 +59,17 @@ export type ButtonSize = (typeof buttonSizeKeys)[number];
 const buttonBase =
   "focus-visible:border-ring focus-visible:ring-ring/50 aria-invalid:ring-destructive/20 dark:aria-invalid:ring-destructive/40 aria-invalid:border-destructive dark:aria-invalid:border-destructive/50 rounded-lg border border-transparent bg-clip-padding text-sm font-medium focus-visible:ring-3 aria-invalid:ring-3 active:not-aria-[haspopup]:translate-y-px [&_svg:not([class*='size-'])]:size-4 group/button inline-flex shrink-0 items-center justify-center whitespace-nowrap transition-all outline-none select-none [&_svg]:pointer-events-none [&_svg]:shrink-0 disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-disabled:pointer-events-none data-disabled:opacity-50";
 
+/** The button's classes, for a link that should look like one. */
+export const buttonClass = (
+  config: Readonly<{ variant?: ButtonVariant; size?: ButtonSize; className?: string }>,
+) =>
+  cn(
+    buttonBase,
+    buttonVariants[config.variant ?? "default"],
+    buttonSizes[config.size ?? "default"],
+    config.className,
+  );
+
 export type ButtonConfig<M> = Readonly<{
   onClick?: M;
   isDisabled?: boolean;
@@ -86,14 +97,7 @@ export const button = <M>(config: ButtonConfig<M>, label: ButtonLabel, h: HtmlBu
         h.button(
           [
             ...attributes.button,
-            h.Class(
-              cn(
-                buttonBase,
-                buttonVariants[config.variant ?? "default"],
-                buttonSizes[config.size ?? "default"],
-                config.className,
-              ),
-            ),
+            h.Class(buttonClass(config)),
             h.DataAttribute("slot", "button"),
             ...(config.attributes ?? []),
           ],

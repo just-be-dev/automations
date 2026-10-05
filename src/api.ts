@@ -1,4 +1,5 @@
 import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -11,6 +12,7 @@ import { HumanResponse } from "./interpreter.ts";
 import { EntityData, EntityName, EntityType } from "./entities.ts";
 import { EntityStore, type EntityChange } from "./entity-store.ts";
 import { EntityStoreD1 } from "./entity-store-d1.ts";
+import type { AutomationOverview } from "./workflow.ts";
 
 const MAX_BODY_BYTES = 32_000;
 
@@ -270,11 +272,42 @@ export default class Api extends Cloudflare.Worker<Api>()(
       { prefix: "/api/entities" },
     );
 
+    // Each automation is its own Durable Object, so the overview asks every listed one. One that
+    // can't answer is listed with its error instead of failing the whole overview.
+    const overviewRoute = HttpRouter.add(
+      "GET",
+      "/api/overview",
+      respond(
+        Effect.gen(function* () {
+          const listed = yield* index.list();
+          return yield* Effect.forEach(
+            listed,
+            (automation) =>
+              automations
+                .getByName(automation.id)
+                .overview()
+                .pipe(
+                  Effect.map((status): AutomationOverview => ({ ...automation, ...status })),
+                  // NOTE: the stub types `overview` as infallible, so an unreachable object is a defect.
+                  Effect.catchCause((cause) =>
+                    Effect.succeed<AutomationOverview>({
+                      ...automation,
+                      activeRuns: [],
+                      error: messageOf(Cause.squash(cause)),
+                    }),
+                  ),
+                ),
+            { concurrency: 8 },
+          );
+        }),
+      ),
+    );
+
     const fallback = HttpRouter.add("*", "*", json({ error: "Not found" }, 404));
 
     return {
       fetch: yield* HttpRouter.toHttpEffect(
-        Layer.mergeAll(automationRoutes, entityRoutes, fallback),
+        Layer.mergeAll(automationRoutes, entityRoutes, overviewRoute, fallback),
       ),
     };
   }).pipe(Effect.provide(Cloudflare.D1.QueryDatabaseBinding)),

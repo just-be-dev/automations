@@ -5,7 +5,7 @@ A single-tenant prototype on Cloudflare: you design sequential automations in a 
 ## Layout
 
 - `alchemy.run.ts`: the Alchemy 2 Stack. It declares the `Studio` Foldkit website, which carries Cloudflare Access and the test service token, and exports `StudioEnv`.
-- `src/api.ts`: the Effect-native `Api` Worker. It holds the `HttpRouter` routes under `/api/automations` and `/api/entities`, and has no public URL (`workersDev: false`). Writing an entity asks every automation subscribed to its type whether to start a run.
+- `src/api.ts`: the Effect-native `Api` Worker. It holds the `HttpRouter` routes under `/api/automations` and `/api/entities`, plus `GET /api/overview`, and has no public URL (`workersDev: false`). Writing an entity asks every automation subscribed to its type whether to start a run. The overview asks every listed automation's `overview` for its saved trigger, its runs in flight, and its latest run, and lists one that can't answer with its `error`.
 - `src/automation.ts`: the `Automation` Durable Object. It stores the draft and saved workflow and the chat transcript, and runs saved workflows with `RunAutomation` on the durable engine. It uses `Alchemy.makeCallback` to answer chat messages (`designReply`), replay runs (`advance`), and fire durable clocks (`clock`). `chat` only stores the message as `pendingChat` and schedules the reply, so a reload mid-answer loses nothing; the UI polls `GET /api/automations/:id` until `pendingChat` clears. While the agent works, that response also carries `progress`, one of the plain phrases in `progressPhrases`. `designReply` keeps it in memory: the stage of pi's in-flight answer (`pi.live`) fixes some phrases, and the `clef-flash` classifier picks the others from the designer's latest reasoning.
 - `src/design.ts`: the designer agent's instructions, generated from the catalog, `designDraft`, which turns its answer into a draft, and the progress phrases with the classifier question that chooses among them. `designDraft` sets the instructions as the root pi conversation's system prompt before each reply, so the catalog stays current and each chat message is sent as the user wrote it. A reply that doesn't decode or check against the catalog gets one retry with the problems. Before that, `decodeDraft` (in `src/workflow.ts`) repairs closing brackets that are out of order or missing, which Kimi sometimes gets wrong at the end of deeply nested replies, and when the JSON still doesn't parse it says exactly which bracket is wrong. Progress is read by non-technical users: keep the phrases plain, and never let them reveal the retry or show the agent's raw reasoning.
 - `src/workflow.ts`: the pure DSL. It holds the Schema models (`Workflow`, `Trigger`, the recursive `Step` tree, `Run`), templates and refs, and condition evaluation. `docs/workflow-dsl.md` is its reference; keep the two in step.
@@ -21,7 +21,7 @@ A single-tenant prototype on Cloudflare: you design sequential automations in a 
 - `migrations/`: D1 migrations, applied in numeric order on deploy and under `alchemy dev`.
 - `src/pi.ts` and `src/pi-storage.ts`: pi-durable and pi-ai running inside the Durable Object, with pi's tables stored in the object's SQLite.
 - `src/edge.ts`: the Studio Worker's async entry. It only forwards `/api/*` to `Api`. Keep logic out of it.
-- `src/ui/`: the Foldkit browser app. `public/_headers` sets the CSP for static assets.
+- `src/ui/`: the Foldkit browser app. `src/ui/route.ts` maps URLs to its two pages: `/` is the overview (`src/ui/overview.ts`, a Submodel that lists runs in flight and starts saved automations), `/?automation=<id>` is the studio that edits one, and `/?automation=<id>&run=<runId>` is a run's page. The studio and run pages live in `src/ui/main.ts`. A run page shows the snapshot the run executed and never the designer chat or the draft. On the overview and in the studio, a plain click on a run link opens the run in a side panel instead (`maybeRunPanel`); the panel and the run page share the `OpenRun` state, and changing pages closes the panel. `GET /api/automations/:id/runs/:runId` returns the run with its `subjectTitle`, so either view labels it without another request. Every page change bumps the model's `revision`, so the previous page's polls and late replies are dropped. `public/_headers` sets the CSP for static assets.
 
 ## Verify before finishing
 
@@ -34,9 +34,10 @@ bun run typecheck && bun run lint && bun run test && bun run format:check
 
 ## Debugging a user's automation
 
-The UI keeps the open automation in the URL (`/?automation=<id>`). When a user shares that URL from `mise run dev`, read the automation over the local API. Dev mode skips Access, so no credentials are needed:
+The UI keeps the open automation, and its open run, in the URL (`/?automation=<id>&run=<runId>`). When a user shares that URL from `mise run dev`, read the automation over the local API. Dev mode skips Access, so no credentials are needed:
 
 ```sh
+curl -s "$STUDIO_URL/api/overview"                       # every automation's trigger and runs in flight
 curl -s "$STUDIO_URL/api/automations"                    # every automation with a draft
 curl -s "$STUDIO_URL/api/automations/<id>"               # draft, saved, conversation, recent runs
 curl -s "$STUDIO_URL/api/automations/<id>/runs/<runId>"  # one run: steps, records, tasks; the UI shows the run ID

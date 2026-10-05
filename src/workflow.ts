@@ -602,6 +602,13 @@ export const Run = Schema.Struct({
 });
 export interface Run extends Schema.Schema.Type<typeof Run> {}
 
+/** A run as `GET /api/automations/:id/runs/:runId` returns it, labelled with its subject's title. */
+export const TitledRun = Schema.Struct({
+  ...Run.fields,
+  subjectTitle: Schema.NullOr(Schema.String),
+});
+export interface TitledRun extends Schema.Schema.Type<typeof TitledRun> {}
+
 /** A run as the studio lists it. */
 export const RunSummary = Schema.Struct({
   id: Schema.String,
@@ -611,6 +618,20 @@ export const RunSummary = Schema.Struct({
   openTasks: Schema.Int,
 });
 export interface RunSummary extends Schema.Schema.Type<typeof RunSummary> {}
+
+/**
+ * An automation as the studio's overview lists it (`GET /api/overview`). `saved` is missing until
+ * the automation is saved, and `error` says why its Durable Object couldn't be read.
+ */
+export const AutomationOverview = Schema.Struct({
+  ...AutomationSummary.fields,
+  saved: Schema.optionalKey(Schema.Struct({ trigger: Trigger })),
+  /** Runs still running or waiting, however old, newest first. */
+  activeRuns: Schema.Array(RunSummary),
+  lastRun: Schema.optionalKey(RunSummary),
+  error: Schema.optionalKey(Schema.String),
+});
+export interface AutomationOverview extends Schema.Schema.Type<typeof AutomationOverview> {}
 
 const invalid = (error: Schema.SchemaError) => new InvalidWorkflow({ message: error.message });
 

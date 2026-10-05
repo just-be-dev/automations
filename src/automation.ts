@@ -414,7 +414,8 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         .get("pendingChat")
         .pipe(Effect.flatMap(decodeStoredPendingChat));
 
-      const listRuns = Effect.gen(function* () {
+      /** Every run, newest first. */
+      const runSummaries = Effect.gen(function* () {
         const entries = yield* state.storage.list({ prefix: runPrefix });
         const runs = yield* Effect.forEach([...entries.values()], decodeOrDrop(Run));
         // The titles only label the list, so a D1 failure shows IDs instead.
@@ -422,9 +423,10 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         return runs
           .filter((run): run is Run => run !== undefined)
           .toSorted((left, right) => right.startedAt - left.startedAt)
-          .slice(0, 20)
           .map((run) => summary(types, run));
       });
+
+      const listRuns = runSummaries.pipe(Effect.map((runs) => runs.slice(0, 20)));
 
       const inspectWorkflow = Effect.fn("Automation.inspectWorkflow")(function* () {
         const draft = yield* readWorkflow("draft");
@@ -435,6 +437,20 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         const progress =
           pendingChat?.status === "working" ? yield* readProgress(pendingChat.id) : undefined;
         return { draft, saved, conversation, pendingChat, runs, progress };
+      });
+
+      /**
+       * What the studio's overview shows: the saved trigger, every run still in flight however old,
+       * and the latest run.
+       */
+      const overview = Effect.fn("Automation.overview")(function* () {
+        const saved = yield* readWorkflow("saved");
+        const runs = yield* runSummaries;
+        return {
+          ...(saved === undefined ? {} : { saved: { trigger: saved.trigger } }),
+          activeRuns: runs.filter((run) => run.status === "running" || run.status === "waiting"),
+          ...(runs[0] === undefined ? {} : { lastRun: runs[0] }),
+        };
       });
 
       // Progress is a hint that only matters while this instance answers, so it stays in memory.
@@ -666,11 +682,18 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         return { ok: true };
       });
 
+      /** A run, with its subject's title as the run list shows it. */
       const run = Effect.fn("Automation.run")(function* (id: string) {
-        return yield* readRun(id);
+        const found = yield* readRun(id);
+        if (found === undefined) {
+          return undefined;
+        }
+        // The title only labels the run, so a D1 failure shows the subject's ID instead.
+        const types = yield* entities.listTypes.pipe(Effect.orElseSucceed(() => []));
+        return { ...found, subjectTitle: summary(types, found).subject };
       });
 
-      return { inspectWorkflow, chat, save, start, entityChanged, respond, run };
+      return { inspectWorkflow, overview, chat, save, start, entityChanged, respond, run };
     }).pipe(Effect.provide(entityStore));
   }).pipe(
     Effect.provide(

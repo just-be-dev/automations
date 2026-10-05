@@ -5,7 +5,6 @@ import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import { HttpClient, HttpClientRequest } from "effect/http";
 import { Command, Dom, Http, type Runtime, Update } from "foldkit";
 import type { Document, Html, HtmlBuilder } from "foldkit/html";
 import { defineMessageUnion } from "foldkit/message";
@@ -15,7 +14,6 @@ import { defineTaggedUnion } from "foldkit/schema";
 import { modifyFields } from "foldkit/struct";
 import { Checkbox, Disclosure, Input } from "@foldkit/ui";
 import {
-  ArrowLeft,
   Bot,
   Braces,
   CalendarDays,
@@ -24,7 +22,10 @@ import {
   GitBranch,
   Hash,
   Hourglass,
+  LayoutDashboard,
   Mail,
+  Maximize2,
+  Pencil,
   MessageSquare,
   Monitor,
   Moon,
@@ -44,7 +45,7 @@ import {
 } from "lucide";
 import { badge } from "@/components/ui/badge";
 import { Bubble } from "@/components/ui/bubble";
-import { button } from "@/components/ui/button";
+import { button, buttonClass } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
 import { input, inputClass } from "@/components/ui/input";
 import { Message as ChatMessage } from "@/components/ui/message";
@@ -59,6 +60,7 @@ import {
   RunStatus,
   RunSummary,
   subjectType,
+  TitledRun,
   templateParts,
   workflowRefs,
   Workflow,
@@ -71,7 +73,17 @@ import {
   type Trigger,
   type ValueType,
 } from "../workflow.ts";
-import { EntityRecord, EntityType } from "../entities.ts";
+import { errorText, loadSubjectOptions, requestJson, SubjectOption } from "./api.ts";
+import {
+  formatTime,
+  openTasksText,
+  runDotClass,
+  runStatusClass,
+  runStatusLabel,
+  withArticle,
+} from "./format.ts";
+import * as Overview from "./overview.ts";
+import { AppRoute, automationHref, overviewHref, routeFromUrl, runHref } from "./route.ts";
 import { applyTheme, nextTheme, Theme, type Flags } from "./theme.ts";
 
 // MODEL
@@ -101,9 +113,6 @@ const Directory = defineTaggedUnion({
   Unavailable: { error: Schema.String },
 });
 
-const SubjectOption = Schema.Struct({ id: Schema.String, title: Schema.String });
-type SubjectOption = typeof SubjectOption.Type;
-
 const SubjectChoices = defineTaggedUnion({
   NotNeeded: {},
   Loading: { entityType: Schema.String },
@@ -113,11 +122,10 @@ const SubjectChoices = defineTaggedUnion({
 type SubjectChoices = typeof SubjectChoices.Type;
 
 const RunDetail = defineTaggedUnion({
-  Closed: {},
-  Loading: { runId: Schema.String },
-  Loaded: { run: Run },
+  Loading: {},
+  Loaded: { run: Run, maybeSubjectTitle: Schema.Option(Schema.String) },
+  Unavailable: { error: Schema.String },
 });
-type RunDetail = typeof RunDetail.Type;
 
 const TaskFieldEdit = Schema.Struct({
   step: Schema.String,
@@ -132,7 +140,38 @@ const TaskAnswer = Schema.Struct({
 });
 type TaskAnswer = typeof TaskAnswer.Type;
 
+/** How the last answer to one of the run's tasks, or the last reload of the run, went. */
+const RunNotice = defineTaggedUnion({
+  Idle: {},
+  Sending: {},
+  Sent: {},
+  Failed: { error: Schema.String },
+});
+type RunNotice = typeof RunNotice.Type;
+
+/** A run being followed, on its own page or in the panel beside the overview or the studio. */
+const OpenRun = Schema.Struct({
+  automationId: Schema.String,
+  runId: Schema.String,
+  detail: RunDetail,
+  taskEdits: Schema.Array(TaskFieldEdit),
+  notice: RunNotice,
+});
+type OpenRun = typeof OpenRun.Type;
+
+/**
+ * The overview of every automation, the studio that edits the one in `automationId`, or one of its
+ * runs. A run page shows what the run did without the designer: it ran a saved snapshot, not the
+ * draft.
+ */
+const Page = defineTaggedUnion({
+  Overview: { overview: Overview.Model },
+  Studio: {},
+  Run: { openRun: OpenRun },
+});
+
 export const Model = Schema.Struct({
+  page: Page,
   automationId: Schema.String,
   automationIdInput: Schema.String,
   directory: Directory,
@@ -143,9 +182,10 @@ export const Model = Schema.Struct({
   maybeSaved: Schema.Option(Workflow),
   maybePendingChat: Schema.Option(PendingChat),
   runs: Schema.Array(RunSummary),
-  runDetail: RunDetail,
+  /** The run open beside the overview or the studio. Changing pages closes it. */
+  maybeRunPanel: Schema.Option(OpenRun),
+  /** Each load of the open run starts a new chain of polls and drops the replies of older ones. */
   runPoll: Schema.Int,
-  taskEdits: Schema.Array(TaskFieldEdit),
   subjectChoices: SubjectChoices,
   maybeSubjectId: Schema.Option(Schema.String),
   /** What the agent is doing while it answers, as the server last described it. */
@@ -177,8 +217,8 @@ export const Message = defineMessageUnion({
   ClickedSave: {},
   SelectedSubject: { subjectId: Schema.String },
   ClickedStart: {},
-  ClickedRun: { runId: Schema.String },
-  ClickedCloseRun: {},
+  ClickedCloseRunPanel: {},
+  ClickedExpandRunPanel: {},
   ClickedApproveTask: { step: Schema.String },
   ClickedRejectTask: { step: Schema.String },
   UpdatedTaskField: { step: Schema.String, field: Schema.String, value: Schema.String },
@@ -208,34 +248,38 @@ export const Message = defineMessageUnion({
   },
   SucceededSaveDraft: { revision: Schema.Int, saved: Workflow },
   SucceededStartRun: { revision: Schema.Int, runId: Schema.String },
-  SucceededLoadRun: { revision: Schema.Int, poll: Schema.Int, run: Run },
+  SucceededLoadRun: {
+    revision: Schema.Int,
+    poll: Schema.Int,
+    run: Run,
+    maybeSubjectTitle: Schema.Option(Schema.String),
+  },
   FailedLoadRun: { revision: Schema.Int, poll: Schema.Int, error: Schema.String },
   SucceededLoadRuns: { revision: Schema.Int, runs: Schema.Array(RunSummary) },
   SucceededAnswerTask: { revision: Schema.Int, runId: Schema.String, step: Schema.String },
+  FailedAnswerTask: { revision: Schema.Int, runId: Schema.String, error: Schema.String },
   FailedRequest: { revision: Schema.Int, error: Schema.String },
+  GotOverviewMessage: { message: Overview.Message },
 });
 export type Message = typeof Message.Type;
 
 // INIT
 
-const defaultAutomationId = "my-automation";
-
-export const automationIdFromUrl = (url: Url) =>
-  Option.match(url.search, {
-    onNone: () => defaultAutomationId,
-    onSome: (search) => new URLSearchParams(search).get("automation") ?? defaultAutomationId,
-  });
-
-export const automationHref = (automationId: string) =>
-  `/?${new URLSearchParams({ automation: automationId })}`;
-
 const invalidIdError = "Automation IDs use letters, numbers, - and _ (up to 80 characters)";
 
 const validId = (value: string) => /^[a-zA-Z0-9_-]{1,80}$/.test(value.trim());
 
+const toOverviewMessage = (message: Overview.Message) => Message.GotOverviewMessage({ message });
+
 export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flags, url) => {
-  const automationId = automationIdFromUrl(url);
+  const route = routeFromUrl(url);
+  const automationId = AppRoute.match(route, {
+    Overview: () => "",
+    Studio: (studio) => studio.automationId,
+    Run: (run) => run.automationId,
+  });
   const model = Model.make({
+    page: Page.Studio(),
     automationId,
     automationIdInput: automationId,
     directory: Directory.Loading(),
@@ -246,9 +290,8 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
     maybeSaved: Option.none(),
     maybePendingChat: Option.none(),
     runs: [],
-    runDetail: RunDetail.Closed(),
+    maybeRunPanel: Option.none(),
     runPoll: 0,
-    taskEdits: [],
     subjectChoices: SubjectChoices.NotNeeded(),
     maybeSubjectId: Option.none(),
     maybeProgress: Option.none(),
@@ -259,12 +302,8 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
       ? Activity.Working({ notice: "Loading automation…" })
       : Activity.Failed({ error: invalidIdError }),
   });
-  return {
-    model,
-    commands: validId(automationId)
-      ? [LoadAutomation({ automationId, revision: 0 }), LoadAutomations()]
-      : [LoadAutomations()],
-  };
+  const page = showPage(model, route);
+  return { model: page.model, commands: [...(page.commands ?? []), LoadAutomations()] };
 };
 
 // UPDATE
@@ -275,8 +314,8 @@ const fail = (model: Model, error: string) => ({
 
 const maxMessageLength = 10_000;
 
-const openAutomation = (model: Model, automationId: string): Update.Return<Model, Message> => {
-  const opened = modifyFields(model, {
+const leaveAutomation = (model: Model, automationId: string): Model =>
+  modifyFields(model, {
     automationId: () => automationId,
     automationIdInput: () => automationId,
     revision: (revision) => revision + 1,
@@ -284,8 +323,7 @@ const openAutomation = (model: Model, automationId: string): Update.Return<Model
     maybeSaved: () => Option.none(),
     maybePendingChat: () => Option.none(),
     runs: () => [],
-    runDetail: () => RunDetail.Closed(),
-    taskEdits: () => [],
+    maybeRunPanel: () => Option.none(),
     subjectChoices: () => SubjectChoices.NotNeeded(),
     maybeSubjectId: () => Option.none(),
     maybeProgress: () => Option.none(),
@@ -293,14 +331,103 @@ const openAutomation = (model: Model, automationId: string): Update.Return<Model
     conversation: () => [],
     activity: () => Activity.Working({ notice: "Loading automation…" }),
   });
-  if (!validId(automationId)) {
-    return fail(opened, invalidIdError);
+
+/** Shows the route's page on a model already set to its automation, and loads what it needs. */
+const showPage = (model: Model, route: AppRoute): Update.Return<Model, Message> =>
+  AppRoute.match(route, {
+    Overview: () =>
+      Update.foldChildInit(Overview.init(model.revision), {
+        toParentModel: (overview) =>
+          modifyFields(model, {
+            page: () => Page.Overview({ overview }),
+            activity: () => Activity.Ready({ notice: "" }),
+          }),
+        toParentMessage: toOverviewMessage,
+      }),
+    Studio: ({ automationId }) => {
+      const studio = modifyFields(model, { page: () => Page.Studio() });
+      if (!validId(automationId)) {
+        return fail(studio, invalidIdError);
+      }
+      return {
+        model: studio,
+        commands: [LoadAutomation({ automationId, revision: model.revision })],
+      };
+    },
+    Run: ({ automationId, runId }) => {
+      const runPage = modifyFields(model, {
+        page: () => Page.Run({ openRun: openingRun(automationId, runId) }),
+        activity: () => Activity.Ready({ notice: "" }),
+      });
+      if (!validId(automationId)) {
+        return {
+          model: modifyOpenRun(runPage, (openRun) => ({
+            ...openRun,
+            detail: RunDetail.Unavailable({ error: invalidIdError }),
+          })),
+        };
+      }
+      return reloadOpenRun(runPage);
+    },
+  });
+
+const routeAutomationId = (route: AppRoute) =>
+  AppRoute.match(route, {
+    Overview: () => "",
+    Studio: ({ automationId }) => automationId,
+    Run: ({ automationId }) => automationId,
+  });
+
+const isShowing = (model: Model, route: AppRoute) =>
+  routeAutomationId(route) === model.automationId &&
+  AppRoute.match(route, {
+    Overview: () => false,
+    Studio: () => Page.guards.Studio(model.page),
+    Run: ({ runId }) => Page.guards.Run(model.page) && model.page.openRun.runId === runId,
+  });
+
+/**
+ * Every page change starts over at a new revision, so the last page's polls and late replies stop
+ * there. Following a link to the run already open reloads it.
+ */
+const followRoute = (model: Model, route: AppRoute): Update.Return<Model, Message> => {
+  if (!isShowing(model, route)) {
+    return showPage(leaveAutomation(model, routeAutomationId(route)), route);
   }
-  return {
-    model: opened,
-    commands: [LoadAutomation({ automationId, revision: opened.revision })],
-  };
+  return reloadOpenRun(model);
 };
+
+/** A run link clicked on the overview or in the studio opens the run beside it. */
+const opensInPanel = (model: Model, route: AppRoute) =>
+  Page.guards.Run(model.page)
+    ? Option.none<{ readonly automationId: string; readonly runId: string }>()
+    : AppRoute.match(route, {
+        Overview: () => Option.none(),
+        Studio: () => Option.none(),
+        Run: ({ automationId, runId }) =>
+          validId(automationId) ? Option.some({ automationId, runId }) : Option.none(),
+      });
+
+const openRunPanel = (model: Model, automationId: string, runId: string) =>
+  Option.exists(
+    model.maybeRunPanel,
+    (panel) => panel.automationId === automationId && panel.runId === runId,
+  )
+    ? reloadOpenRun(model)
+    : reloadOpenRun(
+        modifyFields(model, {
+          maybeRunPanel: () => Option.some(openingRun(automationId, runId)),
+        }),
+      );
+
+const foldOverview = Update.foldChild({
+  update: Overview.update,
+  read: (model: Model) =>
+    Page.guards.Overview(model.page) ? Option.some(model.page.overview) : Option.none(),
+  write: (model, nextOverview) =>
+    modifyFields(model, { page: () => Page.Overview({ overview: nextOverview }) }),
+  toParentMessage: toOverviewMessage,
+});
 
 const thinking = Activity.Working({ notice: "The agent is thinking…" });
 
@@ -379,34 +506,49 @@ const chooseSubjects = (model: Model): Update.Return<Model, Message> =>
           },
   });
 
-const openRunId = (detail: RunDetail) =>
-  RunDetail.match(detail, {
-    Closed: () => Option.none<string>(),
-    Loading: ({ runId }) => Option.some(runId),
-    Loaded: ({ run }) => Option.some(run.id),
-  });
+const openingRun = (automationId: string, runId: string): OpenRun => ({
+  automationId,
+  runId,
+  detail: RunDetail.Loading(),
+  taskEdits: [],
+  notice: RunNotice.Idle(),
+});
 
-const isOpenRun = (model: Model, runId: string) =>
-  Option.exists(openRunId(model.runDetail), (openId) => openId === runId);
+/** The run on its own page, or else the one in the panel. */
+const maybeOpenRun = (model: Model) =>
+  Page.guards.Run(model.page) ? Option.some(model.page.openRun) : model.maybeRunPanel;
 
-const openRun = (model: Model, runId: string): Update.Return<Model, Message> => {
-  const opened = modifyFields(model, {
-    runDetail: (detail) => (isOpenRun(model, runId) ? detail : RunDetail.Loading({ runId })),
-    taskEdits: (edits) => (isOpenRun(model, runId) ? edits : []),
-    runPoll: (poll) => poll + 1,
-  });
-  return {
-    model: opened,
-    commands: [
-      LoadRun({
-        automationId: model.automationId.trim(),
-        revision: model.revision,
-        poll: opened.runPoll,
-        runId,
-      }),
-    ],
-  };
+const modifyOpenRun = (model: Model, modify: (openRun: OpenRun) => OpenRun): Model => {
+  const page = model.page;
+  return Page.guards.Run(page)
+    ? modifyFields(model, { page: () => Page.Run({ openRun: modify(page.openRun) }) })
+    : modifyFields(model, { maybeRunPanel: (maybePanel) => Option.map(maybePanel, modify) });
 };
+
+const openRunWithId = (model: Model, runId: string) =>
+  Option.filter(maybeOpenRun(model), (openRun) => openRun.runId === runId);
+
+const reloadOpenRun = (model: Model): Update.Return<Model, Message> =>
+  Option.match(maybeOpenRun(model), {
+    onNone: () => ({ model }),
+    onSome: (openRun) => {
+      const reloading = modifyFields(model, { runPoll: (poll) => poll + 1 });
+      return {
+        model: reloading,
+        commands: [
+          LoadRun({
+            automationId: openRun.automationId,
+            revision: model.revision,
+            poll: reloading.runPoll,
+            runId: openRun.runId,
+          }),
+        ],
+      };
+    },
+  });
+
+const noticeRun = (model: Model, notice: RunNotice) =>
+  modifyOpenRun(model, (openRun) => ({ ...openRun, notice }));
 
 const pollDelayMillis = (status: RunStatus): ReadonlyArray<number> =>
   Match.value(status).pipe(
@@ -427,15 +569,12 @@ const isListedAsIs = (runs: ReadonlyArray<RunSummary>, run: Run) =>
       summary.openTasks === openTaskCount(run),
   );
 
-const openTask = (model: Model, step: string) =>
-  RunDetail.match(model.runDetail, {
-    Closed: () => Option.none<{ readonly run: Run; readonly task: HumanTask }>(),
-    Loading: () => Option.none<{ readonly run: Run; readonly task: HumanTask }>(),
+const openTask = (openRun: OpenRun, step: string) =>
+  RunDetail.match(openRun.detail, {
+    Loading: () => Option.none<HumanTask>(),
+    Unavailable: () => Option.none<HumanTask>(),
     Loaded: ({ run }) =>
-      Option.map(
-        Array.findFirst(run.tasks, (task) => task.step === step && task.status === "open"),
-        (task) => ({ run, task }),
-      ),
+      Array.findFirst(run.tasks, (task) => task.step === step && task.status === "open"),
   });
 
 export const fieldText = (edits: ReadonlyArray<TaskFieldEdit>, task: HumanTask, field: string) =>
@@ -495,33 +634,43 @@ const formAnswer = (
 const answerTask = (
   model: Model,
   step: string,
-  toAnswer: (task: HumanTask) => Result.Result<TaskAnswer, string>,
-): Update.Return<Model, Message> => {
-  if (Activity.guards.Working(model.activity)) {
-    return { model };
-  }
-  return Option.match(openTask(model, step), {
-    onNone: () => fail(model, "That task isn't waiting for an answer"),
-    onSome: ({ run, task }) =>
-      Result.match(toAnswer(task), {
-        onFailure: (error) => fail(model, error),
-        onSuccess: (answer) => ({
-          model: modifyFields(model, {
-            activity: () => Activity.Working({ notice: "Sending your answer…" }),
-          }),
-          commands: [
-            AnswerTask({
-              automationId: model.automationId.trim(),
-              revision: model.revision,
-              runId: run.id,
-              step,
-              answer,
-            }),
-          ],
+  toAnswer: (
+    task: HumanTask,
+    edits: ReadonlyArray<TaskFieldEdit>,
+  ) => Result.Result<TaskAnswer, string>,
+): Update.Return<Model, Message> =>
+  Option.match(maybeOpenRun(model), {
+    onNone: () => ({ model }),
+    onSome: (openRun) => {
+      if (RunNotice.guards.Sending(openRun.notice)) {
+        return { model };
+      }
+      return Option.match(openTask(openRun, step), {
+        onNone: () => ({
+          model: noticeRun(
+            model,
+            RunNotice.Failed({ error: "That task isn't waiting for an answer" }),
+          ),
         }),
-      }),
+        onSome: (task) =>
+          Result.match(toAnswer(task, openRun.taskEdits), {
+            onFailure: (error) => ({ model: noticeRun(model, RunNotice.Failed({ error })) }),
+            onSuccess: (answer) => ({
+              model: noticeRun(model, RunNotice.Sending()),
+              commands: [
+                AnswerTask({
+                  automationId: openRun.automationId,
+                  revision: model.revision,
+                  runId: openRun.runId,
+                  step,
+                  answer,
+                }),
+              ],
+            }),
+          }),
+      });
+    },
   });
-};
 
 const approval =
   (approved: boolean) =>
@@ -530,22 +679,18 @@ const approval =
       ? Result.succeed({ approved })
       : Result.fail("Fill in the form to answer this task");
 
-export const withArticle = (entityType: string) => {
-  const noun = entityType.replaceAll("_", " ");
-  return `${/^[aeiou]/.test(noun) ? "an" : "a"} ${noun}`;
-};
-
 export const update = (model: Model, message: Message) =>
   Message.match<Update.Return<Model, Message>>(message, {
     ClickedLink: ({ request }) =>
       UrlRequest.match<Update.Return<Model, Message>>(request, {
-        Internal: ({ url }) => ({
-          model,
-          commands: [NavigateInternal({ url: urlToString(url) })],
-        }),
+        Internal: ({ url }) =>
+          Option.match(opensInPanel(model, routeFromUrl(url)), {
+            onNone: () => ({ model, commands: [NavigateInternal({ url: urlToString(url) })] }),
+            onSome: ({ automationId, runId }) => openRunPanel(model, automationId, runId),
+          }),
         External: ({ href }) => ({ model, commands: [LoadExternal({ href })] }),
       }),
-    ChangedUrl: ({ url }) => openAutomation(model, automationIdFromUrl(url)),
+    ChangedUrl: ({ url }) => followRoute(model, routeFromUrl(url)),
     CompletedNavigateInternal: () => ({ model }),
     CompletedLoadExternal: () => ({ model }),
     UpdatedAutomationId: ({ value }) => ({
@@ -662,30 +807,33 @@ export const update = (model: Model, message: Message) =>
         ],
       };
     },
-    ClickedRun: ({ runId }) => openRun(model, runId),
-    ClickedCloseRun: () => ({
-      model: modifyFields(model, {
-        runDetail: () => RunDetail.Closed(),
-        taskEdits: () => [],
-        runPoll: (poll) => poll + 1,
-      }),
+    ClickedCloseRunPanel: () => ({
+      model: modifyFields(model, { maybeRunPanel: () => Option.none() }),
     }),
+    ClickedExpandRunPanel: () =>
+      Option.match(model.maybeRunPanel, {
+        onNone: () => ({ model }),
+        onSome: (panel) => ({
+          model,
+          commands: [NavigateInternal({ url: runHref(panel.automationId, panel.runId) })],
+        }),
+      }),
     ClickedApproveTask: ({ step }) => answerTask(model, step, approval(true)),
     ClickedRejectTask: ({ step }) => answerTask(model, step, approval(false)),
     UpdatedTaskField: ({ step, field, value }) => ({
-      model: modifyFields(model, {
-        taskEdits: (edits) =>
-          Array.append(
-            Array.filter(edits, (edit) => edit.step !== step || edit.field !== field),
-            { step, field, value },
-          ),
-      }),
+      model: modifyOpenRun(model, (openRun) => ({
+        ...openRun,
+        taskEdits: Array.append(
+          Array.filter(openRun.taskEdits, (edit) => edit.step !== step || edit.field !== field),
+          { step, field, value },
+        ),
+      })),
     }),
     SubmittedTaskForm: ({ step }) =>
-      answerTask(model, step, (task) =>
+      answerTask(model, step, (task, edits) =>
         task.response === "approval"
           ? Result.fail("Approve or reject the request")
-          : formAnswer(model.taskEdits, task, task.response.fields),
+          : formAnswer(edits, task, task.response.fields),
       ),
     SucceededLoadAutomation: ({
       revision,
@@ -769,99 +917,78 @@ export const update = (model: Model, message: Message) =>
               subjectChoices: () => SubjectChoices.Unavailable({ entityType, error }),
             }),
           },
-    SucceededStartRun: ({ revision, runId }) => {
-      if (revision !== model.revision) {
-        return { model };
-      }
-      const started = openRun(
-        modifyFields(model, {
-          activity: () => Activity.Ready({ notice: `Run ${runId} started.` }),
-        }),
-        runId,
-      );
-      return {
-        model: started.model,
-        commands: [
-          ...(started.commands ?? []),
-          LoadRuns({ automationId: model.automationId.trim(), revision }),
-        ],
-      };
-    },
-    SucceededLoadRun: ({ revision, poll, run }) => {
+    SucceededStartRun: ({ revision, runId }) =>
+      revision !== model.revision
+        ? { model }
+        : {
+            model: modifyFields(model, {
+              activity: () => Activity.Ready({ notice: `Run ${runId} started.` }),
+            }),
+            commands: [NavigateInternal({ url: runHref(model.automationId.trim(), runId) })],
+          },
+    SucceededLoadRun: ({ revision, poll, run, maybeSubjectTitle }) => {
       if (revision !== model.revision || poll !== model.runPoll) {
         return { model };
       }
-      const automationId = model.automationId.trim();
-      return {
-        model: modifyFields(model, { runDetail: () => RunDetail.Loaded({ run }) }),
-        commands: [
-          ...Array.map(pollDelayMillis(run.status), (delayMillis) =>
-            PollRun({ automationId, revision, poll, runId: run.id, delayMillis }),
-          ),
-          ...(isListedAsIs(model.runs, run) ? [] : [LoadRuns({ automationId, revision })]),
-        ],
-      };
+      return Option.match(openRunWithId(model, run.id), {
+        onNone: () => ({ model }),
+        onSome: (openRun) => {
+          const automationId = openRun.automationId;
+          // NOTE: the studio's list of recent runs follows the run it shows beside the draft.
+          const isRecentRun = Page.guards.Studio(model.page) && automationId === model.automationId;
+          return {
+            model: modifyOpenRun(model, (current) => ({
+              ...current,
+              detail: RunDetail.Loaded({ run, maybeSubjectTitle }),
+            })),
+            commands: [
+              ...Array.map(pollDelayMillis(run.status), (delayMillis) =>
+                PollRun({ automationId, revision, poll, runId: run.id, delayMillis }),
+              ),
+              ...(isRecentRun && !isListedAsIs(model.runs, run)
+                ? [LoadRuns({ automationId, revision })]
+                : []),
+            ],
+          };
+        },
+      });
     },
     FailedLoadRun: ({ revision, poll, error }) =>
       revision !== model.revision || poll !== model.runPoll
         ? { model }
         : {
-            model: modifyFields(model, {
-              runDetail: (detail) =>
-                RunDetail.guards.Loading(detail) ? RunDetail.Closed() : detail,
-              activity: () => Activity.Failed({ error }),
-            }),
+            model: modifyOpenRun(model, (openRun) =>
+              RunDetail.guards.Loading(openRun.detail)
+                ? { ...openRun, detail: RunDetail.Unavailable({ error }) }
+                : { ...openRun, notice: RunNotice.Failed({ error }) },
+            ),
           },
     SucceededLoadRuns: ({ revision, runs }) =>
       revision !== model.revision
         ? { model }
         : { model: modifyFields(model, { runs: () => runs }) },
-    SucceededAnswerTask: ({ revision, runId, step }) => {
-      if (revision !== model.revision) {
-        return { model };
-      }
-      const answered = modifyFields(model, {
-        taskEdits: (edits) => Array.filter(edits, (edit) => edit.step !== step),
-        activity: () => Activity.Ready({ notice: "Answer sent." }),
-      });
-      const reloadRuns = LoadRuns({ automationId: model.automationId.trim(), revision });
-      if (!isOpenRun(model, runId)) {
-        return { model: answered, commands: [reloadRuns] };
-      }
-      const reopened = openRun(answered, runId);
-      return { model: reopened.model, commands: [...(reopened.commands ?? []), reloadRuns] };
-    },
+    SucceededAnswerTask: ({ revision, runId, step }) =>
+      revision !== model.revision || Option.isNone(openRunWithId(model, runId))
+        ? { model }
+        : reloadOpenRun(
+            modifyOpenRun(model, (openRun) => ({
+              ...openRun,
+              taskEdits: Array.filter(openRun.taskEdits, (edit) => edit.step !== step),
+              notice: RunNotice.Sent(),
+            })),
+          ),
+    FailedAnswerTask: ({ revision, runId, error }) =>
+      revision !== model.revision || Option.isNone(openRunWithId(model, runId))
+        ? { model }
+        : { model: noticeRun(model, RunNotice.Failed({ error })) },
     FailedRequest: ({ revision, error }) =>
       revision !== model.revision ? { model } : fail(model, error),
+    GotOverviewMessage: ({ message }) => foldOverview(model, message),
   });
 
 // COMMAND
 
 const requestArgs = { automationId: Schema.String, revision: Schema.Int };
-const ErrorResponse = Schema.Struct({ error: Schema.String });
-
-class ApiError extends Schema.TaggedError<ApiError>()("ApiError", {
-  message: Schema.String,
-}) {}
-
-const requestJson = Effect.fn("studio.requestJson")(function* <T, E>(
-  url: string,
-  schema: Schema.Codec<T, E>,
-  body?: unknown,
-) {
-  const client = yield* HttpClient.HttpClient;
-  const httpRequest =
-    body === undefined
-      ? HttpClientRequest.get(url)
-      : yield* HttpClientRequest.bodyJson(HttpClientRequest.post(url), body);
-  const response = yield* client.execute(httpRequest);
-  const data = yield* response.json;
-  if (response.status < 200 || response.status >= 300) {
-    const failure = yield* Schema.decodeUnknownEffect(ErrorResponse)(data);
-    return yield* new ApiError({ message: failure.error });
-  }
-  return yield* Schema.decodeUnknownEffect(schema)(data);
-});
 
 const request = <T, E>(
   automationId: string,
@@ -869,8 +996,6 @@ const request = <T, E>(
   schema: Schema.Codec<T, E>,
   body?: unknown,
 ) => requestJson(`/api/automations/${automationId}${path}`, schema, body);
-
-const errorText = (error: unknown) => (error instanceof Error ? error.message : "Unexpected error");
 
 const recoverRequest = (revision: number) =>
   Effect.catch((error: unknown) =>
@@ -939,40 +1064,14 @@ export const LoadRuns = Command.define("LoadRuns", {
     ),
 });
 
-const entityTitle = (entity: EntityRecord, titleField: string) => {
-  const title = entity.data[titleField];
-  return Predicate.isString(title) && title.trim() !== "" ? title : entity.id;
-};
-
 export const LoadSubjects = Command.define("LoadSubjects", {
   args: { revision: Schema.Int, entityType: Schema.String },
   messages: [Message.SucceededLoadSubjects, Message.FailedLoadSubjects],
   execute: ({ revision, entityType }) =>
-    Effect.all(
-      [
-        requestJson("/api/entities/types", Schema.Array(EntityType)),
-        requestJson(`/api/entities/${entityType}`, Schema.Array(EntityRecord)),
-      ],
-      { concurrency: 2 },
-    ).pipe(
-      Effect.map(([types, entities]) => {
-        const { label, titleField } = Option.match(
-          Array.findFirst(types, (type) => type.name === entityType),
-          {
-            onNone: () => ({ label: entityType, titleField: "name" }),
-            onSome: (type) => ({ label: type.label, titleField: type.title }),
-          },
-        );
-        return Message.SucceededLoadSubjects({
-          revision,
-          entityType,
-          label,
-          subjects: Array.map(entities, (entity) => ({
-            id: entity.id,
-            title: entityTitle(entity, titleField),
-          })),
-        });
-      }),
+    loadSubjectOptions(entityType).pipe(
+      Effect.map(({ label, subjects }) =>
+        Message.SucceededLoadSubjects({ revision, entityType, label, subjects }),
+      ),
       Effect.catch((error) =>
         Effect.succeed(
           Message.FailedLoadSubjects({ revision, entityType, error: errorText(error) }),
@@ -1057,8 +1156,15 @@ export const StartRun = Command.define("StartRun", {
 const runArgs = { ...requestArgs, poll: Schema.Int, runId: Schema.String };
 
 const fetchRun = (automationId: string, revision: number, poll: number, runId: string) =>
-  request(automationId, `/runs/${runId}`, Run).pipe(
-    Effect.map((run) => Message.SucceededLoadRun({ revision, poll, run })),
+  request(automationId, `/runs/${runId}`, TitledRun).pipe(
+    Effect.map(({ subjectTitle, ...run }) =>
+      Message.SucceededLoadRun({
+        revision,
+        poll,
+        run,
+        maybeSubjectTitle: Option.fromNullishOr(subjectTitle),
+      }),
+    ),
     Effect.catch((error) =>
       Effect.succeed(Message.FailedLoadRun({ revision, poll, error: errorText(error) })),
     ),
@@ -1082,11 +1188,13 @@ export const PollRun = Command.define("PollRun", {
 
 export const AnswerTask = Command.define("AnswerTask", {
   args: { ...requestArgs, runId: Schema.String, step: Schema.String, answer: TaskAnswer },
-  messages: [Message.SucceededAnswerTask, Message.FailedRequest],
+  messages: [Message.SucceededAnswerTask, Message.FailedAnswerTask],
   execute: ({ automationId, revision, runId, step, answer }) =>
     request(automationId, `/runs/${runId}/tasks/${step}`, Schema.Unknown, answer).pipe(
       Effect.map(() => Message.SucceededAnswerTask({ revision, runId, step })),
-      recoverRequest(revision),
+      Effect.catch((error) =>
+        Effect.succeed(Message.FailedAnswerTask({ revision, runId, error: errorText(error) })),
+      ),
       Effect.provide(Http.layer),
     ),
 });
@@ -1107,19 +1215,47 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
         [h.Class("flex min-w-0 flex-1 flex-col bg-background lg:min-h-0 lg:border-l")],
         [
           headerView(model, h),
-          h.main(
+          h.div(
+            [h.Class("flex flex-1 flex-col lg:min-h-0 lg:flex-row")],
             [
-              h.Class(
-                "grid flex-1 grid-cols-1 lg:min-h-0 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]",
-              ),
+              pageView(model, h),
+              Option.match(model.maybeRunPanel, {
+                onNone: () => h.empty,
+                onSome: (openRun) => runPanelView(model, openRun, h),
+              }),
             ],
-            [conversationView(model, h), workflowPanelView(model, h)],
           ),
         ],
       ),
     ],
   ),
 });
+
+const pageView = (model: Model, h: HtmlBuilder<Message>) =>
+  Page.match(model.page, {
+    Overview: ({ overview }) =>
+      h.main(
+        [h.Class("flex min-w-0 flex-1 flex-col lg:min-h-0")],
+        [
+          h.submodel({
+            slotId: "overview",
+            model: overview,
+            view: Overview.view,
+            toParentMessage: toOverviewMessage,
+          }),
+        ],
+      ),
+    Studio: () =>
+      h.main(
+        [
+          h.Class(
+            "grid min-w-0 flex-1 grid-cols-1 lg:min-h-0 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]",
+          ),
+        ],
+        [conversationView(model, h), workflowPanelView(model, h)],
+      ),
+    Run: ({ openRun }) => runPageView(model, openRun, h),
+  });
 
 const headerView = (model: Model, h: HtmlBuilder<Message>) =>
   h.header(
@@ -1190,6 +1326,9 @@ const themeToggleView = (theme: Theme, h: HtmlBuilder<Message>) =>
 
 const sidebarNoteClass = "px-1.5 py-1 text-xs text-muted-foreground";
 
+const navItemClass =
+  "group/nav-item my-px flex items-start gap-2 rounded-[8px] py-1.5 pr-2.5 pl-1.5 text-muted-foreground transition-colors duration-100 outline-none hover:bg-hover hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50";
+
 const sidebarView = (model: Model, h: HtmlBuilder<Message>) =>
   h.nav(
     [
@@ -1212,8 +1351,22 @@ const sidebarView = (model: Model, h: HtmlBuilder<Message>) =>
           h.span([h.Class("truncate text-sm font-medium")], ["Automations studio"]),
         ],
       ),
+      h.a(
+        [
+          h.Href(overviewHref),
+          ...(Page.guards.Overview(model.page) ? [h.AriaCurrent("page")] : []),
+          h.Class(
+            cn(
+              navItemClass,
+              "items-center text-[13px] font-medium tracking-tight",
+              Page.guards.Overview(model.page) && "bg-hover text-foreground",
+            ),
+          ),
+        ],
+        [icon(h, LayoutDashboard, "size-4"), "Overview"],
+      ),
       h.div(
-        [h.Class("mt-1 mb-px flex h-[22px] items-center justify-between gap-2 pr-0.5 pl-1.5")],
+        [h.Class("mt-3 mb-px flex h-[22px] items-center justify-between gap-2 pr-0.5 pl-1.5")],
         [
           h.h2([h.Class("text-[11px] font-semibold tracking-tight text-sand-10")], ["Automations"]),
           button(
@@ -1250,7 +1403,11 @@ const sidebarView = (model: Model, h: HtmlBuilder<Message>) =>
                   h.ul(
                     [h.Class("flex flex-col")],
                     Array.map(listed, (automation) =>
-                      automationLinkView(automation, automation.id === model.automationId, h),
+                      automationLinkView(
+                        automation,
+                        Page.guards.Studio(model.page) && automation.id === model.automationId,
+                        h,
+                      ),
                     ),
                   ),
               }),
@@ -1273,12 +1430,7 @@ const automationLinkView = (
         [
           h.Href(automationHref(automation.id)),
           ...(isCurrent ? [h.AriaCurrent("page")] : []),
-          h.Class(
-            cn(
-              "group/nav-item my-px flex items-start gap-2 rounded-[8px] py-1.5 pr-2.5 pl-1.5 text-muted-foreground transition-colors duration-100 outline-none hover:bg-hover hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50",
-              isCurrent && "bg-hover text-foreground",
-            ),
-          ),
+          h.Class(cn(navItemClass, isCurrent && "bg-hover text-foreground")),
         ],
         [
           h.span([h.Class("flex h-5 shrink-0 items-center")], [icon(h, WorkflowIcon, "size-4")]),
@@ -1506,41 +1658,21 @@ const workflowPanelView = (model: Model, h: HtmlBuilder<Message>) =>
     [
       h.div(
         [h.Class("flex items-start justify-between gap-4 px-6 pt-5")],
-        RunDetail.match(model.runDetail, {
-          Closed: () => [
-            panelTitleView(
-              "Draft",
-              Option.match(model.maybeDraft, {
-                onNone: () => "Untitled workflow",
-                onSome: (workflow) => workflow.name,
-              }),
-              h,
-            ),
-            workflowDisplayToggleView(model.workflowDisplay, h),
-          ],
-          Loading: ({ runId }) => [panelTitleView("Run", runId, h), backToDraftView(h)],
-          Loaded: ({ run }) => [
-            panelTitleView("Run", run.workflow.name, h),
-            h.div(
-              [h.Class("flex shrink-0 items-center gap-3")],
-              [runBadgeView(run, h), backToDraftView(h)],
-            ),
-          ],
-        }),
+        [
+          panelTitleView(
+            "Draft",
+            Option.match(model.maybeDraft, {
+              onNone: () => "Untitled workflow",
+              onSome: (workflow) => workflow.name,
+            }),
+            h,
+          ),
+          workflowDisplayToggleView(model.workflowDisplay, h),
+        ],
       ),
       h.div(
-        [
-          h.Id("graph"),
-          ...(RunDetail.guards.Closed(model.runDetail) ? [h.AriaLive("polite")] : []),
-          h.Class("flex-1 px-6 py-6 lg:overflow-y-auto"),
-        ],
-        [
-          RunDetail.match(model.runDetail, {
-            Closed: () => draftView(model, h),
-            Loading: () => h.p([h.Class("text-sm text-muted-foreground")], ["Loading the run…"]),
-            Loaded: ({ run }) => runView(run, model, h),
-          }),
-        ],
+        [h.Id("graph"), h.AriaLive("polite"), h.Class("flex-1 px-6 py-6 lg:overflow-y-auto")],
+        [draftView(model, h)],
       ),
       h.div(
         [h.Class("flex flex-wrap items-center gap-x-4 gap-y-2 border-t px-6 py-3")],
@@ -1585,11 +1717,157 @@ const panelTitleView = (eyebrow: string, title: string, h: HtmlBuilder<Message>)
     ],
   );
 
-const backToDraftView = (h: HtmlBuilder<Message>) =>
-  button(
-    { onClick: Message.ClickedCloseRun(), variant: "ghost", size: "xs" },
-    [icon(h, ArrowLeft, "size-3", "inline-start"), "Back to draft"],
-    h,
+const editAutomationView = (automationId: string, h: HtmlBuilder<Message>) =>
+  h.a(
+    [
+      h.Href(automationHref(automationId)),
+      h.DataAttribute("slot", "button"),
+      h.Class(buttonClass({ variant: "outline", size: "sm" })),
+    ],
+    [icon(h, Pencil, "size-3.5", "inline-start"), "Edit automation"],
+  );
+
+// VIEW: RUN
+
+const runTitle = (openRun: OpenRun) =>
+  RunDetail.match(openRun.detail, {
+    Loading: () => openRun.runId,
+    Unavailable: () => openRun.runId,
+    Loaded: ({ run }) => run.workflow.name,
+  });
+
+const runStatusBadgeView = (openRun: OpenRun, isCompact: boolean, h: HtmlBuilder<Message>) =>
+  RunDetail.match(openRun.detail, {
+    Loading: () => h.empty,
+    Unavailable: () => h.empty,
+    Loaded: ({ run }) => runBadgeView(run, isCompact, h),
+  });
+
+const runBodyView = (openRun: OpenRun, model: Model, h: HtmlBuilder<Message>) =>
+  RunDetail.match(openRun.detail, {
+    Loading: () => h.p([h.Class("text-sm text-muted-foreground")], ["Loading the run…"]),
+    Unavailable: ({ error }) =>
+      h.p(
+        [
+          h.Role("alert"),
+          h.Class(
+            "flex items-start gap-2 rounded-[10px] bg-destructive/10 px-3 py-2 text-sm text-destructive",
+          ),
+        ],
+        [icon(h, CircleAlert, "mt-0.5 size-3.5"), `Couldn't load this run: ${error}`],
+      ),
+    Loaded: ({ run, maybeSubjectTitle }) => runView(openRun, run, maybeSubjectTitle, model, h),
+  });
+
+const runNoticeView = (openRun: OpenRun, className: string, h: HtmlBuilder<Message>) =>
+  RunNotice.match(openRun.notice, {
+    Idle: () => h.empty,
+    Sending: () =>
+      h.div(
+        [h.Role("status"), h.Class(cn(noticeBarClass, "text-muted-foreground", className))],
+        [icon(h, LoaderCircle, "size-3.5 animate-spin text-signal"), "Sending your answer…"],
+      ),
+    Sent: () =>
+      h.div(
+        [h.Role("status"), h.Class(cn(noticeBarClass, "text-muted-foreground", className))],
+        ["Answer sent."],
+      ),
+    Failed: ({ error }) =>
+      h.div(
+        [h.Role("status"), h.Class(cn(noticeBarClass, "text-destructive", className))],
+        [icon(h, CircleAlert, "size-3.5"), error],
+      ),
+  });
+
+const noticeBarClass = "flex min-w-0 items-center gap-2 border-t py-3 text-xs";
+
+const runPageView = (model: Model, openRun: OpenRun, h: HtmlBuilder<Message>) =>
+  h.main(
+    [h.Class("flex min-w-0 flex-1 flex-col lg:min-h-0"), h.AriaLabel("Run")],
+    [
+      h.div(
+        [h.Class("flex-1 px-6 py-6 lg:overflow-y-auto")],
+        [
+          h.div(
+            [h.Class("flex max-w-3xl flex-col gap-6")],
+            [
+              h.div(
+                [h.Class("flex items-start justify-between gap-4")],
+                [
+                  panelTitleView("Run", runTitle(openRun), h),
+                  h.div(
+                    [h.Class("flex shrink-0 items-center gap-3")],
+                    [
+                      runStatusBadgeView(openRun, false, h),
+                      editAutomationView(openRun.automationId, h),
+                    ],
+                  ),
+                ],
+              ),
+              runBodyView(openRun, model, h),
+            ],
+          ),
+        ],
+      ),
+      runNoticeView(openRun, "px-6", h),
+    ],
+  );
+
+/** A run beside the overview or the studio, so it can play out while the page stays put. */
+const runPanelView = (model: Model, openRun: OpenRun, h: HtmlBuilder<Message>) =>
+  h.aside(
+    [
+      h.AriaLabel("Run preview"),
+      h.Class(
+        "flex flex-col border-t bg-background animate-in fade-in slide-in-from-right-2 duration-200 lg:min-h-0 lg:w-[26rem] lg:shrink-0 lg:border-t-0 lg:border-l xl:w-[32rem] 2xl:w-[38rem]",
+      ),
+    ],
+    [
+      h.div(
+        [h.Class("flex items-start justify-between gap-3 border-b px-5 py-3")],
+        [
+          h.div(
+            [h.Class("flex min-w-0 flex-col gap-0.5")],
+            [
+              h.div(
+                [h.Class("flex items-center gap-2")],
+                [h.span([h.Class(eyebrowClass)], ["Run"]), runStatusBadgeView(openRun, true, h)],
+              ),
+              h.h2([h.Class("truncate text-base font-semibold")], [runTitle(openRun)]),
+            ],
+          ),
+          h.div(
+            [h.Class("flex shrink-0 items-center gap-0.5")],
+            [
+              button(
+                {
+                  onClick: Message.ClickedExpandRunPanel(),
+                  variant: "ghost",
+                  size: "icon-sm",
+                  className: "text-sand-10",
+                  attributes: [h.AriaLabel("Open the run's page"), h.Title("Open the run's page")],
+                },
+                [icon(h, Maximize2, "size-4")],
+                h,
+              ),
+              button(
+                {
+                  onClick: Message.ClickedCloseRunPanel(),
+                  variant: "ghost",
+                  size: "icon-sm",
+                  className: "text-sand-10",
+                  attributes: [h.AriaLabel("Close the run"), h.Title("Close the run")],
+                },
+                [icon(h, X, "size-4")],
+                h,
+              ),
+            ],
+          ),
+        ],
+      ),
+      h.div([h.Class("flex-1 px-5 py-5 lg:overflow-y-auto")], [runBodyView(openRun, model, h)]),
+      runNoticeView(openRun, "px-5", h),
+    ],
   );
 
 const draftView = (model: Model, h: HtmlBuilder<Message>) =>
@@ -1603,7 +1881,11 @@ const draftView = (model: Model, h: HtmlBuilder<Message>) =>
             ? workflowJsonView(workflow, h)
             : workflowView(
                 workflow,
-                { expandedStepIds: model.expandedStepIds, maybeRunSteps: Option.none() },
+                {
+                  scope: "draft",
+                  expandedStepIds: model.expandedStepIds,
+                  maybeRunSteps: Option.none(),
+                },
                 h,
               ),
       }),
@@ -1812,6 +2094,8 @@ const triggerView = (workflow: Workflow, h: HtmlBuilder<Message>) =>
   );
 
 interface StepContext {
+  /** Tells apart the same step shown in the draft and in a run beside it. */
+  readonly scope: "draft" | "run";
   readonly expandedStepIds: ReadonlyArray<string>;
   readonly maybeRunSteps: Option.Option<Readonly<Record<string, RunStep>>>;
 }
@@ -2190,7 +2474,8 @@ const recordView = (
   );
 
 const stepView = (step: Step, context: StepContext, h: HtmlBuilder<Message>): Html => {
-  const isExpanded = Array.contains(context.expandedStepIds, step.id);
+  const expansionKey = `${context.scope}:${step.id}`;
+  const isExpanded = Array.contains(context.expandedStepIds, expansionKey);
   const maybeRunStep = Option.flatMap(context.maybeRunSteps, (runSteps) =>
     Option.fromNullishOr(runSteps[step.id]),
   );
@@ -2208,9 +2493,9 @@ const stepView = (step: Step, context: StepContext, h: HtmlBuilder<Message>): Ht
     [
       Disclosure.view(
         {
-          id: `step-${step.id}`,
+          id: `${context.scope}-step-${step.id}`,
           isOpen: isExpanded,
-          onToggle: (isOpen) => Message.ToggledStepDetails({ stepId: step.id, isOpen }),
+          onToggle: (isOpen) => Message.ToggledStepDetails({ stepId: expansionKey, isOpen }),
           toView: ({ button, panel }) =>
             h.div(
               [h.Class("flex flex-col gap-1")],
@@ -2279,38 +2564,7 @@ const stepView = (step: Step, context: StepContext, h: HtmlBuilder<Message>): Ht
 
 // VIEW: RUNS
 
-const runStatusLabel: Record<RunStatus, string> = {
-  running: "Running",
-  waiting: "Waiting",
-  completed: "Completed",
-  failed: "Failed",
-};
-
-const runStatusClass: Record<RunStatus, string> = {
-  running: "text-signal",
-  waiting: "text-sand-11",
-  completed: "text-success",
-  failed: "text-destructive",
-};
-
-const runDotClass: Record<RunStatus, string> = {
-  running: "animate-pulse bg-signal",
-  waiting: "bg-sand-10",
-  completed: "bg-success",
-  failed: "bg-destructive",
-};
-
-const formatTime = (millis: number) =>
-  new Date(millis).toLocaleString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-
-const openTasksText = (count: number) => (count === 1 ? "1 open task" : `${count} open tasks`);
-
-const runBadgeView = (run: Run, h: HtmlBuilder<Message>) =>
+const runBadgeView = (run: Run, isCompact: boolean, h: HtmlBuilder<Message>) =>
   h.span(
     [
       h.Class(
@@ -2323,7 +2577,9 @@ const runBadgeView = (run: Run, h: HtmlBuilder<Message>) =>
     [
       h.span([h.Class(cn("size-1.5 rounded-full", runDotClass[run.status])), h.AriaHidden(true)]),
       runStatusLabel[run.status],
-      h.span([h.Class("font-mono text-xs font-normal text-sand-10")], [run.id]),
+      isCompact
+        ? h.empty
+        : h.span([h.Class("font-mono text-xs font-normal text-sand-10")], [run.id]),
     ],
   );
 
@@ -2337,21 +2593,32 @@ const recentRunsView = (model: Model, h: HtmlBuilder<Message>) =>
           h.h3([h.Id("recent-runs"), h.Class(eyebrowClass)], ["Recent runs"]),
           h.ul(
             [h.AriaLabelledBy("recent-runs"), h.Class("-mx-2 flex flex-col")],
-            Array.map(runs, (run) => runRowView(run, isOpenRun(model, run.id), h)),
+            Array.map(runs, (run) =>
+              runRowView(
+                model.automationId,
+                run,
+                Option.exists(model.maybeRunPanel, (panel) => panel.runId === run.id),
+                h,
+              ),
+            ),
           ),
         ],
       ),
   });
 
-const runRowView = (run: RunSummary, isOpen: boolean, h: HtmlBuilder<Message>) =>
+const runRowView = (
+  automationId: string,
+  run: RunSummary,
+  isOpen: boolean,
+  h: HtmlBuilder<Message>,
+) =>
   h.keyed("li")(
     run.id,
     [],
     [
-      h.button(
+      h.a(
         [
-          h.Type("button"),
-          h.OnClick(Message.ClickedRun({ runId: run.id })),
+          h.Href(runHref(automationId, run.id)),
           ...(isOpen ? [h.AriaCurrent("true")] : []),
           h.Class(
             cn(
@@ -2382,23 +2649,20 @@ const runRowView = (run: RunSummary, isOpen: boolean, h: HtmlBuilder<Message>) =
     ],
   );
 
-const runSubjectTitle = (runs: ReadonlyArray<RunSummary>, run: Run) =>
-  Option.orElse(
-    Option.flatMap(
-      Array.findFirst(runs, (summary) => summary.id === run.id),
-      (summary) => Option.fromNullishOr(summary.subject),
-    ),
-    () => Option.map(Option.fromNullishOr(run.subject), (subject) => subject.id),
-  );
-
-const runView = (run: Run, model: Model, h: HtmlBuilder<Message>) =>
+const runView = (
+  openRun: OpenRun,
+  run: Run,
+  maybeSubjectTitle: Option.Option<string>,
+  model: Model,
+  h: HtmlBuilder<Message>,
+) =>
   h.div(
     [h.Class("flex max-w-2xl flex-col gap-6")],
     [
       h.p(
         [h.Class("text-sm text-muted-foreground")],
         [
-          ...Option.match(runSubjectTitle(model.runs, run), {
+          ...Option.match(maybeSubjectTitle, {
             onNone: () => [],
             onSome: (title) => [
               "For ",
@@ -2406,7 +2670,7 @@ const runView = (run: Run, model: Model, h: HtmlBuilder<Message>) =>
               " · ",
             ],
           }),
-          `Started ${formatTime(run.startedAt)}`,
+          `Started ${formatTime(run.startedAt)} · Runs the version saved when it started`,
         ],
       ),
       run.error === undefined
@@ -2420,16 +2684,20 @@ const runView = (run: Run, model: Model, h: HtmlBuilder<Message>) =>
             ],
             [icon(h, CircleAlert, "mt-0.5 size-3.5"), run.error],
           ),
-      openTasksView(run, model, h),
+      openTasksView(run, openRun, h),
       workflowView(
         run.workflow,
-        { expandedStepIds: model.expandedStepIds, maybeRunSteps: Option.some(run.steps) },
+        {
+          scope: "run",
+          expandedStepIds: model.expandedStepIds,
+          maybeRunSteps: Option.some(run.steps),
+        },
         h,
       ),
     ],
   );
 
-const openTasksView = (run: Run, model: Model, h: HtmlBuilder<Message>) =>
+const openTasksView = (run: Run, openRun: OpenRun, h: HtmlBuilder<Message>) =>
   Array.match(
     Array.filter(run.tasks, (task) => task.status === "open"),
     {
@@ -2441,7 +2709,7 @@ const openTasksView = (run: Run, model: Model, h: HtmlBuilder<Message>) =>
             h.h3([h.Id("open-tasks"), h.Class(eyebrowClass)], ["Open tasks"]),
             h.ul(
               [h.AriaLabelledBy("open-tasks"), h.Class("flex flex-col gap-3")],
-              Array.map(tasks, (task) => taskView(task, model, h)),
+              Array.map(tasks, (task) => taskView(task, openRun, h)),
             ),
           ],
         ),
@@ -2479,7 +2747,9 @@ const assigneeView = (assignee: Schema.Json | null, h: HtmlBuilder<Message>) =>
     },
   );
 
-const taskView = (task: HumanTask, model: Model, h: HtmlBuilder<Message>) =>
+const isSendingAnswer = (openRun: OpenRun) => RunNotice.guards.Sending(openRun.notice);
+
+const taskView = (task: HumanTask, openRun: OpenRun, h: HtmlBuilder<Message>) =>
   h.keyed("li")(
     task.step,
     [h.Class("flex flex-col gap-3 rounded-[10px] bg-card p-4 shadow-card")],
@@ -2513,7 +2783,7 @@ const taskView = (task: HumanTask, model: Model, h: HtmlBuilder<Message>) =>
               button(
                 {
                   onClick: Message.ClickedApproveTask({ step: task.step }),
-                  isDisabled: Activity.guards.Working(model.activity),
+                  isDisabled: isSendingAnswer(openRun),
                   size: "sm",
                 },
                 [icon(h, Check, "size-3.5", "inline-start"), "Approve"],
@@ -2522,7 +2792,7 @@ const taskView = (task: HumanTask, model: Model, h: HtmlBuilder<Message>) =>
               button(
                 {
                   onClick: Message.ClickedRejectTask({ step: task.step }),
-                  isDisabled: Activity.guards.Working(model.activity),
+                  isDisabled: isSendingAnswer(openRun),
                   variant: "outline",
                   size: "sm",
                 },
@@ -2531,14 +2801,14 @@ const taskView = (task: HumanTask, model: Model, h: HtmlBuilder<Message>) =>
               ),
             ],
           )
-        : taskFormView(task, task.response.fields, model, h),
+        : taskFormView(task, task.response.fields, openRun, h),
     ],
   );
 
 const taskFormView = (
   task: HumanTask,
   fields: ReadonlyArray<HumanField>,
-  model: Model,
+  openRun: OpenRun,
   h: HtmlBuilder<Message>,
 ) =>
   h.form(
@@ -2552,18 +2822,12 @@ const taskFormView = (
         h.keyed("div")(
           field.name,
           [h.Class("max-w-xs")],
-          [taskFieldView(task, field, fieldText(model.taskEdits, task, field.name), h)],
+          [taskFieldView(task, field, fieldText(openRun.taskEdits, task, field.name), h)],
         ),
       ),
       h.div(
         [],
-        [
-          button(
-            { type: "submit", isDisabled: Activity.guards.Working(model.activity), size: "sm" },
-            "Submit",
-            h,
-          ),
-        ],
+        [button({ type: "submit", isDisabled: isSendingAnswer(openRun), size: "sm" }, "Submit", h)],
       ),
     ],
   );

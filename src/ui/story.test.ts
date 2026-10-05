@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import { Command, given, message, model, story } from "foldkit/story";
+import { UrlRequest } from "foldkit/navigation";
 import { modifyFields } from "foldkit/struct";
 import {
   AnswerTask,
@@ -22,6 +23,8 @@ import {
   type Model,
   type Workflow,
 } from "./main.ts";
+import * as Overview from "./overview.ts";
+import { LoadOverview } from "./overview.ts";
 import { approvalTask, laptopTask, onboarding, runOf, studioUrl, summaryOf } from "./fixtures.ts";
 
 const automationLoaded = (
@@ -38,8 +41,10 @@ const automationLoaded = (
     ...fields,
   });
 
-const loaded = (search?: string) =>
+const loaded = (search = "automation=my-automation") =>
   update(init({ theme: "System" }, studioUrl(search)).model, automationLoaded()).model;
+
+const runUrl = (runId: string) => studioUrl(`automation=my-automation&run=${runId}`);
 
 const workflow: Workflow = {
   name: "Order summary",
@@ -65,11 +70,32 @@ const working = { id: "chat-1", prompt: "Summarize orders", status: "working" } 
 
 const requestArgs = { automationId: "my-automation", revision: 0 };
 
-const withOpenRun = (current: Model, run: ReturnType<typeof runOf>) => {
-  const clicked = update(current, Message.ClickedRun({ runId: run.id })).model;
-  return update(clicked, Message.SucceededLoadRun({ revision: 0, poll: clicked.runPoll, run }))
-    .model;
-};
+const runLoaded = (fields: { revision: number; poll: number; run: ReturnType<typeof runOf> }) =>
+  Message.SucceededLoadRun({ ...fields, maybeSubjectTitle: Option.some("Ari Cho") });
+
+/** The run page as a link opens it: at revision 0, with its first load in flight as poll 1. */
+const openingRun = (runId: string) => init({ theme: "System" }, runUrl(runId)).model;
+
+const withOpenRun = (run: ReturnType<typeof runOf>) =>
+  update(openingRun(run.id), runLoaded({ revision: 0, poll: 1, run })).model;
+
+const openRunOf = (current: Model) =>
+  current.page._tag === "Run" ? Option.some(current.page.openRun) : current.maybeRunPanel;
+
+const runDetailOf = (current: Model) =>
+  Option.getOrNull(Option.map(openRunOf(current), (openRun) => openRun.detail));
+
+const noticeOf = (current: Model) =>
+  Option.getOrNull(Option.map(openRunOf(current), (openRun) => openRun.notice));
+
+const taskEditsOf = (current: Model) =>
+  Option.match(openRunOf(current), { onNone: () => [], onSome: (openRun) => openRun.taskEdits });
+
+const loadedRun = (run: ReturnType<typeof runOf>) => ({
+  _tag: "Loaded" as const,
+  run,
+  maybeSubjectTitle: Option.some("Ari Cho"),
+});
 
 test("chat waits for the agent's reply, shows the draft, and saves that automation", () => {
   story(
@@ -227,18 +253,28 @@ test("a saved workflow about an employee loads employees, and a run starts for t
     message(Message.ClickedStart()),
     Command.expectExact(StartRun({ ...requestArgs, maybeSubjectId: Option.some("emp-2") })),
     Command.resolve(StartRun, Message.SucceededStartRun({ revision: 0, runId: "run-1" })),
+    Command.expectExact(NavigateInternal({ url: "/?automation=my-automation&run=run-1" })),
+    Command.resolve(NavigateInternal, Message.CompletedNavigateInternal()),
+    message(Message.ChangedUrl({ url: runUrl("run-1") })),
     Command.expectExact(
-      LoadRun({ ...requestArgs, poll: 1, runId: "run-1" }),
-      LoadRuns(requestArgs),
+      LoadRun({ automationId: "my-automation", revision: 1, poll: 1, runId: "run-1" }),
     ),
-    model((current) => expect(current.runDetail).toEqual({ _tag: "Loading", runId: "run-1" })),
-    Command.resolve(
-      LoadRuns,
-      Message.SucceededLoadRuns({ revision: 0, runs: [summaryOf(completed)] }),
-    ),
-    Command.resolve(LoadRun, Message.SucceededLoadRun({ revision: 0, poll: 1, run: completed })),
+    model((current) => {
+      expect(current.page).toEqual({
+        _tag: "Run",
+        openRun: {
+          automationId: "my-automation",
+          runId: "run-1",
+          detail: { _tag: "Loading" },
+          taskEdits: [],
+          notice: { _tag: "Idle" },
+        },
+      });
+      expect(current.maybeDraft).toEqual(Option.none());
+    }),
+    Command.resolve(LoadRun, runLoaded({ revision: 1, poll: 1, run: completed })),
     Command.expectNone(),
-    model((current) => expect(current.runDetail).toEqual({ _tag: "Loaded", run: completed })),
+    model((current) => expect(runDetailOf(current)).toEqual(loadedRun(completed))),
   );
 });
 
@@ -262,9 +298,34 @@ test("the open run polls every 1.5 s while running, every 5 s while waiting, the
   const completed = runOf({ status: "completed" });
   story(
     update,
-    given(loaded()),
-    message(Message.ClickedRun({ runId: "run-1" })),
-    Command.resolve(LoadRun, Message.SucceededLoadRun({ revision: 0, poll: 1, run: running })),
+    given(openingRun("run-1")),
+    message(runLoaded({ revision: 0, poll: 1, run: running })),
+    Command.expectExact(PollRun({ ...requestArgs, poll: 1, runId: "run-1", delayMillis: 1500 })),
+    Command.resolve(PollRun, runLoaded({ revision: 0, poll: 1, run: waiting })),
+    Command.expectExact(PollRun({ ...requestArgs, poll: 1, runId: "run-1", delayMillis: 5000 })),
+    Command.resolve(PollRun, runLoaded({ revision: 0, poll: 1, run: completed })),
+    Command.expectNone(),
+  );
+});
+
+const clickedLink = (search: string) =>
+  Message.ClickedLink({ request: UrlRequest.Internal({ url: studioUrl(search) }) });
+
+test("a run link in the studio opens the run beside the draft, which follows its progress", () => {
+  const running = runOf({ status: "running" });
+  const completed = runOf({ status: "completed" });
+  const editing = update(loaded(), automationLoaded({ maybeDraft: Option.some(onboarding) })).model;
+  story(
+    update,
+    given(editing),
+    message(clickedLink("automation=my-automation&run=run-1")),
+    Command.expectExact(LoadRun({ ...requestArgs, poll: 1, runId: "run-1" })),
+    model((current) => {
+      expect(current.page._tag).toBe("Studio");
+      expect(current.maybeDraft).toEqual(Option.some(onboarding));
+      expect(runDetailOf(current)).toEqual({ _tag: "Loading" });
+    }),
+    Command.resolve(LoadRun, runLoaded({ revision: 0, poll: 1, run: running })),
     Command.expectExact(
       PollRun({ ...requestArgs, poll: 1, runId: "run-1", delayMillis: 1500 }),
       LoadRuns(requestArgs),
@@ -273,46 +334,94 @@ test("the open run polls every 1.5 s while running, every 5 s while waiting, the
       LoadRuns,
       Message.SucceededLoadRuns({ revision: 0, runs: [summaryOf(running)] }),
     ),
-    Command.resolve(PollRun, Message.SucceededLoadRun({ revision: 0, poll: 1, run: waiting })),
-    Command.expectExact(
-      PollRun({ ...requestArgs, poll: 1, runId: "run-1", delayMillis: 5000 }),
-      LoadRuns(requestArgs),
-    ),
-    Command.resolve(
-      LoadRuns,
-      Message.SucceededLoadRuns({ revision: 0, runs: [summaryOf(waiting)] }),
-    ),
-    Command.resolve(PollRun, Message.SucceededLoadRun({ revision: 0, poll: 1, run: completed })),
+    Command.resolve(PollRun, runLoaded({ revision: 0, poll: 1, run: completed })),
     Command.expectExact(LoadRuns(requestArgs)),
     Command.resolve(
       LoadRuns,
       Message.SucceededLoadRuns({ revision: 0, runs: [summaryOf(completed)] }),
     ),
-    Command.expectNone(),
+    message(Message.ClickedExpandRunPanel()),
+    Command.expectExact(NavigateInternal({ url: "/?automation=my-automation&run=run-1" })),
+    Command.resolve(NavigateInternal, Message.CompletedNavigateInternal()),
+    message(Message.ClickedCloseRunPanel()),
+    model((current) => {
+      expect(current.maybeRunPanel).toEqual(Option.none());
+      const late = update(current, runLoaded({ revision: 0, poll: 1, run: running }));
+      expect(late.model).toBe(current);
+      expect(late.commands).toBeUndefined();
+    }),
   );
 });
 
-test("closing a run drops its late poll, and failing to load a run reports the error", () => {
-  const opened = withOpenRun(loaded(), runOf({ status: "running" }));
-  const closed = update(opened, Message.ClickedCloseRun()).model;
-  expect(closed.runDetail._tag).toBe("Closed");
-  const late = update(
-    closed,
-    Message.SucceededLoadRun({ revision: 0, poll: opened.runPoll, run: runOf({}) }),
+test("a run link on the overview opens that automation's run beside it", () => {
+  const waiting = runOf({ steps: { approve: { status: "waiting" } }, tasks: [approvalTask] });
+  const clicked = update(
+    init({ theme: "System" }, studioUrl()).model,
+    clickedLink("automation=orders&run=run-1"),
   );
-  expect(late.model).toBe(closed);
+  expect(clicked.model.page._tag).toBe("Overview");
+  expect(clicked.commands?.map((command) => command.args)).toEqual([
+    { automationId: "orders", revision: 0, poll: 1, runId: "run-1" },
+  ]);
+  const opened = update(clicked.model, runLoaded({ revision: 0, poll: 1, run: waiting }));
+  expect(opened.commands?.map((command) => command.name)).toEqual(["PollRun"]);
+  story(
+    update,
+    given(opened.model),
+    message(Message.ClickedApproveTask({ step: "approve" })),
+    Command.expectExact(
+      AnswerTask({
+        automationId: "orders",
+        revision: 0,
+        runId: "run-1",
+        step: "approve",
+        answer: { approved: true },
+      }),
+    ),
+    Command.resolve(
+      AnswerTask,
+      Message.SucceededAnswerTask({ revision: 0, runId: "run-1", step: "approve" }),
+    ),
+    Command.expectExact(LoadRun({ automationId: "orders", revision: 0, poll: 2, runId: "run-1" })),
+    Command.resolve(
+      LoadRun,
+      runLoaded({ revision: 0, poll: 2, run: runOf({ status: "completed" }) }),
+    ),
+  );
+  const editLink = update(opened.model, clickedLink("automation=orders"));
+  expect(editLink.commands?.map((command) => command.name)).toEqual(["NavigateInternal"]);
+});
+
+test("leaving a run for the editor drops its late poll, and a run that won't load says so", () => {
+  const opened = withOpenRun(runOf({ status: "running" }));
+  const editing = update(
+    opened,
+    Message.ChangedUrl({ url: studioUrl("automation=my-automation") }),
+  );
+  expect(editing.model.page._tag).toBe("Studio");
+  expect(editing.commands?.map((command) => command.name)).toEqual(["LoadAutomation"]);
+  const late = update(
+    editing.model,
+    runLoaded({ revision: 0, poll: opened.runPoll, run: runOf({}) }),
+  );
+  expect(late.model).toBe(editing.model);
   expect(late.commands).toBeUndefined();
 
-  const loading = update(loaded(), Message.ClickedRun({ runId: "run-9" })).model;
   const failed = update(
-    loading,
-    Message.FailedLoadRun({ revision: 0, poll: loading.runPoll, error: "Run not found" }),
+    openingRun("run-9"),
+    Message.FailedLoadRun({ revision: 0, poll: 1, error: "Run not found" }),
   ).model;
-  expect(failed.runDetail._tag).toBe("Closed");
-  expect(failed.activity).toEqual({ _tag: "Failed", error: "Run not found" });
+  expect(runDetailOf(failed)).toEqual({ _tag: "Unavailable", error: "Run not found" });
+
+  const pollFailed = update(
+    opened,
+    Message.FailedLoadRun({ revision: 0, poll: 1, error: "Offline" }),
+  ).model;
+  expect(runDetailOf(pollFailed)?._tag).toBe("Loaded");
+  expect(noticeOf(pollFailed)).toEqual({ _tag: "Failed", error: "Offline" });
 });
 
-test("approving a task sends the answer, then reloads the run and the run list", () => {
+test("approving a task sends the answer, then reloads the run", () => {
   const waiting = runOf({ steps: { approve: { status: "waiting" } }, tasks: [approvalTask] });
   const approved = runOf({
     status: "completed",
@@ -320,7 +429,7 @@ test("approving a task sends the answer, then reloads the run and the run list",
     tasks: [{ ...approvalTask, status: "closed" }],
   });
   const opened = update(
-    withOpenRun(loaded(), waiting),
+    withOpenRun(waiting),
     Message.SucceededLoadRuns({ revision: 0, runs: [summaryOf(waiting)] }),
   ).model;
   story(
@@ -330,7 +439,7 @@ test("approving a task sends the answer, then reloads the run and the run list",
     Command.expectExact(
       AnswerTask({ ...requestArgs, runId: "run-1", step: "approve", answer: { approved: true } }),
     ),
-    model((current) => expect(current.activity._tag).toBe("Working")),
+    model((current) => expect(noticeOf(current)).toEqual({ _tag: "Sending" })),
     Command.resolve(
       AnswerTask,
       Message.SucceededAnswerTask({ revision: 0, runId: "run-1", step: "approve" }),
@@ -338,38 +447,28 @@ test("approving a task sends the answer, then reloads the run and the run list",
     model((current) => {
       const stalePoll = update(
         current,
-        Message.SucceededLoadRun({ revision: 0, poll: opened.runPoll, run: waiting }),
+        runLoaded({ revision: 0, poll: opened.runPoll, run: waiting }),
       );
       expect(stalePoll.model).toBe(current);
       expect(stalePoll.commands).toBeUndefined();
     }),
-    Command.expectExact(
-      LoadRun({ ...requestArgs, poll: opened.runPoll + 1, runId: "run-1" }),
-      LoadRuns(requestArgs),
-    ),
-    Command.resolve(
-      LoadRuns,
-      Message.SucceededLoadRuns({ revision: 0, runs: [summaryOf(approved)] }),
-    ),
-    Command.resolve(
-      LoadRun,
-      Message.SucceededLoadRun({ revision: 0, poll: opened.runPoll + 1, run: approved }),
-    ),
+    Command.expectExact(LoadRun({ ...requestArgs, poll: opened.runPoll + 1, runId: "run-1" })),
+    Command.resolve(LoadRun, runLoaded({ revision: 0, poll: opened.runPoll + 1, run: approved })),
     Command.expectNone(),
     model((current) => {
-      expect(current.runDetail).toEqual({ _tag: "Loaded", run: approved });
-      expect(current.activity).toEqual({ _tag: "Ready", notice: "Answer sent." });
+      expect(runDetailOf(current)).toEqual(loadedRun(approved));
+      expect(noticeOf(current)).toEqual({ _tag: "Sent" });
     }),
   );
 });
 
 test("rejecting sends approved: false, and approval buttons can't answer a form", () => {
-  const opened = withOpenRun(loaded(), runOf({ tasks: [approvalTask, laptopTask] }));
+  const opened = withOpenRun(runOf({ tasks: [approvalTask, laptopTask] }));
   const rejected = update(opened, Message.ClickedRejectTask({ step: "approve" }));
   expect(rejected.commands?.map((command) => command.args)).toEqual([
     { ...requestArgs, runId: "run-1", step: "approve", answer: { approved: false } },
   ]);
-  expect(update(opened, Message.ClickedApproveTask({ step: "laptop" })).model.activity).toEqual({
+  expect(noticeOf(update(opened, Message.ClickedApproveTask({ step: "laptop" })).model)).toEqual({
     _tag: "Failed",
     error: "Fill in the form to answer this task",
   });
@@ -378,13 +477,13 @@ test("rejecting sends approved: false, and approval buttons can't answer a form"
 test("a form task submits its prefilled defaults with the person's edits as typed values", () => {
   const waiting = runOf({ steps: { laptop: { status: "waiting" } }, tasks: [laptopTask] });
   const opened = update(
-    withOpenRun(loaded(), waiting),
+    withOpenRun(waiting),
     Message.SucceededLoadRuns({ revision: 0, runs: [summaryOf(waiting)] }),
   ).model;
 
   const incomplete = update(opened, Message.SubmittedTaskForm({ step: "laptop" }));
   expect(incomplete.commands).toBeUndefined();
-  expect(incomplete.model.activity).toEqual({ _tag: "Failed", error: "Fill in Budget" });
+  expect(noticeOf(incomplete.model)).toEqual({ _tag: "Failed", error: "Fill in Budget" });
 
   story(
     update,
@@ -400,10 +499,13 @@ test("a form task submits its prefilled defaults with the person's edits as type
         answer: { values: { start_date: "2026-11-02", budget: 1800, remote: true } },
       }),
     ),
-    Command.resolve(AnswerTask, Message.FailedRequest({ revision: 0, error: "Fill in Budget" })),
+    Command.resolve(
+      AnswerTask,
+      Message.FailedAnswerTask({ revision: 0, runId: "run-1", error: "Fill in Budget" }),
+    ),
     model((current) => {
-      expect(current.activity).toEqual({ _tag: "Failed", error: "Fill in Budget" });
-      expect(current.taskEdits).toHaveLength(2);
+      expect(noticeOf(current)).toEqual({ _tag: "Failed", error: "Fill in Budget" });
+      expect(taskEditsOf(current)).toHaveLength(2);
     }),
   );
 });
@@ -470,7 +572,12 @@ test("the URL picks which automation opens and loads it with the automation list
     "LoadAutomations",
   ]);
 
-  expect(init({ theme: "System" }, studioUrl()).model.automationId).toBe("my-automation");
+  const overview = init({ theme: "System" }, studioUrl());
+  expect(overview.model.page._tag).toBe("Overview");
+  expect(overview.commands?.map((command) => command.name)).toEqual([
+    "LoadOverview",
+    "LoadAutomations",
+  ]);
   expect(init({ theme: "System" }, studioUrl("automation=bad%2Fid")).model.activity._tag).toBe(
     "Failed",
   );
@@ -496,16 +603,16 @@ test("typing an ID doesn't reset the page and committing it navigates to its URL
   expect(unchanged.commands).toBeUndefined();
 });
 
-test("a URL change loads that automation, restores its conversation, and clears the open run", () => {
+test("a URL change loads that automation, restores its conversation, and leaves the run", () => {
   story(
     update,
-    given(withOpenRun(loaded(), runOf({ status: "completed" }))),
+    given(withOpenRun(runOf({ status: "completed" }))),
     message(Message.ChangedUrl({ url: studioUrl("automation=orders") })),
     Command.expectExact(LoadAutomation({ automationId: "orders", revision: 1 })),
     model((current) => {
       expect(current.automationId).toBe("orders");
       expect(current.activity._tag).toBe("Working");
-      expect(current.runDetail._tag).toBe("Closed");
+      expect(current.page._tag).toBe("Studio");
     }),
     Command.resolve(
       LoadAutomation,
@@ -548,4 +655,44 @@ test("the theme toggle steps through system, light, and dark, applying each choi
 
 test("the studio boots with the saved theme", () => {
   expect(init({ theme: "Dark" }, studioUrl()).model.theme).toBe("Dark");
+});
+
+test("the overview drops the studio's late replies, and a run link from it opens that run", () => {
+  const sending = update(
+    modifyFields(loaded(), { messageInput: () => "Hello" }),
+    Message.ClickedSend(),
+  ).model;
+  story(
+    update,
+    given(sending),
+    message(Message.ChangedUrl({ url: studioUrl() })),
+    Command.expectExact(LoadOverview({ session: 1, poll: 0 })),
+    model((current) => {
+      expect(current.page._tag).toBe("Overview");
+      expect(current.automationIdInput).toBe("");
+      const late = update(current, Message.FailedRequest({ revision: 0, error: "Old error" }));
+      expect(late.model).toBe(current);
+    }),
+    Command.resolve(
+      LoadOverview,
+      Overview.Message.SucceededLoadOverview({ session: 1, poll: 0, automations: [] }),
+    ),
+    model((current) =>
+      expect(current.page).toEqual(
+        expect.objectContaining({
+          overview: expect.objectContaining({ listing: { _tag: "Ready", automations: [] } }),
+        }),
+      ),
+    ),
+    message(Message.ChangedUrl({ url: studioUrl("automation=orders&run=run-1") })),
+    Command.expectExact(LoadRun({ automationId: "orders", revision: 2, poll: 1, runId: "run-1" })),
+    model((current) => {
+      expect(current.automationId).toBe("orders");
+      expect(runDetailOf(current)).toEqual({ _tag: "Loading" });
+    }),
+    Command.resolve(
+      LoadRun,
+      runLoaded({ revision: 2, poll: 1, run: runOf({ status: "completed" }) }),
+    ),
+  );
 });

@@ -41,7 +41,9 @@ Deploys also create a 30-day Access service token for machine testing. Send it a
 
 Open the Studio URL, describe a process, review the steps, and save. Runs always use the last saved snapshot, not the current draft.
 
-The open automation's ID is in the URL (`/?automation=onboarding`), so a reload, a new tab, or a shared link opens the same automation. The sidebar lists every automation that has a draft. Use **New** in the sidebar, or edit the ID in the header and press Enter, to open another ID. An unknown ID starts an empty automation.
+The studio opens on the **Overview**: the runs in flight across every automation, and every automation with how it starts and how its last run went. Start a saved automation from there with **Run**. If it is about an entity, such as an employee, pick which one first. Draft-only automations are listed but can't run until they are saved. The page refreshes every 5 seconds while a run is in flight.
+
+The open automation's ID is in the URL (`/?automation=onboarding`), so a reload, a new tab, or a shared link opens the same automation. Clicking a run on the overview or in the studio opens it in a panel on the right, so it can play out while you keep editing or watching the overview. The panel follows the run step by step and lets people answer its open tasks; its expand button opens the run's own page (`/?automation=onboarding&run=<runId>`), and a modified click on a run opens that page in a new tab. The run page shows the saved version the run started with, not the draft, so it leaves out the designer chat; **Edit automation** goes back to it. The sidebar lists every automation that has a draft. Use **New** in the sidebar, or edit the ID in the header and press Enter, to open another ID. An unknown ID starts an empty automation.
 
 A saved automation with an entity trigger starts when a matching entity changes. For example, giving the seeded `ada` a start date starts an onboarding automation that watches `employee.start_date`:
 
@@ -55,6 +57,7 @@ The response lists the runs the change `triggered`. People answer human steps fr
 
 | Endpoint                                                   | Purpose                                       |
 | ---------------------------------------------------------- | --------------------------------------------- |
+| `GET /api/overview`                                        | Each automation's trigger and runs in flight  |
 | `GET /api/automations`                                     | List automations                              |
 | `GET /api/automations/:id`                                 | Inspect an automation and its recent runs     |
 | `POST /api/automations/:id/chat`                           | Send a design message                         |

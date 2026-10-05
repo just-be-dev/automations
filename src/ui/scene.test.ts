@@ -1,5 +1,6 @@
 import { test } from "bun:test";
 import * as Option from "effect/Option";
+import { UrlRequest } from "foldkit/navigation";
 import { modifyFields } from "foldkit/struct";
 import {
   Command,
@@ -18,8 +19,8 @@ import {
   AnswerTask,
   LoadAutomations,
   LoadRun,
-  LoadRuns,
   Message,
+  NavigateInternal,
   PollAutomation,
   SendMessage,
   StartRun,
@@ -45,21 +46,27 @@ const automationLoaded = (
     ...fields,
   });
 
-const loaded = update(init({ theme: "System" }, studioUrl()).model, automationLoaded()).model;
+const loaded = update(
+  init({ theme: "System" }, studioUrl("automation=my-automation")).model,
+  automationLoaded(),
+).model;
+
+const runUrl = (runId: string) => studioUrl(`automation=my-automation&run=${runId}`);
 
 const withDraft = (draft: Workflow) =>
   modifyFields(loaded, { maybeDraft: () => Option.some(draft) });
 
 const requestArgs = { automationId: "my-automation", revision: 0 };
 
+const runLoaded = (fields: { revision: number; poll: number; run: ReturnType<typeof runOf> }) =>
+  Message.SucceededLoadRun({ ...fields, maybeSubjectTitle: Option.some("Ari Cho") });
+
 const applied = (start: Model, messages: ReadonlyArray<Message>) =>
   messages.reduce((current, next) => update(current, next).model, start);
 
 const withOpenRun = (run: ReturnType<typeof runOf>) =>
-  applied(loaded, [
-    automationLoaded({ maybeDraft: Option.some(onboarding), runs: [summaryOf(run)] }),
-    Message.ClickedRun({ runId: run.id }),
-    Message.SucceededLoadRun({ revision: 0, poll: 1, run }),
+  applied(init({ theme: "System" }, runUrl(run.id)).model, [
+    runLoaded({ revision: 0, poll: 1, run }),
   ]);
 
 test("the accessible message input drives chat and safely renders the workflow", () => {
@@ -67,6 +74,7 @@ test("the accessible message input drives chat and safely renders the workflow",
     { update, view },
     given(loaded),
     expect(label("Automation ID")).toHaveValue("my-automation"),
+    expect(role("region", { name: "Conversation" })).toExist(),
     type(label("Your message"), "Summarize orders"),
     click(role("button", { name: "Send message" })),
     Command.expectExact(SendMessage({ ...requestArgs, message: "Summarize orders" })),
@@ -338,7 +346,7 @@ test("nested steps render as labelled lanes with readable conditions and setting
   );
 });
 
-test("picking an employee and running the saved version opens the new run", () => {
+test("picking an employee and running the saved version links to the new run", () => {
   const completed = runOf({
     status: "completed",
     steps: {
@@ -354,6 +362,7 @@ test("picking an employee and running the saved version opens the new run", () =
         automationLoaded({
           maybeDraft: Option.some(onboarding),
           maybeSaved: Option.some(onboarding),
+          runs: [summaryOf(completed)],
         }),
         Message.SucceededLoadSubjects({
           revision: 0,
@@ -372,19 +381,42 @@ test("picking an employee and running the saved version opens the new run", () =
     click(role("button", { name: "Run saved version" })),
     Command.expectExact(StartRun({ ...requestArgs, maybeSubjectId: Option.some("emp-2") })),
     Command.resolve(StartRun, Message.SucceededStartRun({ revision: 0, runId: "run-1" })),
-    expect(text("Loading the run…")).toExist(),
-    Command.resolve(
-      LoadRuns,
-      Message.SucceededLoadRuns({ revision: 0, runs: [summaryOf(completed)] }),
+    Command.expectExact(NavigateInternal({ url: "/?automation=my-automation&run=run-1" })),
+    Command.resolve(NavigateInternal, Message.CompletedNavigateInternal()),
+    expect(text("Run run-1 started.")).toExist(),
+    expect(role("link", { name: /Ari Cho/ })).toHaveAttr(
+      "href",
+      "/?automation=my-automation&run=run-1",
     ),
-    Command.resolve(LoadRun, Message.SucceededLoadRun({ revision: 0, poll: 1, run: completed })),
+  );
+});
+
+test("a run page shows each step's outcome without the designer, and links to the editor", () => {
+  const completed = runOf({
+    status: "completed",
+    steps: {
+      approve: { status: "done", record: { approved: true } },
+      laptop: { status: "done" },
+      notify: { status: "done", record: { simulated: true, channel: "D-sam", ts: "1" } },
+    },
+  });
+  scene(
+    { update, view },
+    given(withOpenRun(completed)),
     expect(text("Completed")).toExist(),
     expect(text("Ari Cho")).toExist(),
     expect(role("button", { name: /Tell the manager.*Done/ })).toExist(),
     expect(label("Tell the manager record")).toContainText('"channel": "D-sam"'),
     expect(text("Simulated: nothing was sent. It would have recorded")).toExist(),
-    click(role("button", { name: "Back to draft" })),
-    expect(role("list", { name: "Recent runs" })).toContainText("Ari Cho"),
+    expect(text("Runs the version saved when it started", { exact: false })).toExist(),
+    expect(role("link", { name: "Edit automation" })).toHaveAttr(
+      "href",
+      "/?automation=my-automation",
+    ),
+    expect(label("Your message")).not.toExist(),
+    expect(role("region", { name: "Conversation" })).not.toExist(),
+    expect(role("button", { name: "Save draft" })).not.toExist(),
+    expect(role("button", { name: "Run saved version" })).not.toExist(),
   );
 });
 
@@ -414,11 +446,8 @@ test("an approval task shows who it's for and sends the answer", () => {
       AnswerTask,
       Message.SucceededAnswerTask({ revision: 0, runId: "run-1", step: "approve" }),
     ),
-    Command.resolve(
-      LoadRuns,
-      Message.SucceededLoadRuns({ revision: 0, runs: [summaryOf(approved)] }),
-    ),
-    Command.resolve(LoadRun, Message.SucceededLoadRun({ revision: 0, poll: 2, run: approved })),
+    Command.resolve(LoadRun, runLoaded({ revision: 0, poll: 2, run: approved })),
+
     expect(role("list", { name: "Open tasks" })).not.toExist(),
     expect(text("Answer sent.")).toExist(),
   );
@@ -454,11 +483,46 @@ test("a form task is prefilled from its defaults and submits typed values", () =
       AnswerTask,
       Message.SucceededAnswerTask({ revision: 0, runId: "run-1", step: "laptop" }),
     ),
-    Command.resolve(
-      LoadRuns,
-      Message.SucceededLoadRuns({ revision: 0, runs: [summaryOf(answered)] }),
-    ),
-    Command.resolve(LoadRun, Message.SucceededLoadRun({ revision: 0, poll: 2, run: answered })),
+    Command.resolve(LoadRun, runLoaded({ revision: 0, poll: 2, run: answered })),
+
     expect(role("form", { name: "Order a laptop" })).not.toExist(),
+  );
+});
+
+test("the sidebar's overview link marks the overview page", () => {
+  scene(
+    { update, view },
+    given(init({ theme: "System" }, studioUrl()).model),
+    expect(role("link", { name: "Overview" })).toHaveAttr("href", "/"),
+    expect(role("link", { name: "Overview" })).toHaveAttr("aria-current", "page"),
+    expect(text("Runs and automations")).toExist(),
+  );
+});
+
+test("a run opens in a panel beside the editor, which can expand to its page or close", () => {
+  const waiting = runOf({ steps: { approve: { status: "waiting" } }, tasks: [approvalTask] });
+  const editing = applied(loaded, [
+    automationLoaded({ maybeDraft: Option.some(onboarding), runs: [summaryOf(waiting)] }),
+    Message.ClickedLink({
+      request: UrlRequest.Internal({ url: runUrl("run-1") }),
+    }),
+    runLoaded({ revision: 0, poll: 1, run: waiting }),
+  ]);
+  scene(
+    { update, view },
+    given(editing),
+    expect(role("region", { name: "Conversation" })).toExist(),
+    expect(role("region", { name: "Workflow" })).toExist(),
+    expect(role("complementary", { name: "Run preview" })).toContainText("Manager onboarding"),
+    expect(role("complementary", { name: "Run preview" })).toContainText(
+      "Approve onboarding for Ari Cho?",
+    ),
+    expect(role("link", { name: /Ari Cho/ })).toHaveAttr("aria-current", "true"),
+    click(role("button", { name: "Open the run's page" })),
+    Command.expectExact(NavigateInternal({ url: "/?automation=my-automation&run=run-1" })),
+    Command.resolve(NavigateInternal, Message.CompletedNavigateInternal()),
+    click(role("button", { name: "Close the run" })),
+    expect(role("complementary", { name: "Run preview" })).not.toExist(),
+    expect(role("region", { name: "Conversation" })).toExist(),
   );
 });
