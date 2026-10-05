@@ -9,7 +9,8 @@ A single-tenant prototype on Cloudflare: you design sequential automations in a 
 - `src/automation.ts`: the `Automation` Durable Object. It stores the draft and saved workflow and the chat transcript, keeps the runs, and drives step execution with `Alchemy.makeCallback`.
 - `src/automation-index.ts`: the `AutomationsDatabase` D1 database and its queries. Cloudflare can't enumerate Durable Object names, so `Api` records each automation in the `automations` table on chat and save, and when an existing automation is opened. It backs `GET /api/automations`. Each automation's data stays in its Durable Object; the table only lists them.
 - `migrations/`: D1 migrations, applied in numeric order on deploy and under `alchemy dev`.
-- `src/workflow.ts`: the pure domain code. It holds the Schema models (`Workflow`, `Step`, `Run`), the decoders, and `graph`.
+- `src/workflow.ts`: the pure domain code. It holds the Schema models (`Workflow`, the recursive `Step` tree, `Run`), the decoders, condition evaluation, and `graph`.
+- `src/interpreter.ts`: `RunAutomation`, an `effect/workflow` Workflow whose payload is a saved workflow. It walks the step tree with Activities, DurableClocks, and DurableDeferreds, and reaches the outside world only through the `StepRunner` service. Code outside an Activity reruns on every replay, so keep it deterministic. The `Automation` object doesn't use it yet; until it does, runs reject anything but flat agent and webhook steps.
 - `src/pi.ts` and `src/pi-storage.ts`: pi-durable and pi-ai running inside the Durable Object, with pi's tables stored in the object's SQLite.
 - `src/edge.ts`: the Studio Worker's async entry. It only forwards `/api/*` to `Api`. Keep logic out of it.
 - `src/ui/`: the Foldkit browser app. `public/_headers` sets the CSP for static assets.

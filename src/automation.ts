@@ -10,6 +10,7 @@ import { openPiAgent } from "./pi.ts";
 import {
   decodeDraft,
   Exchange,
+  flattenSteps,
   graph,
   Run,
   Workflow,
@@ -20,7 +21,27 @@ import {
 
 const MODEL = "@cf/moonshotai/kimi-k2.7-code";
 
-const designInstructions = `You design executable automations. Always respond with ONLY JSON: {"reply":"brief helpful explanation or question","workflow":{"name":"...","event":null or event identifier,"steps":[{"id":"stable-unique-id","title":"...","kind":"agent","instruction":"..."} or {"id":"...","title":"...","kind":"webhook","url":"https://..."}]}}. Include the COMPLETE revised workflow on every turn. Only agent and HTTPS webhook steps are executable. Steps run sequentially. Event is an identifier for an externally POSTed event, not a scheduled timer. Never invent webhook URLs; ask for missing URLs and use an agent step until provided. No secrets in the workflow.`;
+const designInstructions = `You design executable automations. Always respond with ONLY JSON: {"reply":"brief helpful explanation or question","workflow":Workflow}. Include the COMPLETE revised workflow on every turn.
+
+Workflow: {"name":"...","event":null or an identifier for an externally POSTed event (not a timer),"steps":[Step, ...]} with 1–20 top-level steps.
+
+Every step has an "id" (letters, digits, - and _), a short "title", and a "kind". IDs must be unique across the WHOLE workflow, nested steps included, and stay stable between turns. Steps in a list run in order. The kinds:
+- {"kind":"agent","instruction":"..."}: an AI agent does the work described.
+- {"kind":"webhook","url":"https://..."}: POSTs the run so far to a public HTTPS URL. Never invent URLs; ask for them and use an agent step until provided.
+- {"kind":"wait","duration":"3 days"} or {"kind":"wait","until":"input.start_date","offset":"-7 days"}: pauses the run for a while, or until a date shifted by an optional offset. Durations are "<number> minutes|hours|days|weeks"; offsets may start with "-".
+- {"kind":"parallel","branches":[[Step, ...], [Step, ...]]}: 2–8 branches run at the same time; the run continues once every branch finishes.
+- {"kind":"if","cases":[{"when":Condition,"steps":[Step, ...]}],"otherwise":[Step, ...]}: runs the steps of the first case whose condition holds, else "otherwise" (optional). Use it for checks on data.
+- {"kind":"decide","model":"clef-flash" or "clef","question":"...","options":[{"id":"...","description":"...","steps":[Step, ...]}]}: a decision model reads the run so far and picks one of 2–8 options, then runs its steps. Use it for judgment calls; clef-flash for simple routing, clef for nuanced decisions.
+- {"kind":"human","prompt":"...","assignee":"...","response":"approval" or {"fields":[{"name":"snake_case","label":"...","type":"text" or "number" or "boolean" or "date"}]},"timeout":"2 days"}: pauses until a person approves or rejects, or fills in the fields. "assignee" and "timeout" are optional.
+
+Condition: {"ref":Ref,"op":"equals" or "notEquals" or "greaterThan" or "lessThan" or "contains","value":any JSON} or {"ref":Ref,"op":"exists"} or {"all":[Condition, ...]} or {"any":[Condition, ...]} or {"not":Condition}.
+Ref: "input.<field>" reads the run input. "steps.<id>.<field>" reads what an earlier step recorded: agent and webhook steps record "output"; decide steps "choice" (the option id) and "confidence"; human steps "approved", "values.<field>", and "timedOut"; if steps "matched".
+
+Design guidance: use wait steps for timing instead of asking an agent to schedule something; use parallel for independent work; use human steps for approvals and information only a person has, instead of asking an agent to confirm with someone; branch with if or decide instead of describing branches in prose. Keep lists flat when nesting adds nothing. Nest at most 4 levels deep and use at most 60 steps in total.
+
+Variables: when a title, instruction, question, prompt, or assignee needs a value that changes on each run (a person, a date, an ID), write it as {{snake_case}} naming a field of the run input, e.g. {{new_hire_name}}. Use the same variable for the same value everywhere, and never write placeholders any other way, such as [new hire].
+
+No secrets in the workflow.`;
 
 export class AutomationError extends Schema.TaggedError<AutomationError>()("AutomationError", {
   message: Schema.String,
@@ -47,6 +68,15 @@ const exchangePrefix = "exchange:";
 const exchangeKey = (index: number) => `${exchangePrefix}${String(index).padStart(6, "0")}`;
 
 const failureMessage = (error: { readonly message: string }) => error.message;
+
+// NOTE: until `RunAutomation` (src/interpreter.ts) replaces this runner, runs only execute flat
+// agent and webhook steps.
+const isFlatStep = (step: Step): step is AgentStep | WebhookStep =>
+  step.kind === "agent" || step.kind === "webhook";
+
+const unsupportedStepKinds = (workflow: Workflow) => [
+  ...new Set(flattenSteps(workflow.steps).flatMap((step) => (isFlatStep(step) ? [] : [step.kind]))),
+];
 
 /** One automation: its draft and saved workflow, its runs, and the pi agent that designs and runs it. */
 export default class Automation extends Cloudflare.DurableObject<Automation>()(
@@ -103,6 +133,11 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
       );
 
       const runStep = Effect.fn("Automation.runStep")(function* (run: Run, step: Step) {
+        if (!isFlatStep(step)) {
+          return yield* new AutomationError({
+            message: `Runs can't execute ${step.kind} steps yet`,
+          });
+        }
         return step.kind === "agent"
           ? yield* runAgentStep(run, step)
           : yield* runWebhookStep(run, step);
@@ -202,6 +237,12 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         }
         if (event !== undefined && saved.event !== event) {
           return yield* new AutomationError({ message: "Event does not match the saved trigger" });
+        }
+        const unsupported = unsupportedStepKinds(saved);
+        if (unsupported.length > 0) {
+          return yield* new AutomationError({
+            message: `Runs can't execute ${unsupported.join(", ")} steps yet`,
+          });
         }
         const run: Run = {
           id: crypto.randomUUID(),

@@ -1,10 +1,11 @@
 import * as Array from "effect/Array";
 import * as Effect from "effect/Effect";
+import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { Command, Dom, Http, type Runtime, type Update } from "foldkit";
-import type { Document, HtmlBuilder } from "foldkit/html";
+import type { Document, Html, HtmlBuilder } from "foldkit/html";
 import { defineMessageUnion } from "foldkit/message";
 import { UrlRequest, load, pushUrl } from "foldkit/navigation";
 import { Url, toString as urlToString } from "foldkit/url";
@@ -13,7 +14,13 @@ import { modifyFields } from "foldkit/struct";
 import { Disclosure, Input } from "@foldkit/ui";
 import {
   Bot,
+  Braces,
   ChevronDown,
+  GitBranch,
+  Hourglass,
+  Scale,
+  Split,
+  UserRound,
   CircleAlert,
   CornerDownLeft,
   LoaderCircle,
@@ -32,30 +39,18 @@ import { Message as ChatMessage } from "@/components/ui/message";
 import { textarea } from "@/components/ui/textarea";
 import { icon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
+import {
+  templateParts,
+  workflowVariables,
+  Workflow,
+  type Comparison,
+  type Condition,
+  type Step,
+} from "../workflow.ts";
 
 // MODEL
 
-export const Workflow = Schema.Struct({
-  name: Schema.String,
-  event: Schema.NullOr(Schema.String),
-  steps: Schema.Array(
-    Schema.Union([
-      Schema.Struct({
-        id: Schema.String,
-        title: Schema.String,
-        kind: Schema.Literal("agent"),
-        instruction: Schema.String,
-      }),
-      Schema.Struct({
-        id: Schema.String,
-        title: Schema.String,
-        kind: Schema.Literal("webhook"),
-        url: Schema.String,
-      }),
-    ]),
-  ),
-});
-export type Workflow = typeof Workflow.Type;
+export { Workflow };
 
 const Run = Schema.Struct({
   id: Schema.String,
@@ -75,6 +70,9 @@ const Exchange = Schema.Struct({
   reply: Schema.String,
 });
 
+const WorkflowDisplay = Schema.Literals(["Steps", "Json"]);
+type WorkflowDisplay = typeof WorkflowDisplay.Type;
+
 const AutomationSummary = Schema.Struct({ id: Schema.String, name: Schema.String });
 
 const Directory = defineTaggedUnion({
@@ -93,6 +91,7 @@ export const Model = Schema.Struct({
   maybeDraft: Schema.Option(Workflow),
   maybeRun: Schema.Option(Run),
   expandedStepIds: Schema.Array(Schema.String),
+  workflowDisplay: WorkflowDisplay,
   activity: Activity,
 });
 export type Model = typeof Model.Type;
@@ -110,6 +109,7 @@ export const Message = defineMessageUnion({
   CompletedFocusAutomationIdInput: {},
   UpdatedMessageInput: { value: Schema.String },
   ToggledStepDetails: { stepId: Schema.String, isOpen: Schema.Boolean },
+  SelectedWorkflowDisplay: { display: WorkflowDisplay },
   ClickedSend: {},
   ClickedSave: {},
   ClickedStart: {},
@@ -164,6 +164,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message> = (url) => {
     maybeDraft: Option.none(),
     maybeRun: Option.none(),
     expandedStepIds: [],
+    workflowDisplay: "Steps",
     activity: validId(automationId)
       ? Activity.Working({ notice: "Loading automation…" })
       : Activity.Failed({ error: invalidIdError }),
@@ -242,6 +243,9 @@ export const update = (model: Model, message: Message) =>
           return isOpen ? Array.append(otherStepIds, stepId) : otherStepIds;
         },
       }),
+    }),
+    SelectedWorkflowDisplay: ({ display }) => ({
+      model: modifyFields(model, { workflowDisplay: () => display }),
     }),
     UpdatedMessageInput: ({ value }) => ({
       model: modifyFields(model, { messageInput: () => value }),
@@ -551,7 +555,6 @@ export const PollRun = Command.define("PollRun", {
 // VIEW
 
 type Exchange = typeof Exchange.Type;
-type Step = Workflow["steps"][number];
 type Run = typeof Run.Type;
 
 const eyebrowClass =
@@ -881,10 +884,16 @@ const workflowPanelView = (model: Model, h: HtmlBuilder<Message>) =>
               ),
             ],
           ),
-          Option.match(model.maybeRun, {
-            onNone: () => h.empty,
-            onSome: (run) => runBadgeView(run, h),
-          }),
+          h.div(
+            [h.Class("flex shrink-0 items-center gap-2")],
+            [
+              Option.match(model.maybeRun, {
+                onNone: () => h.empty,
+                onSome: (run) => runBadgeView(run, h),
+              }),
+              workflowDisplayToggleView(model.workflowDisplay, h),
+            ],
+          ),
         ],
       ),
       h.div(
@@ -892,7 +901,10 @@ const workflowPanelView = (model: Model, h: HtmlBuilder<Message>) =>
         [
           Option.match(model.maybeDraft, {
             onNone: () => emptyWorkflowView(h),
-            onSome: (workflow) => workflowView(workflow, model.expandedStepIds, h),
+            onSome: (workflow) =>
+              model.workflowDisplay === "Json"
+                ? workflowJsonView(workflow, h)
+                : workflowView(workflow, model.expandedStepIds, h),
           }),
         ],
       ),
@@ -929,6 +941,29 @@ const workflowPanelView = (model: Model, h: HtmlBuilder<Message>) =>
     ],
   );
 
+const workflowDisplayToggleView = (display: WorkflowDisplay, h: HtmlBuilder<Message>) =>
+  button(
+    {
+      onClick: Message.SelectedWorkflowDisplay({ display: display === "Json" ? "Steps" : "Json" }),
+      variant: display === "Json" ? "secondary" : "ghost",
+      size: "xs",
+      attributes: [h.AriaPressed(String(display === "Json")), h.Title("Show the draft's raw JSON")],
+    },
+    [icon(h, Braces, "size-3", "inline-start"), "JSON"],
+    h,
+  );
+
+const workflowJsonView = (workflow: Workflow, h: HtmlBuilder<Message>) =>
+  h.pre(
+    [
+      h.AriaLabel("Draft JSON"),
+      h.Class(
+        "max-w-3xl overflow-x-auto rounded-lg border bg-card px-4 py-3 font-mono text-xs leading-relaxed shadow-xs",
+      ),
+    ],
+    [JSON.stringify(workflow, null, 2)],
+  );
+
 const emptyWorkflowView = (h: HtmlBuilder<Message>) =>
   Empty(
     { className: "max-w-xl border border-dashed bg-card/60" },
@@ -957,6 +992,33 @@ const nodeMarkerClass =
 
 const nodeCardClass = "min-w-0 flex-1 rounded-lg border bg-card px-3.5 py-2.5 shadow-xs";
 
+const variableClass =
+  "rounded-sm bg-signal/12 px-1 py-px font-mono text-[0.92em] font-medium text-foreground ring-1 ring-signal/30 ring-inset box-decoration-clone";
+
+const variableView = (name: string, h: HtmlBuilder<Message>) =>
+  h.span([h.Class(variableClass), h.Title(`Run input: ${name}`)], [name]);
+
+const templateView = (text: string, h: HtmlBuilder<Message>) =>
+  Array.map(templateParts(text), (part) =>
+    part.kind === "variable" ? variableView(part.name, h) : part.text,
+  );
+
+const inputsView = (workflow: Workflow, h: HtmlBuilder<Message>) =>
+  Array.match(workflowVariables(workflow), {
+    onEmpty: () => h.empty,
+    onNonEmpty: (names) =>
+      h.div(
+        [h.Class("mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1.5 border-t pt-2")],
+        [
+          h.h3([h.Id("trigger-inputs"), h.Class(eyebrowClass)], ["Inputs"]),
+          h.ul(
+            [h.AriaLabelledBy("trigger-inputs"), h.Class("flex flex-wrap gap-1.5 text-xs")],
+            Array.map(names, (name) => h.keyed("li")(name, [], [variableView(name, h)])),
+          ),
+        ],
+      ),
+  });
+
 const workflowView = (
   workflow: Workflow,
   expandedStepIds: ReadonlyArray<string>,
@@ -966,7 +1028,7 @@ const workflowView = (
     [
       h.AriaLabel("Steps"),
       h.Class(
-        "relative flex max-w-xl flex-col gap-3 before:absolute before:top-4 before:bottom-4 before:left-4 before:w-px before:bg-border",
+        "relative flex max-w-2xl flex-col gap-3 before:absolute before:top-4 before:bottom-4 before:left-4 before:w-px before:bg-border",
       ),
     ],
     [
@@ -985,25 +1047,240 @@ const workflowView = (
                 [h.Class("text-sm font-medium")],
                 [workflow.event ? `Event: ${workflow.event}` : "Manual start"],
               ),
+              inputsView(workflow, h),
             ],
           ),
         ],
       ),
       ...Array.map(workflow.steps, (step, index) =>
-        stepView(step, index, Array.contains(expandedStepIds, step.id), h),
+        stepView(step, String(index + 1).padStart(2, "0"), false, expandedStepIds, h),
       ),
     ],
   );
 
-const stepView = (step: Step, index: number, isExpanded: boolean, h: HtmlBuilder<Message>) =>
-  h.keyed("li")(
+const stepIcon: Record<Step["kind"], Parameters<typeof icon>[1]> = {
+  agent: Bot,
+  webhook: Webhook,
+  wait: Hourglass,
+  parallel: Split,
+  if: GitBranch,
+  decide: Scale,
+  human: UserRound,
+};
+
+const stepLabel: Record<Step["kind"], string> = {
+  agent: "Agent",
+  webhook: "Webhook",
+  wait: "Wait",
+  parallel: "Parallel",
+  if: "Condition",
+  decide: "Decision",
+  human: "Human",
+};
+
+const comparisonLabel: Record<Comparison, string> = {
+  equals: "is",
+  notEquals: "is not",
+  greaterThan: "is greater than",
+  lessThan: "is less than",
+  contains: "contains",
+};
+
+const stepRefClass = "rounded-sm bg-muted px-1 py-px font-mono text-[0.92em] text-foreground";
+
+const refView = (ref: string, h: HtmlBuilder<Message>) => {
+  const [root, ...path] = ref.split(".");
+  return root === "input"
+    ? variableView(path.join("."), h)
+    : h.span(
+        [h.Class(stepRefClass), h.Title(`Recorded by step ${path[0] ?? ""}`)],
+        [path.join(".")],
+      );
+};
+
+const valueView = (value: unknown, h: HtmlBuilder<Message>) =>
+  h.span([h.Class("font-mono text-[0.92em] text-foreground")], [JSON.stringify(value)]);
+
+const joinedConditions = (
+  conditions: ReadonlyArray<Condition>,
+  separator: string,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Html | string> =>
+  Array.flatMap(conditions, (condition, index) => [
+    ...(index === 0 ? [] : [separator]),
+    ...conditionView(condition, h),
+  ]);
+
+const conditionView = (
+  condition: Condition,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Html | string> => {
+  if ("all" in condition) {
+    return ["(", ...joinedConditions(condition.all, " and ", h), ")"];
+  }
+  if ("any" in condition) {
+    return ["(", ...joinedConditions(condition.any, " or ", h), ")"];
+  }
+  if ("not" in condition) {
+    return ["not ", ...conditionView(condition.not, h)];
+  }
+  if (condition.op === "exists") {
+    return [refView(condition.ref, h), " is set"];
+  }
+  return [
+    refView(condition.ref, h),
+    ` ${comparisonLabel[condition.op]} `,
+    valueView(condition.value, h),
+  ];
+};
+
+const offsetText = (offset: string) =>
+  offset.startsWith("-") ? `${offset.slice(1)} before ` : `${offset} after `;
+
+const detailClass = (isExpanded: boolean) =>
+  cn(
+    "text-xs text-muted-foreground",
+    isExpanded ? "whitespace-pre-wrap break-words" : "line-clamp-2",
+  );
+
+const stepDetailView = (step: Step, isExpanded: boolean, h: HtmlBuilder<Message>) =>
+  Match.value(step).pipe(
+    Match.discriminatorsExhaustive("kind")({
+      agent: (agent) => h.p([h.Class(detailClass(isExpanded))], templateView(agent.instruction, h)),
+      webhook: (webhook) =>
+        h.p(
+          [
+            h.Class(
+              cn("font-mono text-xs text-muted-foreground", isExpanded ? "break-all" : "truncate"),
+            ),
+          ],
+          [webhook.url],
+        ),
+      wait: (wait) =>
+        h.p(
+          [h.Class("text-xs text-muted-foreground")],
+          "until" in wait
+            ? [
+                "Until ",
+                wait.offset === undefined ? "" : offsetText(wait.offset),
+                refView(wait.until, h),
+              ]
+            : [`Pauses for ${wait.duration}`],
+        ),
+      parallel: (parallel) =>
+        h.p(
+          [h.Class("text-xs text-muted-foreground")],
+          [`${parallel.branches.length} branches run at the same time, then the run continues.`],
+        ),
+      if: () =>
+        h.p([h.Class("text-xs text-muted-foreground")], ["Runs the first case that matches."]),
+      decide: (decide) =>
+        h.div(
+          [h.Class("flex flex-col gap-1.5")],
+          [
+            h.p([h.Class(detailClass(isExpanded))], templateView(decide.question, h)),
+            stepMetaView([`Model: ${decide.model}`], h),
+          ],
+        ),
+      human: (human) =>
+        h.div(
+          [h.Class("flex flex-col gap-1.5")],
+          [
+            h.p([h.Class(detailClass(isExpanded))], templateView(human.prompt, h)),
+            stepMetaView(
+              [
+                ...(human.assignee === undefined
+                  ? []
+                  : [h.span([], ["Assignee: ", ...templateView(human.assignee, h)])]),
+                human.response === "approval"
+                  ? "Approve or reject"
+                  : `Form: ${Array.map(human.response.fields, (field) => field.label).join(", ")}`,
+                ...(human.timeout === undefined ? [] : [`Times out after ${human.timeout}`]),
+              ],
+              h,
+            ),
+          ],
+        ),
+    }),
+  );
+
+const stepMetaView = (items: ReadonlyArray<Html | string>, h: HtmlBuilder<Message>) =>
+  h.ul(
+    [h.Class("flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground")],
+    Array.map(items, (item) => h.li([], [item])),
+  );
+
+interface Lane {
+  readonly label: string;
+  readonly heading: ReadonlyArray<Html | string>;
+  readonly steps: ReadonlyArray<Step>;
+}
+
+const stepLanes = (step: Step, h: HtmlBuilder<Message>): ReadonlyArray<Lane> =>
+  Match.value(step).pipe(
+    Match.discriminatorsExhaustive("kind")({
+      agent: () => [],
+      webhook: () => [],
+      wait: () => [],
+      human: () => [],
+      parallel: (parallel) =>
+        Array.map(parallel.branches, (steps, index) => ({
+          label: `Branch ${index + 1}`,
+          heading: [`Branch ${index + 1}`],
+          steps,
+        })),
+      if: (branch) => [
+        ...Array.map(branch.cases, (branchCase, index) => ({
+          label: `Case ${index + 1}`,
+          heading: ["If ", ...conditionView(branchCase.when, h)],
+          steps: branchCase.steps,
+        })),
+        ...(branch.otherwise === undefined || Array.isReadonlyArrayEmpty(branch.otherwise)
+          ? []
+          : [{ label: "Otherwise", heading: ["Otherwise"], steps: branch.otherwise }]),
+      ],
+      decide: (decide) =>
+        Array.map(decide.options, (option) => ({
+          label: `Option ${option.id}`,
+          heading: [
+            h.span([h.Class("font-mono text-foreground")], [option.id]),
+            ` · ${option.description}`,
+          ],
+          steps: option.steps,
+        })),
+    }),
+  );
+
+const laneView = (lane: Lane, expandedStepIds: ReadonlyArray<string>, h: HtmlBuilder<Message>) =>
+  h.li(
+    [h.Class("flex flex-col gap-2 border-l-2 border-dashed pl-3")],
+    [
+      h.div([h.Class("text-xs text-muted-foreground")], lane.heading),
+      h.ol(
+        [h.AriaLabel(lane.label), h.Class("flex flex-col gap-2")],
+        Array.map(lane.steps, (step, index) =>
+          stepView(step, String(index + 1), true, expandedStepIds, h),
+        ),
+      ),
+    ],
+  );
+
+const stepView = (
+  step: Step,
+  marker: string,
+  isNested: boolean,
+  expandedStepIds: ReadonlyArray<string>,
+  h: HtmlBuilder<Message>,
+): Html => {
+  const isExpanded = Array.contains(expandedStepIds, step.id);
+  return h.keyed("li")(
     step.id,
     [h.Class("flex gap-3 animate-in fade-in slide-in-from-top-1 duration-300")],
     [
-      h.span([h.Class(nodeMarkerClass)], [String(index + 1).padStart(2, "0")]),
+      h.span([h.Class(cn(nodeMarkerClass, isNested && "size-6 text-[10px]"))], [marker]),
       Disclosure.view(
         {
-          id: `step-${index + 1}`,
+          id: `step-${step.id}`,
           isOpen: isExpanded,
           onToggle: (isOpen) => Message.ToggledStepDetails({ stepId: step.id, isOpen }),
           toView: ({ button, panel }) =>
@@ -1023,9 +1300,9 @@ const stepView = (step: Step, index: number, isExpanded: boolean, h: HtmlBuilder
                       [
                         h.div(
                           [h.Class(cn(eyebrowClass, "flex items-center gap-1.5"))],
-                          [icon(h, step.kind === "agent" ? Bot : Webhook, "size-3"), step.kind],
+                          [icon(h, stepIcon[step.kind], "size-3"), stepLabel[step.kind]],
                         ),
-                        h.div([h.Class("text-sm font-medium")], [step.title]),
+                        h.div([h.Class("text-sm font-medium")], templateView(step.title, h)),
                       ],
                     ),
                     icon(
@@ -1035,31 +1312,15 @@ const stepView = (step: Step, index: number, isExpanded: boolean, h: HtmlBuilder
                     ),
                   ],
                 ),
-                step.kind === "agent"
-                  ? h.p(
-                      [
-                        ...panel,
-                        h.Class(
-                          cn(
-                            "mx-3.5 mb-2.5 text-xs text-muted-foreground",
-                            isExpanded ? "whitespace-pre-wrap break-words" : "line-clamp-2",
-                          ),
-                        ),
-                      ],
-                      [step.instruction],
-                    )
-                  : h.p(
-                      [
-                        ...panel,
-                        h.Class(
-                          cn(
-                            "mx-3.5 mb-2.5 font-mono text-xs text-muted-foreground",
-                            isExpanded ? "break-all" : "truncate",
-                          ),
-                        ),
-                      ],
-                      [step.url],
+                h.div([...panel, h.Class("mx-3.5 mb-2.5")], [stepDetailView(step, isExpanded, h)]),
+                Array.match(stepLanes(step, h), {
+                  onEmpty: () => h.empty,
+                  onNonEmpty: (lanes) =>
+                    h.ul(
+                      [h.Class("mx-3.5 mb-3 flex flex-col gap-3")],
+                      Array.map(lanes, (lane) => laneView(lane, expandedStepIds, h)),
                     ),
+                }),
               ],
             ),
         },
@@ -1067,6 +1328,7 @@ const stepView = (step: Step, index: number, isExpanded: boolean, h: HtmlBuilder
       ),
     ],
   );
+};
 
 const runStatusLabel: Record<Run["status"], string> = {
   running: "Running",

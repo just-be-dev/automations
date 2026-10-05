@@ -21,6 +21,10 @@
           {
             "include": ["src/ui/main.ts", "src/api.ts", "src/automation.ts"],
             "options": { "allowedUnstableApis": ["effect/http"] }
+          },
+          {
+            "include": ["src/interpreter.ts", "src/interpreter.test.ts"],
+            "options": { "allowedUnstableApis": ["effect/workflow"] }
           }
         ]
       }
