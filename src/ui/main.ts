@@ -148,6 +148,8 @@ export const Model = Schema.Struct({
   taskEdits: Schema.Array(TaskFieldEdit),
   subjectChoices: SubjectChoices,
   maybeSubjectId: Schema.Option(Schema.String),
+  /** What the agent is doing while it answers, as the server last described it. */
+  maybeProgress: Schema.Option(Schema.String),
   expandedStepIds: Schema.Array(Schema.String),
   workflowDisplay: WorkflowDisplay,
   theme: Theme,
@@ -188,6 +190,7 @@ export const Message = defineMessageUnion({
     conversation: Schema.Array(Exchange),
     maybePendingChat: Schema.Option(PendingChat),
     runs: Schema.Array(RunSummary),
+    maybeProgress: Schema.Option(Schema.String),
   },
   SucceededLoadAutomations: { automations: Schema.Array(AutomationSummary) },
   FailedLoadAutomations: { error: Schema.String },
@@ -248,6 +251,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
     taskEdits: [],
     subjectChoices: SubjectChoices.NotNeeded(),
     maybeSubjectId: Option.none(),
+    maybeProgress: Option.none(),
     expandedStepIds: [],
     workflowDisplay: "Steps",
     theme: flags.theme,
@@ -284,6 +288,7 @@ const openAutomation = (model: Model, automationId: string): Update.Return<Model
     taskEdits: () => [],
     subjectChoices: () => SubjectChoices.NotNeeded(),
     maybeSubjectId: () => Option.none(),
+    maybeProgress: () => Option.none(),
     expandedStepIds: () => [],
     conversation: () => [],
     activity: () => Activity.Working({ notice: "Loading automation…" }),
@@ -300,6 +305,10 @@ const openAutomation = (model: Model, automationId: string): Update.Return<Model
 const thinking = Activity.Working({ notice: "The agent is thinking…" });
 
 const isAnswering = (pending: PendingChat) => pending.status === "working";
+
+// People using the studio don't build software, so a failed reply never shows the technical error.
+// `GET /api/automations/:id` still returns it for debugging.
+const unfinishedReply = "The agent couldn't finish its reply. Send your message again to retry.";
 
 const loadedAutomation = (
   model: Model,
@@ -329,10 +338,10 @@ const loadedAutomation = (
               PollAutomation({ automationId: model.automationId.trim(), revision: model.revision }),
             ],
           }),
-          failed: ({ prompt, error }) => ({
+          failed: ({ prompt }) => ({
             model: modifyFields(model, {
               messageInput: (value) => (value === "" ? prompt : value),
-              activity: () => Activity.Failed({ error: `The agent couldn't reply: ${error}` }),
+              activity: () => Activity.Failed({ error: unfinishedReply }),
             }),
           }),
         }),
@@ -685,6 +694,7 @@ export const update = (model: Model, message: Message) =>
       conversation,
       maybePendingChat,
       runs,
+      maybeProgress,
     }) =>
       revision !== model.revision
         ? { model }
@@ -695,6 +705,7 @@ export const update = (model: Model, message: Message) =>
               conversation: () => conversation,
               maybePendingChat: () => maybePendingChat,
               runs: () => runs,
+              maybeProgress: () => maybeProgress,
             }),
             [
               (stepModel) =>
@@ -713,6 +724,7 @@ export const update = (model: Model, message: Message) =>
         : {
             model: modifyFields(model, {
               maybePendingChat: () => Option.some(pendingChat),
+              maybeProgress: () => Option.none(),
               messageInput: (value) => (value === sentMessage ? "" : value),
               activity: () => thinking,
             }),
@@ -871,6 +883,7 @@ const AutomationState = Schema.Struct({
   conversation: Schema.Array(Schema.Struct({ prompt: Schema.String, reply: Schema.String })),
   pendingChat: Schema.OptionFromOptional(PendingChat),
   runs: Schema.Array(RunSummary),
+  progress: Schema.OptionFromOptional(Schema.String),
 });
 
 const loadAutomation = (automationId: string, revision: number) =>
@@ -883,6 +896,7 @@ const loadAutomation = (automationId: string, revision: number) =>
         conversation: Array.map(state.conversation, (exchange, id) => ({ id, ...exchange })),
         maybePendingChat: state.pendingChat,
         runs: state.runs,
+        maybeProgress: state.progress,
       }),
     ),
     recoverRequest(revision),
@@ -1343,7 +1357,7 @@ const conversationItems = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
   ...Array.map(model.conversation, (exchange) => exchangeView(exchange, h)),
   ...Option.match(model.maybePendingChat, {
     onNone: () => [],
-    onSome: (pending) => [pendingChatView(pending, h)],
+    onSome: (pending) => [pendingChatView(pending, model.maybeProgress, h)],
   }),
 ];
 
@@ -1399,7 +1413,11 @@ const exchangeView = (exchange: Exchange, h: HtmlBuilder<Message>) =>
     ],
   );
 
-const pendingChatView = (pending: PendingChat, h: HtmlBuilder<Message>) =>
+const pendingChatView = (
+  pending: PendingChat,
+  maybeProgress: Option.Option<string>,
+  h: HtmlBuilder<Message>,
+) =>
   h.keyed("div")(
     pending.id,
     [h.Class("flex flex-col gap-4")],
@@ -1411,13 +1429,19 @@ const pendingChatView = (pending: PendingChat, h: HtmlBuilder<Message>) =>
             working: () => [
               h.span(
                 [h.Class("flex items-center gap-2 text-muted-foreground")],
-                [icon(h, LoaderCircle, "size-3.5 animate-spin text-signal"), "Thinking…"],
+                [
+                  icon(h, LoaderCircle, "size-3.5 shrink-0 animate-spin text-signal"),
+                  h.span(
+                    [h.Class("truncate")],
+                    [Option.getOrElse(maybeProgress, () => "Thinking…")],
+                  ),
+                ],
               ),
             ],
-            failed: ({ error }) => [
+            failed: () => [
               h.span(
                 [h.Class("flex items-center gap-2 text-destructive")],
-                [icon(h, CircleAlert, "size-3.5"), `Couldn't reply: ${error}`],
+                [icon(h, CircleAlert, "size-3.5"), "Sorry, I couldn't finish this one."],
               ),
             ],
           }),

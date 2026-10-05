@@ -617,13 +617,108 @@ const invalid = (error: Schema.SchemaError) => new InvalidWorkflow({ message: er
 export const decodeWorkflow = (value: unknown) =>
   Schema.decodeUnknownEffect(Workflow)(value).pipe(Effect.mapError(invalid));
 
-const DraftFromJson = Schema.fromJsonString(Draft);
+type Closer = "}" | "]";
 
-/** Parses the designer agent's reply, tolerating a Markdown code fence around the JSON. */
-export const decodeDraft = (text: string) =>
-  Schema.decodeEffect(DraftFromJson)(text.trim().replace(/^```(?:json)?\s*|\s*```$/g, "")).pipe(
-    Effect.mapError(invalid),
+/** What a scan of a reply's brackets found, outside strings. */
+export interface BracketScan {
+  /** The reply with mismatched closers dropped and missing closers appended. */
+  readonly balanced: string;
+  /** The first closer that doesn't close the innermost open bracket, and the closer that would. */
+  readonly mismatch?: { readonly at: number; readonly found: Closer; readonly expected?: Closer };
+  /** The closers still missing at the end, innermost first. */
+  readonly missing: string;
+  readonly endsInString: boolean;
+}
+
+/**
+ * Scans a reply's brackets, skipping strings. Models slip on brackets at the end of long, deeply
+ * nested JSON: they close in the wrong order or stop short. `balanced` drops each closer that
+ * doesn't match the innermost open bracket and closes whatever is still open. It's decoded like any
+ * reply, so a wrong repair fails there instead of slipping through.
+ */
+export const scanBrackets = (json: string): BracketScan => {
+  const open: Array<Closer> = [];
+  let balanced = "";
+  let mismatch: BracketScan["mismatch"];
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < json.length; index++) {
+    const char = json.charAt(index);
+    if (inString) {
+      inString = escaped || char !== '"';
+      escaped = !escaped && char === "\\";
+    } else if (char === '"') {
+      inString = true;
+    } else if (char === "{" || char === "[") {
+      open.push(char === "{" ? "}" : "]");
+    } else if (char === "}" || char === "]") {
+      const expected = open.at(-1);
+      if (expected !== char) {
+        mismatch ??= { at: index, found: char, ...(expected === undefined ? {} : { expected }) };
+        continue;
+      }
+      open.pop();
+    }
+    balanced += char;
+  }
+  const missing = open.reverse().join("");
+  return {
+    balanced: balanced + missing,
+    ...(mismatch === undefined ? {} : { mismatch }),
+    missing,
+    endsInString: inString,
+  };
+};
+
+const parseJson = (json: string) =>
+  Effect.try({
+    try: (): unknown => JSON.parse(json),
+    catch: (error) => (error instanceof Error ? error.message : String(error)),
+  });
+
+/**
+ * Says exactly what is wrong with the reply's JSON, from the parser's error and the bracket scan, so
+ * the agent fixes that instead of re-checking its brackets by eye. It can't see positions in its own
+ * reply, so the message quotes the text that leads up to the problem.
+ */
+const invalidJson = (error: string, json: string, scan: BracketScan) => {
+  const { mismatch } = scan;
+  const problem = scan.endsInString
+    ? "It ends inside a string: a closing quote is missing or the reply was cut off."
+    : mismatch !== undefined
+      ? `The "${mismatch.found}" at the end of "…${json.slice(Math.max(0, mismatch.at - 60), mismatch.at + 1)}" ${
+          mismatch.expected === undefined
+            ? "has no open bracket left to close."
+            : `is wrong: the innermost open bracket there needs "${mismatch.expected}".`
+        }`
+      : scan.missing !== ""
+        ? `It ends with brackets still open: it needs "${scan.missing}" at the end.`
+        : undefined;
+  return new InvalidWorkflow({
+    message: `The reply is not valid JSON: ${error}.${problem === undefined ? "" : ` ${problem}`}`,
+  });
+};
+
+/**
+ * Parses the designer agent's reply, tolerating a Markdown code fence around the JSON and the
+ * bracket slips `scanBrackets` repairs. When the JSON still doesn't parse, the error says exactly
+ * what's wrong, for the designer's retry.
+ */
+export const decodeDraft = (text: string) => {
+  const json = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
+  return parseJson(json).pipe(
+    Effect.catch((error) => {
+      const scan = scanBrackets(json);
+      const repairable = !scan.endsInString && (scan.mismatch !== undefined || scan.missing !== "");
+      return repairable
+        ? parseJson(scan.balanced).pipe(Effect.mapError(() => invalidJson(error, json, scan)))
+        : Effect.fail(invalidJson(error, json, scan));
+    }),
+    Effect.flatMap((value) =>
+      Schema.decodeUnknownEffect(Draft)(value).pipe(Effect.mapError(invalid)),
+    ),
   );
+};
 
 /** What a run knows so far: its subject, and what each finished step recorded under its ID. */
 export const RunState = Schema.Struct({

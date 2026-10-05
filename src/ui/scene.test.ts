@@ -40,6 +40,7 @@ const automationLoaded = (
     maybeSaved: Option.none(),
     conversation: [],
     maybePendingChat: Option.none(),
+    maybeProgress: Option.none(),
     runs: [],
     ...fields,
   });
@@ -80,6 +81,19 @@ test("the accessible message input drives chat and safely renders the workflow",
     expect(label("Your message")).toHaveValue(""),
     expect(text("Summarize orders")).toExist(),
     expect(text("Thinking…")).toExist(),
+    Command.resolve(
+      PollAutomation,
+      automationLoaded({
+        maybePendingChat: Option.some({
+          id: "chat-1",
+          prompt: "Summarize orders",
+          status: "working",
+        }),
+        maybeProgress: Option.some("Planning the steps…"),
+      }),
+    ),
+    expect(text("Planning the steps…")).toExist(),
+    expect(text("Thinking…")).not.toExist(),
     Command.resolve(
       PollAutomation,
       automationLoaded({

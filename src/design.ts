@@ -1,11 +1,12 @@
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { checkWorkflow, describeCatalog, type Catalog } from "./catalog.ts";
-import type { PiError, PromptOptions } from "./pi.ts";
+import type { LiveAnswer, PiAgent } from "./pi.ts";
 import { decodeDraft, type InvalidWorkflow } from "./workflow.ts";
 
 /**
- * The designer agent: the instructions it answers chat messages with, and how its reply becomes a
- * draft.
+ * The designer agent: its system prompt instructions, how its reply becomes a draft, and the
+ * progress lines shown while it works.
  */
 
 export const designInstructions = (
@@ -47,25 +48,136 @@ export const retryInstructions = (error: string) =>
   `Your last response was rejected because it is not a valid design:\n${error}\n\nFix the problem and respond again with ONLY JSON: {"reply":"...","workflow":Workflow}, including the COMPLETE revised workflow.`;
 
 /**
- * Asks the designer agent to answer a chat message. A reply that doesn't decode, or doesn't check
+ * Asks the designer agent to answer a chat message. The instructions, which describe the current
+ * catalog, are the conversation's system prompt, so the message goes as the user wrote it; pi only
+ * sends the system prompt again when it changes. A reply that doesn't decode, or doesn't check
  * against the catalog, gets one retry in the same conversation with the problems. Each attempt has
  * its own pi request ID, so a redelivered callback waits for the original submissions instead of
  * prompting again. pi failures aren't the agent's mistake, so they aren't retried.
  */
 export const designDraft = Effect.fn("Design.draft")(function* (
-  prompt: (options: PromptOptions) => Effect.Effect<string, PiError>,
+  designer: Pick<PiAgent, "instruct" | "prompt">,
   catalog: Catalog,
   chatId: string,
   message: string,
 ) {
+  yield* designer.instruct(designInstructions(catalog));
   const ask = (requestId: string, text: string) =>
-    prompt({ requestId, text }).pipe(
+    designer.prompt({ requestId, text }).pipe(
       Effect.flatMap(decodeDraft),
       Effect.tap((draft) => checkWorkflow(catalog, draft.workflow)),
     );
-  return yield* ask(`chat:${chatId}`, `${designInstructions(catalog)}\n\nUser: ${message}`).pipe(
+  return yield* ask(`chat:${chatId}`, message).pipe(
     Effect.catchTag("InvalidWorkflow", (invalid: InvalidWorkflow) =>
       ask(`chat:${chatId}:retry`, retryInstructions(invalid.message)),
     ),
   );
 });
+
+/**
+ * The lines the studio shows while the designer works. The people reading them don't build
+ * software, so they stay plain and none of them hints at a problem.
+ */
+export const progressPhrases = {
+  reading: "Reading your request…",
+  understanding: "Getting a sense of what you need…",
+  planning: "Planning the steps…",
+  timing: "Working out the timing…",
+  people: "Figuring out who's involved…",
+  paths: "Mapping out the different paths…",
+  connections: "Connecting your other tools…",
+  checking: "Double-checking the details…",
+  writing: "Writing up your automation…",
+} as const;
+export type ProgressPhrase = keyof typeof progressPhrases;
+
+/**
+ * The phrase that follows from how far the answer has got, or `undefined` while the designer is
+ * reasoning and the picker should choose. The retry after a rejected reply reads as a final check.
+ */
+export const fixedProgress = (answer: LiveAnswer): ProgressPhrase | undefined => {
+  if (answer.requestId?.endsWith(":retry") === true) {
+    return "checking";
+  }
+  if (answer.text.trim() !== "") {
+    return "writing";
+  }
+  if (answer.thinking.trim() === "") {
+    return "reading";
+  }
+  return undefined;
+};
+
+/** The phrases the classifier may choose from the designer's reasoning. */
+const PickedPhrase = Schema.Literals([
+  "understanding",
+  "planning",
+  "timing",
+  "people",
+  "paths",
+  "connections",
+  "checking",
+]);
+
+/** The choice question the classifier answers about the designer's latest reasoning. */
+export const progressQuestion = {
+  type: "choice",
+  instructions:
+    "The state is the latest private reasoning of an assistant that designs business automations. What is it working on right now?",
+  criteria: {
+    understanding: "Working out what the person wants",
+    planning: "Choosing the steps and their order",
+    timing: "Dates, delays, deadlines, or schedules",
+    people: "Approvals, people who provide information, or who gets notified",
+    paths: "Conditions, branches, or decisions between options",
+    connections: "Sending information to other services or web addresses",
+    checking: "Reviewing, verifying, or correcting details",
+  },
+} as const satisfies {
+  readonly type: "choice";
+  readonly instructions: string;
+  readonly criteria: Record<typeof PickedPhrase.Type, string>;
+};
+
+/** A classifier request: the state to read and the questions to answer, keyed by ID. */
+export interface ClassifyRequest {
+  readonly state: unknown;
+  readonly questions: Record<string, typeof progressQuestion>;
+}
+
+const ProgressAnswer = Schema.Struct({
+  answers: Schema.Struct({
+    progress: Schema.Struct({ choice: PickedPhrase, confidence: Schema.Finite }),
+  }),
+});
+
+// The classifier only needs the reasoning's current topic, and a short state keeps it quick.
+const reasoningWindow = 2_000;
+// Below this, the classifier is guessing, and the phrase on screen is as good as a new one.
+const minConfidence = 0.4;
+
+export class UnsurePick extends Schema.TaggedError<UnsurePick>()("UnsurePick", {
+  confidence: Schema.Finite,
+}) {}
+
+/**
+ * Asks a classifier which phrase fits the designer's latest reasoning. `classify` sends the request
+ * and resolves with the classifier's raw response. A response that doesn't decode, or a pick it
+ * isn't sure of, fails.
+ */
+export const pickProgress = <E>(
+  classify: (request: ClassifyRequest) => Effect.Effect<unknown, E>,
+  reasoning: string,
+) =>
+  classify({
+    state: { reasoning: reasoning.slice(-reasoningWindow) },
+    questions: { progress: progressQuestion },
+  }).pipe(
+    Effect.flatMap(Schema.decodeUnknownEffect(ProgressAnswer)),
+    Effect.flatMap(({ answers: { progress } }) =>
+      progress.confidence < minConfidence
+        ? Effect.fail(new UnsurePick({ confidence: progress.confidence }))
+        : Effect.succeed(progress.choice),
+    ),
+    Effect.withSpan("Design.pickProgress"),
+  );

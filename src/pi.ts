@@ -3,6 +3,7 @@ import {
   AssistantEntry,
   createRegistry,
   Harness,
+  LiveDoc,
   type Conversation,
   type ConversationId,
   type ModelRef,
@@ -30,11 +31,26 @@ export interface PromptOptions {
   readonly requestId?: string;
 }
 
+/** The answer the root conversation is generating, as far as pi has committed it. */
+export interface LiveAnswer {
+  /** The `requestId` of the input being answered, when it has one. */
+  readonly requestId?: string;
+  readonly thinking: string;
+  readonly text: string;
+}
+
 export interface PiAgent {
-  /** Creates an ownerless conversation configured like the root and returns its ID. */
+  /** Creates an ownerless conversation with the root's model, without its instructions, and returns its ID. */
   readonly createConversation: Effect.Effect<number, PiError>;
   /** Submits user input and resolves with the assistant's final answer. */
   readonly prompt: (options: PromptOptions) => Effect.Effect<string, PiError>;
+  /**
+   * Sets the root conversation's system prompt instructions. They apply from its next request, and
+   * pi only sends them to the model again when they change.
+   */
+  readonly instruct: (instructions: string) => Effect.Effect<void, PiError>;
+  /** The root conversation's answer in progress, or `undefined` while it isn't answering. */
+  readonly liveAnswer: Effect.Effect<LiveAnswer | undefined, PiError>;
 }
 
 export interface PiAgentOptions {
@@ -63,8 +79,8 @@ const attempt = <A>(operation: string, run: () => Promise<A>) =>
 // NOTE: pi brands numeric IDs; storage hands back the plain number we persisted for this conversation.
 const toConversationId = (id: number) => id as ConversationId;
 
-const assistantText = (entry: { readonly model?: ReadonlyArray<unknown> } | undefined) => {
-  const message = entry?.model?.[0];
+/** Joins an assistant message's `text` or `thinking` parts. */
+const assistantContent = (message: unknown, type: "text" | "thinking") => {
   if (
     typeof message !== "object" ||
     message === null ||
@@ -76,25 +92,28 @@ const assistantText = (entry: { readonly model?: ReadonlyArray<unknown> } | unde
     return "";
   }
   return message.content
-    .map((part: { readonly type?: string; readonly text?: string }) =>
-      part.type === "text" ? (part.text ?? "") : "",
+    .map((part: { readonly type?: string; readonly text?: string; readonly thinking?: string }) =>
+      part.type === type ? (part[type] ?? "") : "",
     )
     .join("");
 };
+
+const assistantText = (entry: { readonly model?: ReadonlyArray<unknown> } | undefined) =>
+  assistantContent(entry?.model?.[0], "text");
 
 export const openPiAgent = Effect.fn("PiAgent.open")(function* (options: PiAgentOptions) {
   const ai = createAI({ binding: options.ai });
   const model = ai(options.model);
   const agent = { model: { provider: model.provider, modelId: model.id } satisfies ModelRef };
 
-  const harness = yield* attempt("Open pi", async () => {
+  const { harness, rootId } = yield* attempt("Open pi", async () => {
     const models = createModels();
     models.setProvider(ai.provider);
     const storage = await openPiStorage(options.storage);
     const opened = await Harness.open(storage, { models, registry: createRegistry() }, context);
-    await opened.root(context, { agent });
+    const root = await opened.root(context, { agent });
     opened.resume();
-    return opened;
+    return { harness: opened, rootId: root.id };
   });
 
   const conversation = (id: number | undefined) =>
@@ -143,5 +162,32 @@ export const openPiAgent = Effect.fn("PiAgent.open")(function* (options: PiAgent
     return assistantText(entry);
   });
 
-  return { createConversation, prompt } satisfies PiAgent;
+  const instruct = (instructions: string) =>
+    conversation(undefined).pipe(
+      Effect.flatMap((root) =>
+        attempt("Set pi instructions", () => root.configure({ instructions }, context)),
+      ),
+      Effect.withSpan("PiAgent.instruct"),
+    );
+
+  // pi commits the in-flight response at most every 100 ms, so this trails the model slightly.
+  const liveAnswer = attempt("Read pi live answer", async (): Promise<LiveAnswer | undefined> => {
+    const live = await harness.snapshot(LiveDoc, rootId, context);
+    const run = live?.run;
+    if (run === undefined) {
+      return undefined;
+    }
+    const { submissions } = await harness.inspect(context);
+    const requestId = submissions.find((submission) =>
+      run.inputs.includes(submission.id),
+    )?.requestId;
+    const message = live?.generation?.message;
+    return {
+      ...(requestId === undefined ? {} : { requestId }),
+      thinking: assistantContent(message, "thinking"),
+      text: assistantContent(message, "text"),
+    };
+  }).pipe(Effect.withSpan("PiAgent.liveAnswer"));
+
+  return { createConversation, prompt, instruct, liveAnswer } satisfies PiAgent;
 });

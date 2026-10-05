@@ -70,7 +70,7 @@ The response lists the runs the change `triggered`. People answer human steps fr
 
 - Email, Slack, and Calendar are simulated until they have credentials. Their steps succeed, contact nothing, and record what they would have sent with `simulated: true`. A human step's `notify` is recorded, not sent.
 - `http.post` steps are delivered **at least once**, with an `Idempotency-Key` header that stays the same across retries, so receiving endpoints must be idempotent. Without a `body`, they POST the run's subject and step records to a public HTTPS URL. Don't put secrets in step definitions.
-- Chat is asynchronous: `POST /chat` returns `202` with a `pendingChat`, and the reply and new draft appear on `GET /api/automations/:id` once `pendingChat` is gone. If the agent fails, `pendingChat` stays with `status: "failed"` and an `error` until the next message.
+- Chat is asynchronous: `POST /chat` returns `202` with a `pendingChat`, and the reply and new draft appear on `GET /api/automations/:id` once `pendingChat` is gone. Until then the response includes `progress`, a plain phrase such as "Planning the steps…". If the agent fails, `pendingChat` stays with `status: "failed"` and an `error` until the next message.
 - Runs advance through Alchemy durable callbacks that replay them from a journal in the Durable Object's storage. If the Durable Object is evicted mid-step, that step runs again; agent steps reuse their pi request ID instead of prompting twice.
 - Workflows and runs written before entity-based triggers were discarded; the Automation object drops them when it reads them.
 - pi-ai, pi-durable, and Alchemy 2 are beta. Pin versions before production use.

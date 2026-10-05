@@ -33,6 +33,7 @@ const automationLoaded = (
     maybeSaved: Option.none(),
     conversation: [],
     maybePendingChat: Option.none(),
+    maybeProgress: Option.none(),
     runs: [],
     ...fields,
   });
@@ -157,7 +158,7 @@ test("a reply the agent couldn't write puts the prompt back in the composer", ()
   expect(reopened.model.activity).toEqual(
     expect.objectContaining({
       _tag: "Failed",
-      error: "The agent couldn't reply: Agent did not answer",
+      error: "The agent couldn't finish its reply. Send your message again to retry.",
     }),
   );
   expect(reopened.commands ?? []).toEqual([]);

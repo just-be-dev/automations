@@ -5,7 +5,9 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { DurableDeferred, WorkflowEngine } from "effect/workflow";
@@ -13,7 +15,14 @@ import { agentOutput, agentPrompt, decidePrompt, decision } from "./agent-step.t
 import { openAutomationIndex } from "./automation-index.ts";
 import { checkWorkflow } from "./catalog.ts";
 import { runAction } from "./connection-runner.ts";
-import { designDraft } from "./design.ts";
+import {
+  designDraft,
+  fixedProgress,
+  pickProgress,
+  progressPhrases,
+  type ClassifyRequest,
+  type ProgressPhrase,
+} from "./design.ts";
 import { makeDurableEngine, type DurableEngine } from "./durable-engine.ts";
 import {
   HumanResponse,
@@ -50,6 +59,11 @@ import {
 } from "./workflow.ts";
 
 const MODEL = "@cf/moonshotai/kimi-k2.7-code";
+// The classifier that picks a progress phrase while the designer reasons. Its input names the
+// variant again.
+const PROGRESS_MODEL = "@cf/cloudflare/clef-flash";
+// How much more reasoning the designer writes before the classifier looks again.
+const PICK_EVERY_CHARS = 300;
 
 export class AutomationError extends Schema.TaggedError<AutomationError>()("AutomationError", {
   message: Schema.String,
@@ -173,9 +187,10 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
       const withRuntime = <A, E>(effect: Effect.Effect<A, E, Alchemy.RuntimeContext>) =>
         Effect.provideService(effect, Alchemy.RuntimeContext, runtime);
 
+      const aiBinding = yield* ai.raw;
       const pi = yield* openPiAgent({
         storage: state.raw.storage,
-        ai: yield* ai.raw,
+        ai: aiBinding,
         model: MODEL,
       }).pipe(Effect.orDie);
 
@@ -417,8 +432,54 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         const conversation = yield* readConversation;
         const pendingChat = yield* readPendingChat;
         const runs = yield* listRuns;
-        return { draft, saved, conversation, pendingChat, runs };
+        const progress =
+          pendingChat?.status === "working" ? yield* readProgress(pendingChat.id) : undefined;
+        return { draft, saved, conversation, pendingChat, runs, progress };
       });
+
+      // Progress is a hint that only matters while this instance answers, so it stays in memory.
+      const progress = yield* Ref.make<
+        { readonly chatId: string; readonly phrase: ProgressPhrase } | undefined
+      >(undefined);
+
+      const classify = (request: ClassifyRequest) =>
+        Effect.tryPromise({
+          try: () => aiBinding.run(PROGRESS_MODEL, { model: "clef-flash", ...request }),
+          catch: (cause) =>
+            new AutomationError({ message: `Progress classifier: ${String(cause)}` }),
+        });
+
+      // Polls the designer's answer while it works. The classifier only runs once the reasoning has
+      // grown, and one call at a time, however many tabs are watching. Between attempts, and when the
+      // classifier fails or isn't sure, the last phrase stays.
+      const trackProgress = Effect.fn("Automation.trackProgress")(function* (chatId: string) {
+        const pickedAt = yield* Ref.make(0);
+        const update = Effect.gen(function* () {
+          const answer = yield* pi.liveAnswer;
+          if (answer === undefined) {
+            return;
+          }
+          const fixed = fixedProgress(answer);
+          if (fixed !== undefined) {
+            return yield* Ref.set(progress, { chatId, phrase: fixed });
+          }
+          if (answer.thinking.length - (yield* Ref.get(pickedAt)) < PICK_EVERY_CHARS) {
+            return;
+          }
+          yield* Ref.set(pickedAt, answer.thinking.length);
+          const phrase = yield* pickProgress(classify, answer.thinking);
+          yield* Ref.set(progress, { chatId, phrase });
+        }).pipe(Effect.ignore({ log: "Debug", message: "Progress update failed" }));
+        yield* update.pipe(Effect.repeat(Schedule.spaced("2 seconds")));
+        return yield* Effect.never;
+      });
+
+      const readProgress = (chatId: string) =>
+        Ref.get(progress).pipe(
+          Effect.map(
+            (current) => progressPhrases[current?.chatId === chatId ? current.phrase : "reading"],
+          ),
+        );
 
       const isWorking = (pending: PendingChat | undefined, chatId: string) =>
         pending?.id === chatId && pending.status === "working";
@@ -434,8 +495,9 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
             return;
           }
           const reply = yield* catalog.pipe(
-            Effect.flatMap((current) => designDraft(pi.prompt, current, chatId, pending.prompt)),
+            Effect.flatMap((current) => designDraft(pi, current, chatId, pending.prompt)),
             Effect.result,
+            Effect.raceFirst(trackProgress(chatId)),
           );
           const wrote = yield* state.storage
             .transaction(
