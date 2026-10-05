@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import { openPiAgent } from "./pi.ts";
 import {
   decodeDraft,
+  Exchange,
   graph,
   Run,
   Workflow,
@@ -33,7 +34,17 @@ const StoredRun = Schema.UndefinedOr(Run);
 const decodeStoredRun = (value: unknown) =>
   Schema.decodeUnknownEffect(StoredRun)(value).pipe(Effect.orDie);
 
+const StoredExchangeCount = Schema.UndefinedOr(Schema.Int);
+const decodeStoredExchangeCount = (value: unknown) =>
+  Schema.decodeUnknownEffect(StoredExchangeCount)(value).pipe(Effect.orDie);
+const decodeStoredExchanges = (values: ReadonlyArray<unknown>) =>
+  Schema.decodeUnknownEffect(Schema.Array(Exchange))(values).pipe(Effect.orDie);
+
 const runKey = (id: string) => `run:${id}`;
+// Each exchange gets its own key because a single storage value is capped at 128 KiB. The padding
+// keeps `list` returning them in order.
+const exchangePrefix = "exchange:";
+const exchangeKey = (index: number) => `${exchangePrefix}${String(index).padStart(6, "0")}`;
 
 const failureMessage = (error: { readonly message: string }) => error.message;
 
@@ -139,10 +150,15 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         }),
       );
 
+      const readConversation = state.storage
+        .list({ prefix: exchangePrefix })
+        .pipe(Effect.flatMap((entries) => decodeStoredExchanges([...entries.values()])));
+
       const inspectWorkflow = Effect.fn("Automation.inspectWorkflow")(function* () {
         const draft = yield* readWorkflow("draft");
         const saved = yield* readWorkflow("saved");
-        return { draft, saved, graph: draft === undefined ? null : graph(draft) };
+        const conversation = yield* readConversation;
+        return { draft, saved, graph: draft === undefined ? null : graph(draft), conversation };
       });
 
       const chat = Effect.fn("Automation.chat")(function* (message: string) {
@@ -151,7 +167,22 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         }
         const text = yield* pi.prompt({ text: `${designInstructions}\n\nUser: ${message}` });
         const draft = yield* decodeDraft(text);
-        yield* state.storage.put("draft", draft.workflow);
+        yield* state.storage
+          .transaction(
+            Effect.gen(function* () {
+              const exchangeCount =
+                (yield* state.storage
+                  .get("exchangeCount")
+                  .pipe(Effect.flatMap(decodeStoredExchangeCount))) ?? 0;
+              yield* state.storage.put("draft", draft.workflow);
+              yield* state.storage.put(exchangeKey(exchangeCount), {
+                prompt: message,
+                reply: draft.reply,
+              });
+              yield* state.storage.put("exchangeCount", exchangeCount + 1);
+            }),
+          )
+          .pipe(Effect.orDie);
         return { ...draft, graph: graph(draft.workflow) };
       });
 

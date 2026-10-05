@@ -3,9 +3,11 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/http";
-import { Command, Http, type Update } from "foldkit";
+import { Command, Dom, Http, type Runtime, type Update } from "foldkit";
 import type { Document, HtmlBuilder } from "foldkit/html";
 import { defineMessageUnion } from "foldkit/message";
+import { UrlRequest, load, pushUrl } from "foldkit/navigation";
+import { Url, toString as urlToString } from "foldkit/url";
 import { defineTaggedUnion } from "foldkit/schema";
 import { modifyFields } from "foldkit/struct";
 import { Disclosure, Input } from "@foldkit/ui";
@@ -16,6 +18,7 @@ import {
   CornerDownLeft,
   LoaderCircle,
   Play,
+  Plus,
   Radio,
   Webhook,
   Workflow as WorkflowIcon,
@@ -72,8 +75,18 @@ const Exchange = Schema.Struct({
   reply: Schema.String,
 });
 
+const AutomationSummary = Schema.Struct({ id: Schema.String, name: Schema.String });
+
+const Directory = defineTaggedUnion({
+  Loading: {},
+  Ready: { automations: Schema.Array(AutomationSummary) },
+  Unavailable: { error: Schema.String },
+});
+
 export const Model = Schema.Struct({
   automationId: Schema.String,
+  automationIdInput: Schema.String,
+  directory: Directory,
   revision: Schema.Int,
   messageInput: Schema.String,
   conversation: Schema.Array(Exchange),
@@ -87,8 +100,14 @@ export type Model = typeof Model.Type;
 // MESSAGE
 
 export const Message = defineMessageUnion({
+  ClickedLink: { request: UrlRequest },
+  ChangedUrl: { url: Url },
+  CompletedNavigateInternal: {},
+  CompletedLoadExternal: {},
   UpdatedAutomationId: { value: Schema.String },
   ChangedAutomationId: {},
+  ClickedNewAutomation: {},
+  CompletedFocusAutomationIdInput: {},
   UpdatedMessageInput: { value: Schema.String },
   ToggledStepDetails: { stepId: Schema.String, isOpen: Schema.Boolean },
   ClickedSend: {},
@@ -98,7 +117,10 @@ export const Message = defineMessageUnion({
     revision: Schema.Int,
     maybeDraft: Schema.Option(Workflow),
     hasSaved: Schema.Boolean,
+    conversation: Schema.Array(Exchange),
   },
+  SucceededLoadAutomations: { automations: Schema.Array(AutomationSummary) },
+  FailedLoadAutomations: { error: Schema.String },
   SucceededSendMessage: {
     revision: Schema.Int,
     sentMessage: Schema.String,
@@ -115,18 +137,44 @@ export type Message = typeof Message.Type;
 
 // INIT
 
-export const init = () => ({
-  model: Model.make({
-    automationId: "my-automation",
+const defaultAutomationId = "my-automation";
+
+export const automationIdFromUrl = (url: Url) =>
+  Option.match(url.search, {
+    onNone: () => defaultAutomationId,
+    onSome: (search) => new URLSearchParams(search).get("automation") ?? defaultAutomationId,
+  });
+
+export const automationHref = (automationId: string) =>
+  `/?${new URLSearchParams({ automation: automationId })}`;
+
+const invalidIdError = "Automation IDs use letters, numbers, - and _ (up to 80 characters)";
+
+const validId = (value: string) => /^[a-zA-Z0-9_-]{1,80}$/.test(value.trim());
+
+export const init: Runtime.RoutingApplicationInit<Model, Message> = (url) => {
+  const automationId = automationIdFromUrl(url);
+  const model = Model.make({
+    automationId,
+    automationIdInput: automationId,
+    directory: Directory.Loading(),
     revision: 0,
     messageInput: "",
     conversation: [],
     maybeDraft: Option.none(),
     maybeRun: Option.none(),
     expandedStepIds: [],
-    activity: Activity.Ready({ notice: "" }),
-  }),
-});
+    activity: validId(automationId)
+      ? Activity.Working({ notice: "Loading automation…" })
+      : Activity.Failed({ error: invalidIdError }),
+  });
+  return {
+    model,
+    commands: validId(automationId)
+      ? [LoadAutomation({ automationId, revision: 0 }), LoadAutomations()]
+      : [LoadAutomations()],
+  };
+};
 
 // UPDATE
 
@@ -136,34 +184,57 @@ const fail = (model: Model, error: string) => ({
 
 const maxMessageLength = 10_000;
 
-const validId = (value: string) => /^[a-zA-Z0-9_-]{1,80}$/.test(value.trim());
+const openAutomation = (model: Model, automationId: string): Update.Return<Model, Message> => {
+  const opened = modifyFields(model, {
+    automationId: () => automationId,
+    automationIdInput: () => automationId,
+    revision: (revision) => revision + 1,
+    maybeDraft: () => Option.none(),
+    maybeRun: () => Option.none(),
+    expandedStepIds: () => [],
+    conversation: () => [],
+    activity: () => Activity.Working({ notice: "Loading automation…" }),
+  });
+  if (!validId(automationId)) {
+    return fail(opened, invalidIdError);
+  }
+  return {
+    model: opened,
+    commands: [LoadAutomation({ automationId, revision: opened.revision })],
+  };
+};
 
 export const update = (model: Model, message: Message) =>
   Message.match<Update.Return<Model, Message>>(message, {
-    UpdatedAutomationId: ({ value }) => ({
-      model: modifyFields(model, {
-        automationId: () => value,
-        revision: (revision) => revision + 1,
-        maybeDraft: () => Option.none(),
-        maybeRun: () => Option.none(),
-        expandedStepIds: () => [],
-        conversation: () => [],
-        activity: () => Activity.Ready({ notice: "" }),
+    ClickedLink: ({ request }) =>
+      UrlRequest.match<Update.Return<Model, Message>>(request, {
+        Internal: ({ url }) => ({
+          model,
+          commands: [NavigateInternal({ url: urlToString(url) })],
+        }),
+        External: ({ href }) => ({ model, commands: [LoadExternal({ href })] }),
       }),
+    ChangedUrl: ({ url }) => openAutomation(model, automationIdFromUrl(url)),
+    CompletedNavigateInternal: () => ({ model }),
+    CompletedLoadExternal: () => ({ model }),
+    UpdatedAutomationId: ({ value }) => ({
+      model: modifyFields(model, { automationIdInput: () => value }),
     }),
     ChangedAutomationId: () => {
-      if (!validId(model.automationId)) {
-        return fail(model, "Use an alphanumeric automation ID");
+      const automationId = model.automationIdInput.trim();
+      if (!validId(automationId)) {
+        return fail(model, invalidIdError);
       }
-      return {
-        model: modifyFields(model, {
-          activity: () => Activity.Working({ notice: "Loading automation…" }),
-        }),
-        commands: [
-          LoadAutomation({ automationId: model.automationId.trim(), revision: model.revision }),
-        ],
-      };
+      if (automationId === model.automationId) {
+        return { model };
+      }
+      return { model, commands: [NavigateInternal({ url: automationHref(automationId) })] };
     },
+    ClickedNewAutomation: () => ({
+      model: modifyFields(model, { automationIdInput: () => "" }),
+      commands: [FocusAutomationIdInput()],
+    }),
+    CompletedFocusAutomationIdInput: () => ({ model }),
     ToggledStepDetails: ({ stepId, isOpen }) => ({
       model: modifyFields(model, {
         expandedStepIds: (stepIds) => {
@@ -231,12 +302,13 @@ export const update = (model: Model, message: Message) =>
         commands: [StartRun({ automationId: model.automationId.trim(), revision: model.revision })],
       };
     },
-    SucceededLoadAutomation: ({ revision, maybeDraft, hasSaved }) =>
+    SucceededLoadAutomation: ({ revision, maybeDraft, hasSaved, conversation }) =>
       revision !== model.revision
         ? { model }
         : {
             model: modifyFields(model, {
               maybeDraft: () => maybeDraft,
+              conversation: () => conversation,
               activity: () =>
                 Activity.Ready({
                   notice: hasSaved ? "Saved automation available." : "No saved automation yet.",
@@ -255,6 +327,7 @@ export const update = (model: Model, message: Message) =>
               activity: () =>
                 Activity.Ready({ notice: "Draft updated. Review the graph before saving." }),
             }),
+            commands: [LoadAutomations()],
           },
     SucceededSaveDraft: ({ revision }) =>
       revision !== model.revision
@@ -263,7 +336,14 @@ export const update = (model: Model, message: Message) =>
             model: modifyFields(model, {
               activity: () => Activity.Ready({ notice: "Saved. Ready to start." }),
             }),
+            commands: [LoadAutomations()],
           },
+    SucceededLoadAutomations: ({ automations }) => ({
+      model: modifyFields(model, { directory: () => Directory.Ready({ automations }) }),
+    }),
+    FailedLoadAutomations: ({ error }) => ({
+      model: modifyFields(model, { directory: () => Directory.Unavailable({ error }) }),
+    }),
     SucceededStartRun: ({ revision, run }) => {
       if (revision !== model.revision) {
         return { model };
@@ -318,14 +398,12 @@ class ApiError extends Schema.TaggedError<ApiError>()("ApiError", {
   message: Schema.String,
 }) {}
 
-const request = Effect.fn("studio.request")(function* <T, E>(
-  automationId: string,
-  path: string,
+const requestJson = Effect.fn("studio.requestJson")(function* <T, E>(
+  url: string,
   schema: Schema.Codec<T, E>,
   body?: unknown,
 ) {
   const client = yield* HttpClient.HttpClient;
-  const url = `/api/automations/${automationId}${path}`;
   const httpRequest =
     body === undefined
       ? HttpClientRequest.get(url)
@@ -338,6 +416,13 @@ const request = Effect.fn("studio.request")(function* <T, E>(
   }
   return yield* Schema.decodeUnknownEffect(schema)(data);
 });
+
+const request = <T, E>(
+  automationId: string,
+  path: string,
+  schema: Schema.Codec<T, E>,
+  body?: unknown,
+) => requestJson(`/api/automations/${automationId}${path}`, schema, body);
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : "Unexpected error");
 
@@ -356,6 +441,7 @@ export const LoadAutomation = Command.define("LoadAutomation", {
       Schema.Struct({
         draft: Schema.OptionFromOptional(Workflow),
         saved: Schema.OptionFromOptional(Workflow),
+        conversation: Schema.Array(Schema.Struct({ prompt: Schema.String, reply: Schema.String })),
       }),
     ).pipe(
       Effect.map((state) =>
@@ -363,11 +449,45 @@ export const LoadAutomation = Command.define("LoadAutomation", {
           revision,
           maybeDraft: state.draft,
           hasSaved: Option.isSome(state.saved),
+          conversation: Array.map(state.conversation, (exchange, id) => ({ id, ...exchange })),
         }),
       ),
       recoverRequest(revision),
       Effect.provide(Http.layer),
     ),
+});
+
+export const LoadAutomations = Command.define("LoadAutomations", {
+  messages: [Message.SucceededLoadAutomations, Message.FailedLoadAutomations],
+  execute: requestJson("/api/automations", Schema.Array(AutomationSummary)).pipe(
+    Effect.map((automations) => Message.SucceededLoadAutomations({ automations })),
+    Effect.catch((error) =>
+      Effect.succeed(Message.FailedLoadAutomations({ error: errorText(error) })),
+    ),
+    Effect.provide(Http.layer),
+  ),
+});
+
+export const NavigateInternal = Command.define("NavigateInternal", {
+  args: { url: Schema.String },
+  messages: [Message.CompletedNavigateInternal],
+  execute: ({ url }) => pushUrl(url).pipe(Effect.as(Message.CompletedNavigateInternal())),
+});
+
+const LoadExternal = Command.define("LoadExternal", {
+  args: { href: Schema.String },
+  messages: [Message.CompletedLoadExternal],
+  execute: ({ href }) => load(href).pipe(Effect.as(Message.CompletedLoadExternal())),
+});
+
+const automationIdInputId = "id";
+
+export const FocusAutomationIdInput = Command.define("FocusAutomationIdInput", {
+  messages: [Message.CompletedFocusAutomationIdInput],
+  execute: Dom.focus(`#${automationIdInputId}`).pipe(
+    Effect.ignore,
+    Effect.as(Message.CompletedFocusAutomationIdInput()),
+  ),
 });
 
 export const SendMessage = Command.define("SendMessage", {
@@ -444,8 +564,12 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
     [
       headerView(model, h),
       h.main(
-        [h.Class("grid flex-1 grid-cols-1 lg:min-h-0 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]")],
-        [conversationView(model, h), workflowPanelView(model, h)],
+        [
+          h.Class(
+            "grid flex-1 grid-cols-1 lg:min-h-0 lg:grid-cols-[15rem_minmax(0,5fr)_minmax(0,6fr)]",
+          ),
+        ],
+        [sidebarView(model, h), conversationView(model, h), workflowPanelView(model, h)],
       ),
     ],
   ),
@@ -462,8 +586,9 @@ const headerView = (model: Model, h: HtmlBuilder<Message>) =>
       h.span([h.Class("font-mono text-sm text-muted-foreground/50"), h.AriaHidden(true)], ["/"]),
       Input.view(
         {
-          id: "id",
-          value: model.automationId,
+          id: automationIdInputId,
+          value: model.automationIdInput,
+          placeholder: "new-automation-id",
           onInput: (value) => Message.UpdatedAutomationId({ value }),
           toView: (attributes) =>
             h.div(
@@ -490,6 +615,96 @@ const headerView = (model: Model, h: HtmlBuilder<Message>) =>
     ],
   );
 
+// VIEW: SIDEBAR
+
+const sidebarNoteClass = "px-2 py-1 text-xs text-muted-foreground";
+
+const sidebarView = (model: Model, h: HtmlBuilder<Message>) =>
+  h.nav(
+    [
+      h.AriaLabel("Automations"),
+      h.Class("flex flex-col border-b bg-card/40 lg:min-h-0 lg:border-r lg:border-b-0"),
+    ],
+    [
+      h.div(
+        [h.Class("flex items-center justify-between gap-2 px-4 pt-4 pb-2")],
+        [
+          h.h2([h.Class(eyebrowClass)], ["Automations"]),
+          button(
+            {
+              onClick: Message.ClickedNewAutomation(),
+              variant: "ghost",
+              size: "xs",
+              attributes: [h.AriaLabel("New automation")],
+            },
+            [icon(h, Plus, "size-3", "inline-start"), "New"],
+            h,
+          ),
+        ],
+      ),
+      h.div(
+        [h.Class("max-h-56 overflow-y-auto px-2 pb-3 lg:max-h-none lg:flex-1")],
+        [
+          Directory.match(model.directory, {
+            Loading: () => h.p([h.Class(sidebarNoteClass)], ["Loading…"]),
+            Unavailable: ({ error }) =>
+              h.p(
+                [h.Class(cn(sidebarNoteClass, "text-destructive"))],
+                [`Couldn't load automations: ${error}`],
+              ),
+            Ready: ({ automations }) =>
+              Array.match(automations, {
+                onEmpty: () =>
+                  h.p(
+                    [h.Class(sidebarNoteClass)],
+                    ["Automations show up here once the agent drafts one."],
+                  ),
+                onNonEmpty: (listed) =>
+                  h.ul(
+                    [h.Class("flex flex-col gap-0.5")],
+                    Array.map(listed, (automation) =>
+                      automationLinkView(automation, automation.id === model.automationId, h),
+                    ),
+                  ),
+              }),
+          }),
+        ],
+      ),
+    ],
+  );
+
+const automationLinkView = (
+  automation: typeof AutomationSummary.Type,
+  isCurrent: boolean,
+  h: HtmlBuilder<Message>,
+) =>
+  h.keyed("li")(
+    automation.id,
+    [],
+    [
+      h.a(
+        [
+          h.Href(automationHref(automation.id)),
+          ...(isCurrent ? [h.AriaCurrent("page")] : []),
+          h.Class(
+            cn(
+              "relative flex flex-col gap-0.5 rounded-md px-2.5 py-1.5 outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50",
+              isCurrent &&
+                "bg-muted before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-signal",
+            ),
+          ),
+        ],
+        [
+          h.span([h.Class("truncate text-sm font-medium")], [automation.name]),
+          h.span(
+            [h.Class("truncate font-mono text-[11px] text-muted-foreground")],
+            [automation.id],
+          ),
+        ],
+      ),
+    ],
+  );
+
 // VIEW: CONVERSATION
 
 const conversationView = (model: Model, h: HtmlBuilder<Message>) =>
@@ -507,7 +722,21 @@ const conversationView = (model: Model, h: HtmlBuilder<Message>) =>
         ],
         [
           Array.match(model.conversation, {
-            onEmpty: () => emptyConversationView(h),
+            onEmpty: () =>
+              Option.match(model.maybeDraft, {
+                onNone: () =>
+                  emptyConversationView(
+                    "Describe what should happen",
+                    "Say what starts the automation and what each step does. The draft on the right updates after every reply, so keep adjusting until it reads correctly.",
+                    h,
+                  ),
+                onSome: () =>
+                  emptyConversationView(
+                    "No saved conversation",
+                    "This draft was made before conversations were saved. Send a message to keep refining it; the agent still remembers the earlier turns.",
+                    h,
+                  ),
+              }),
             onNonEmpty: (exchanges) =>
               ChatMessage.group(
                 { className: "gap-7" },
@@ -521,21 +750,15 @@ const conversationView = (model: Model, h: HtmlBuilder<Message>) =>
     ],
   );
 
-const emptyConversationView = (h: HtmlBuilder<Message>) =>
+const emptyConversationView = (title: string, description: string, h: HtmlBuilder<Message>) =>
   Empty(
     { className: "flex-none items-start p-0 pt-2 text-left" },
     [
       Empty.header(
         { className: "items-start" },
         [
-          Empty.title({ className: "text-base" }, ["Describe what should happen"], h),
-          Empty.description(
-            {},
-            [
-              "Say what starts the automation and what each step does. The draft on the right updates after every reply, so keep adjusting until it reads correctly.",
-            ],
-            h,
-          ),
+          Empty.title({ className: "text-base" }, [title], h),
+          Empty.description({}, [description], h),
         ],
         h,
       ),

@@ -33,11 +33,15 @@ The first deploy offers to bootstrap Alchemy's Cloudflare-hosted state store. Al
 - `Studio` serves the UI. It is the only public hostname and sits behind Cloudflare Access, which admits members of your Cloudflare account.
 - `Api` has no public URL. Studio forwards `/api/*` to it over a service binding.
 
+It also creates `AutomationsDatabase`, a D1 database that lists the automations, and applies the migrations in `migrations/` on every deploy.
+
 Deploys also create a 30-day Access service token for machine testing. Send it as `CF-Access-Client-Id` / `CF-Access-Client-Secret`, and read it with `bun alchemy state`. Never commit it.
 
 ## Usage
 
-Open the Studio URL, enter an automation ID, describe a process, review the graph, and save. Runs always use the last saved snapshot, not the current draft.
+Open the Studio URL, describe a process, review the graph, and save. Runs always use the last saved snapshot, not the current draft.
+
+The open automation's ID is in the URL (`/?automation=orders`), so a reload, a new tab, or a shared link opens the same automation. The sidebar lists every automation that has a draft. Use **New** in the sidebar, or edit the ID in the header and press Enter, to open another ID. An unknown ID starts an empty automation.
 
 ```sh
 curl -X POST "$STUDIO_URL/api/automations/orders/events/order.created" \
@@ -47,6 +51,7 @@ curl -X POST "$STUDIO_URL/api/automations/orders/events/order.created" \
 
 | Endpoint                                  | Purpose                |
 | ----------------------------------------- | ---------------------- |
+| `GET /api/automations`                    | List automations       |
 | `GET /api/automations/:id`                | Inspect an automation  |
 | `POST /api/automations/:id/start`         | Start a run manually   |
 | `POST /api/automations/:id/events/:event` | Trigger a run by event |

@@ -6,7 +6,9 @@ A single-tenant prototype on Cloudflare: you design sequential automations in a 
 
 - `alchemy.run.ts`: the Alchemy 2 Stack. It declares the `Studio` Foldkit website, which carries Cloudflare Access and the test service token, and exports `StudioEnv`.
 - `src/api.ts`: the Effect-native `Api` Worker. It holds the `HttpRouter` routes under `/api/automations` and has no public URL (`workersDev: false`).
-- `src/automation.ts`: the `Automation` Durable Object. It stores the draft and saved workflow, keeps the runs, and drives step execution with `Alchemy.makeCallback`.
+- `src/automation.ts`: the `Automation` Durable Object. It stores the draft and saved workflow and the chat transcript, keeps the runs, and drives step execution with `Alchemy.makeCallback`.
+- `src/automation-index.ts`: the `AutomationsDatabase` D1 database and its queries. Cloudflare can't enumerate Durable Object names, so `Api` records each automation in the `automations` table on chat and save, and when an existing automation is opened. It backs `GET /api/automations`. Each automation's data stays in its Durable Object; the table only lists them.
+- `migrations/`: D1 migrations, applied in numeric order on deploy and under `alchemy dev`.
 - `src/workflow.ts`: the pure domain code. It holds the Schema models (`Workflow`, `Step`, `Run`), the decoders, and `graph`.
 - `src/pi.ts` and `src/pi-storage.ts`: pi-durable and pi-ai running inside the Durable Object, with pi's tables stored in the object's SQLite.
 - `src/edge.ts`: the Studio Worker's async entry. It only forwards `/api/*` to `Api`. Keep logic out of it.
@@ -20,6 +22,18 @@ bun run typecheck && bun run lint && bun run test && bun run format:check
 
 - Tests use `bun:test` and sit next to the code they cover. Run Effects with `Effect.runSync` or `Effect.runPromise`.
 - Worker and Durable Object behavior can only be tested end to end. Run `mise run dev` and call `/api/automations/...` on the Studio URL it prints. Chat and agent steps call Workers AI for real.
+
+## Debugging a user's automation
+
+The UI keeps the open automation in the URL (`/?automation=<id>`). When a user shares that URL from `mise run dev`, read the automation over the local API. Dev mode skips Access, so no credentials are needed:
+
+```sh
+curl -s "$STUDIO_URL/api/automations"                    # every automation with a draft
+curl -s "$STUDIO_URL/api/automations/<id>"               # draft, saved, graph, conversation
+curl -s "$STUDIO_URL/api/automations/<id>/runs/<runId>"  # one run; the UI shows the run ID
+```
+
+Stick to these `GET` routes unless the user asks for more. `chat` calls Workers AI and replaces the draft, and `save` and `start` change what runs.
 
 ## Effect
 
@@ -44,6 +58,8 @@ bun run typecheck && bun run lint && bun run test && bun run format:check
 - `Alchemy.makeCallback` delivers at least once. Keep handlers idempotent:
   - Agent steps reuse the pi `requestId` `${runId}:${stepId}`, and their conversation id is saved on the run before submitting.
   - Callback names (`advance`) and payload shapes are persisted contracts. Keep them compatible.
+- Storage keys are persisted contracts too: `draft`, `saved`, `run:<id>`, `exchange:<000000>`, and `exchangeCount` in `Automation`.
+- Never edit an applied D1 migration. Add the next numbered file in `migrations/` instead; Alchemy tracks applied files by hash in `__alchemy_migrations`.
 
 ## Invariants
 

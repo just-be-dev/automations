@@ -5,6 +5,7 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import { openAutomationIndex } from "./automation-index.ts";
 import Automation from "./automation.ts";
 
 const MAX_BODY_BYTES = 32_000;
@@ -75,16 +76,24 @@ export default class Api extends Cloudflare.Worker<Api>()(
   },
   Effect.gen(function* () {
     const automations = yield* Automation;
+    // The index only feeds the studio's list, so a failure to update it must not fail the request.
+    const index = yield* openAutomationIndex;
 
     const routes = HttpRouter.addAll(
       [
+        HttpRouter.route("GET", "/", respond(index.list())),
         HttpRouter.route(
           "GET",
           "/:id",
           respond(
             Effect.gen(function* () {
               const { id } = yield* automationParams;
-              return yield* automations.getByName(id).inspectWorkflow();
+              const automation = yield* automations.getByName(id).inspectWorkflow();
+              const workflow = automation.draft ?? automation.saved;
+              if (workflow !== undefined) {
+                yield* index.recordIfMissing(id, workflow.name).pipe(Effect.ignore);
+              }
+              return automation;
             }),
           ),
         ),
@@ -111,7 +120,9 @@ export default class Api extends Cloudflare.Worker<Api>()(
             Effect.gen(function* () {
               const { id } = yield* automationParams;
               const body = yield* limitedBody(ChatBody);
-              return yield* automations.getByName(id).chat(body.message ?? "");
+              const draft = yield* automations.getByName(id).chat(body.message ?? "");
+              yield* index.record(id, draft.workflow.name).pipe(Effect.ignore);
+              return draft;
             }),
           ),
         ),
@@ -121,7 +132,9 @@ export default class Api extends Cloudflare.Worker<Api>()(
           respond(
             Effect.gen(function* () {
               const { id } = yield* automationParams;
-              return yield* automations.getByName(id).save();
+              const saved = yield* automations.getByName(id).save();
+              yield* index.record(id, saved.saved.name).pipe(Effect.ignore);
+              return saved;
             }),
           ),
         ),
@@ -160,5 +173,5 @@ export default class Api extends Cloudflare.Worker<Api>()(
     return {
       fetch: yield* HttpRouter.toHttpEffect(Layer.mergeAll(routes, notFound)),
     };
-  }),
+  }).pipe(Effect.provide(Cloudflare.D1.QueryDatabaseBinding)),
 ) {}

@@ -2,7 +2,38 @@ import { expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import { Command, given, message, model, story } from "foldkit/story";
 import { modifyFields } from "foldkit/struct";
-import { Message, SendMessage, SaveDraft, init, update, type Workflow } from "./main.ts";
+import type { Url } from "foldkit/url";
+import {
+  LoadAutomation,
+  LoadAutomations,
+  Message,
+  NavigateInternal,
+  SendMessage,
+  SaveDraft,
+  init,
+  update,
+  type Workflow,
+} from "./main.ts";
+
+const studioUrl = (search?: string): Url => ({
+  protocol: "http:",
+  host: "localhost:1338",
+  port: Option.some("1338"),
+  pathname: "/",
+  search: search === undefined ? Option.none() : Option.some(search),
+  hash: Option.none(),
+});
+
+const loaded = (search?: string) =>
+  update(
+    init(studioUrl(search)).model,
+    Message.SucceededLoadAutomation({
+      revision: 0,
+      maybeDraft: Option.none(),
+      hasSaved: false,
+      conversation: [],
+    }),
+  ).model;
 
 const workflow: Workflow = {
   name: "Order summary",
@@ -26,12 +57,7 @@ const workflow: Workflow = {
 test("chat reviews the returned draft and saves that automation", () => {
   story(
     update,
-    given(
-      modifyFields(init().model, {
-        automationId: () => "orders",
-        messageInput: () => "Summarize orders",
-      }),
-    ),
+    given(modifyFields(loaded("automation=orders"), { messageInput: () => "Summarize orders" })),
     message(Message.ClickedSend()),
     Command.expectExact(
       SendMessage({ automationId: "orders", revision: 0, message: "Summarize orders" }),
@@ -46,6 +72,7 @@ test("chat reviews the returned draft and saves that automation", () => {
         workflow,
       }),
     ),
+    Command.resolve(LoadAutomations, Message.SucceededLoadAutomations({ automations: [] })),
     model((current) => {
       expect(current.conversation).toEqual([
         { id: 0, prompt: "Summarize orders", reply: "Review these steps." },
@@ -56,11 +83,26 @@ test("chat reviews the returned draft and saves that automation", () => {
     message(Message.ClickedSave()),
     Command.expectExact(SaveDraft({ automationId: "orders", revision: 0 })),
     Command.resolve(SaveDraft, Message.SucceededSaveDraft({ revision: 0 })),
+    Command.resolve(
+      LoadAutomations,
+      Message.SucceededLoadAutomations({
+        automations: [{ id: "orders", name: "Order summary" }],
+      }),
+    ),
+    model((current) =>
+      expect(current.directory).toEqual({
+        _tag: "Ready",
+        automations: [{ id: "orders", name: "Order summary" }],
+      }),
+    ),
   );
 });
 
 test("a late chat response cannot replace another automation's draft", () => {
-  const switched = update(init().model, Message.UpdatedAutomationId({ value: "other" })).model;
+  const switched = update(
+    loaded(),
+    Message.ChangedUrl({ url: studioUrl("automation=other") }),
+  ).model;
   const received = update(
     switched,
     Message.SucceededSendMessage({
@@ -76,7 +118,7 @@ test("a late chat response cannot replace another automation's draft", () => {
 });
 
 test("chat completion preserves text typed while the request was pending", () => {
-  const current = modifyFields(init().model, { messageInput: () => "Next revision" });
+  const current = modifyFields(loaded(), { messageInput: () => "Next revision" });
   const received = update(
     current,
     Message.SucceededSendMessage({
@@ -91,7 +133,7 @@ test("chat completion preserves text typed while the request was pending", () =>
 
 test("run polling continues only for the active running run", () => {
   const started = update(
-    init().model,
+    loaded(),
     Message.SucceededStartRun({
       revision: 0,
       run: { id: "run-new", status: "running", error: Option.none() },
@@ -135,7 +177,7 @@ test("run polling continues only for the active running run", () => {
 
 test("request failures re-enable actions and old failures leave a new automation unchanged", () => {
   const sending = update(
-    modifyFields(init().model, { messageInput: () => "Hello" }),
+    modifyFields(loaded(), { messageInput: () => "Hello" }),
     Message.ClickedSend(),
   );
   const failed = update(
@@ -143,20 +185,23 @@ test("request failures re-enable actions and old failures leave a new automation
     Message.FailedRequest({ revision: 0, error: "Access denied" }),
   );
   expect(failed.model.activity).toEqual({ _tag: "Failed", error: "Access denied" });
-  const switched = update(failed.model, Message.UpdatedAutomationId({ value: "different" })).model;
+  const switched = update(
+    failed.model,
+    Message.ChangedUrl({ url: studioUrl("automation=different") }),
+  ).model;
   expect(update(switched, Message.FailedRequest({ revision: 0, error: "Old error" })).model).toBe(
     switched,
   );
 });
 
 test("invalid IDs and saving without a draft return errors without requests", () => {
-  const invalid = modifyFields(init().model, {
+  const invalid = modifyFields(loaded(), {
     automationId: () => "orders/bad",
     messageInput: () => "Hello",
   });
   expect(update(invalid, Message.ClickedSend()).commands).toBeUndefined();
   expect(update(invalid, Message.ClickedSend()).model.activity._tag).toBe("Failed");
-  expect(update(init().model, Message.ClickedSave()).model.activity).toEqual({
+  expect(update(loaded(), Message.ClickedSave()).model.activity).toEqual({
     _tag: "Failed",
     error: "Create a draft first",
   });
@@ -165,7 +210,7 @@ test("invalid IDs and saving without a draft return errors without requests", ()
 test("messages up to 10,000 characters are sent and longer ones are rejected", () => {
   const longest = "a".repeat(10_000);
   const withInput = (messageInput: string) =>
-    modifyFields(init().model, { messageInput: () => messageInput });
+    modifyFields(loaded(), { messageInput: () => messageInput });
 
   story(
     update,
@@ -182,4 +227,66 @@ test("messages up to 10,000 characters are sent and longer ones are rejected", (
     expect.objectContaining({ _tag: "Failed", error: "Message must be 1–10,000 characters" }),
   );
   expect(rejected.commands).toBeUndefined();
+});
+
+test("the URL picks which automation opens and loads it with the automation list", () => {
+  const opened = init(studioUrl("automation=orders"));
+  expect(opened.model.automationId).toBe("orders");
+  expect(opened.model.automationIdInput).toBe("orders");
+  expect(opened.model.activity._tag).toBe("Working");
+  expect(opened.commands?.map((command) => command.name)).toEqual([
+    "LoadAutomation",
+    "LoadAutomations",
+  ]);
+
+  expect(init(studioUrl()).model.automationId).toBe("my-automation");
+  expect(init(studioUrl("automation=bad%2Fid")).model.activity._tag).toBe("Failed");
+});
+
+test("typing an ID doesn't reset the page and committing it navigates to its URL", () => {
+  const typed = update(loaded(), Message.UpdatedAutomationId({ value: "orders" }));
+  expect(typed.model.automationId).toBe("my-automation");
+  expect(typed.model.automationIdInput).toBe("orders");
+
+  story(
+    update,
+    given(typed.model),
+    message(Message.ChangedAutomationId()),
+    Command.expectExact(NavigateInternal({ url: "/?automation=orders" })),
+    Command.resolve(NavigateInternal, Message.CompletedNavigateInternal()),
+  );
+
+  const unchanged = update(
+    modifyFields(loaded(), { automationIdInput: () => " my-automation " }),
+    Message.ChangedAutomationId(),
+  );
+  expect(unchanged.commands).toBeUndefined();
+});
+
+test("a URL change loads that automation and restores its conversation", () => {
+  story(
+    update,
+    given(loaded()),
+    message(Message.ChangedUrl({ url: studioUrl("automation=orders") })),
+    Command.expectExact(LoadAutomation({ automationId: "orders", revision: 1 })),
+    model((current) => {
+      expect(current.automationId).toBe("orders");
+      expect(current.activity._tag).toBe("Working");
+    }),
+    Command.resolve(
+      LoadAutomation,
+      Message.SucceededLoadAutomation({
+        revision: 1,
+        maybeDraft: Option.some(workflow),
+        hasSaved: true,
+        conversation: [{ id: 0, prompt: "Summarize orders", reply: "Review these steps." }],
+      }),
+    ),
+    model((current) => {
+      expect(current.maybeDraft).toEqual(Option.some(workflow));
+      expect(current.conversation).toEqual([
+        { id: 0, prompt: "Summarize orders", reply: "Review these steps." },
+      ]);
+    }),
+  );
 });

@@ -77,6 +77,18 @@ export const Draft = Schema.Struct({
 });
 export interface Draft extends Schema.Schema.Type<typeof Draft> {}
 
+/** One chat turn, stored so the studio can show the conversation again after a reload. */
+export const Exchange = Schema.Struct({ prompt: Schema.String, reply: Schema.String });
+export interface Exchange extends Schema.Schema.Type<typeof Exchange> {}
+
+/** An automation's entry in the index that backs `GET /api/automations`. */
+export const AutomationSummary = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  updatedAt: Schema.Finite,
+});
+export interface AutomationSummary extends Schema.Schema.Type<typeof AutomationSummary> {}
+
 export const RunResult = Schema.Struct({ step: Schema.String, output: Schema.String });
 export interface RunResult extends Schema.Schema.Type<typeof RunResult> {}
 

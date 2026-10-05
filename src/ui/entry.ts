@@ -10,6 +10,10 @@ const application = Runtime.makeApplication({
   init,
   update,
   view,
+  routing: {
+    onUrlRequest: (request) => Message.ClickedLink({ request }),
+    onUrlChange: (url) => Message.ChangedUrl({ url }),
+  },
   container: document.getElementById("root"),
   devTools: { Message },
 });
