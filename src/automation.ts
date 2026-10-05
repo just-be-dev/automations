@@ -8,9 +8,9 @@ import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { openAutomationIndex } from "./automation-index.ts";
+import { designDraft } from "./design.ts";
 import { openPiAgent } from "./pi.ts";
 import {
-  decodeDraft,
   Exchange,
   flattenSteps,
   graph,
@@ -23,28 +23,6 @@ import {
 } from "./workflow.ts";
 
 const MODEL = "@cf/moonshotai/kimi-k2.7-code";
-
-const designInstructions = `You design executable automations. Always respond with ONLY JSON: {"reply":"brief helpful explanation or question","workflow":Workflow}. Include the COMPLETE revised workflow on every turn.
-
-Workflow: {"name":"...","event":null or an identifier for an externally POSTed event (not a timer),"steps":[Step, ...]} with 1–20 top-level steps.
-
-Every step has an "id" (letters, digits, - and _), a short "title", and a "kind". IDs must be unique across the WHOLE workflow, nested steps included, and stay stable between turns. Steps in a list run in order. The kinds:
-- {"kind":"agent","instruction":"..."}: an AI agent does the work described.
-- {"kind":"webhook","url":"https://..."}: POSTs the run so far to a public HTTPS URL. Never invent URLs; ask for them and use an agent step until provided.
-- {"kind":"wait","duration":"3 days"} or {"kind":"wait","until":"input.start_date","offset":"-7 days"}: pauses the run for a while, or until a date shifted by an optional offset. Durations are "<number> minutes|hours|days|weeks"; offsets may start with "-".
-- {"kind":"parallel","branches":[[Step, ...], [Step, ...]]}: 2–8 branches run at the same time; the run continues once every branch finishes.
-- {"kind":"if","cases":[{"when":Condition,"steps":[Step, ...]}],"otherwise":[Step, ...]}: runs the steps of the first case whose condition holds, else "otherwise" (optional). Use it for checks on data.
-- {"kind":"decide","model":"clef-flash" or "clef","question":"...","options":[{"id":"...","description":"...","steps":[Step, ...]}]}: a decision model reads the run so far and picks one of 2–8 options, then runs its steps. Use it for judgment calls; clef-flash for simple routing, clef for nuanced decisions.
-- {"kind":"human","prompt":"...","assignee":"...","response":"approval" or {"fields":[{"name":"snake_case","label":"...","type":"text" or "number" or "boolean" or "date"}]},"timeout":"2 days"}: pauses until a person approves or rejects, or fills in the fields. "assignee" and "timeout" are optional.
-
-Condition: {"ref":Ref,"op":"equals" or "notEquals" or "greaterThan" or "lessThan" or "contains","value":any JSON} or {"ref":Ref,"op":"exists"} or {"all":[Condition, ...]} or {"any":[Condition, ...]} or {"not":Condition}.
-Ref: "input.<field>" reads the run input. "steps.<id>.<field>" reads what an earlier step recorded: agent and webhook steps record "output"; decide steps "choice" (the option id) and "confidence"; human steps "approved", "values.<field>", and "timedOut"; if steps "matched".
-
-Design guidance: use wait steps for timing instead of asking an agent to schedule something; use parallel for independent work; use human steps for approvals and information only a person has, instead of asking an agent to confirm with someone; branch with if or decide instead of describing branches in prose. Keep lists flat when nesting adds nothing. Nest at most 4 levels deep and use at most 60 steps in total.
-
-Variables: when a title, instruction, question, prompt, or assignee needs a value that changes on each run (a person, a date, an ID), write it as {{snake_case}} naming a field of the run input, e.g. {{new_hire_name}}. Use the same variable for the same value everywhere, and never write placeholders any other way, such as [new hire].
-
-No secrets in the workflow.`;
 
 export class AutomationError extends Schema.TaggedError<AutomationError>()("AutomationError", {
   message: Schema.String,
@@ -223,8 +201,9 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
       const isWorking = (pending: PendingChat | undefined, chatId: string) =>
         pending?.id === chatId && pending.status === "working";
 
-      // Delivery is at least once. A redelivered reply reuses the pi request ID, so the agent answers
-      // each message once, and only the delivery that still finds the message pending writes it.
+      // Delivery is at least once. A redelivered reply reuses the pi request IDs, so the agent answers
+      // each message (and its one retry) once, and only the delivery that still finds the message
+      // pending writes it.
       const designReply: Alchemy.Callback<DesignReply> = yield* Alchemy.makeCallback(
         "designReply",
         Effect.fn("Automation.designReply")(function* ({ automationId, chatId }: DesignReply) {
@@ -232,12 +211,7 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
           if (pending === undefined || !isWorking(pending, chatId)) {
             return;
           }
-          const reply = yield* pi
-            .prompt({
-              requestId: `chat:${chatId}`,
-              text: `${designInstructions}\n\nUser: ${pending.prompt}`,
-            })
-            .pipe(Effect.flatMap(decodeDraft), Effect.result);
+          const reply = yield* designDraft(pi.prompt, chatId, pending.prompt).pipe(Effect.result);
           const wrote = yield* state.storage
             .transaction(
               Effect.gen(function* () {

@@ -63,6 +63,39 @@ describe("workflow IR", () => {
     expect(draft.workflow.steps.map((step) => step.id)).toEqual(["summarize", "notify"]);
   });
 
+  test("qualifies bare input field names in references", () => {
+    const decoded = Effect.runSync(
+      decodeWorkflow({
+        ...workflow,
+        steps: [
+          {
+            id: "day-before",
+            title: "Wait until the day before",
+            kind: "wait",
+            until: "start_date",
+            offset: "-1 day",
+          },
+          {
+            id: "check",
+            title: "Check",
+            kind: "if",
+            cases: [
+              { when: { ref: "{{ remote }}", op: "equals", value: true }, steps: [agent("ship")] },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(decoded.steps[0]).toMatchObject({ until: "input.start_date" });
+    expect(decoded.steps[1]).toMatchObject({ cases: [{ when: { ref: "input.remote" } }] });
+    expect(
+      failure({
+        ...workflow,
+        steps: [{ id: "w", title: "w", kind: "wait", until: "start.date" }],
+      }),
+    ).toContain("References start with input.");
+  });
+
   test("rejects drafts that are not JSON or lack a reply", () => {
     const notJson = Effect.runSync(decodeDraft("Sure! Here you go.").pipe(Effect.flip));
     expect(notJson._tag).toBe("InvalidWorkflow");

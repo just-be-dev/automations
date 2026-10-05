@@ -1,12 +1,14 @@
 import { Runtime } from "foldkit";
 import { Message, Model, init, update, view } from "./main.ts";
-import "@fontsource-variable/ibm-plex-sans";
+import { Flags, loadFlags } from "./theme.ts";
+import "@fontsource-variable/inter";
 import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
 import "./styles.css";
 
 const application = Runtime.makeApplication({
   Model,
+  Flags,
   init,
   update,
   view,
@@ -18,4 +20,4 @@ const application = Runtime.makeApplication({
   devTools: { Message },
 });
 
-Runtime.run(application);
+Runtime.run(application, { flags: loadFlags });

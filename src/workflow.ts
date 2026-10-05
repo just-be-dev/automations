@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
 export class InvalidWorkflow extends Schema.TaggedError<InvalidWorkflow>()("InvalidWorkflow", {
   message: Schema.String,
@@ -56,13 +57,30 @@ const Duration = Identifier(/^\d{1,4} (minute|hour|day|week)s?$/, durationMessag
 /** An offset from a date, such as "-7 days" for a week before it. */
 const Offset = Identifier(/^-?\d{1,4} (minute|hour|day|week)s?$/, durationMessage);
 
+const inputFieldShorthand = /^(?:\{\{\s*([a-zA-Z0-9_-]{1,40})\s*\}\}|([a-zA-Z0-9_-]{1,40}))$/;
+
+/**
+ * The designer agent sometimes names an input field the way it writes variables in text
+ * (`start_date` or `{{start_date}}`). A bare name can only mean a run input field, because step
+ * references always need `steps.<id>.<field>`, so decoding qualifies it as `input.<field>`.
+ */
+const qualifyInputField = (value: string) => {
+  const match = inputFieldShorthand.exec(value.trim());
+  return match === null ? value : `input.${match[1] ?? match[2]}`;
+};
+
 /**
  * A path into the run's state: `input.<field>` reads the run input, and `steps.<id>.<field>` reads
  * what an earlier step recorded.
  */
-const Ref = Identifier(
-  /^(input|steps)(\.[a-zA-Z0-9_-]{1,40}){1,4}$/,
-  "References start with input. or steps. followed by a field path",
+const Ref = Schema.String.pipe(
+  Schema.decodeTo(
+    Identifier(
+      /^(input|steps)(\.[a-zA-Z0-9_-]{1,40}){1,4}$/,
+      "References start with input. or steps. followed by a field path",
+    ),
+    SchemaTransformation.transform({ decode: qualifyInputField, encode: (ref: string) => ref }),
+  ),
 );
 
 export const AgentStep = Schema.Struct({

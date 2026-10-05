@@ -1,10 +1,21 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-/* foldcn base style (https://foldcn.elianiva.com/docs/foldcn), with the palette replaced by a
-   warm paper-and-ink theme and dark mode keyed on the OS preference instead of a `.dark` class. */
+/* foldcn base style (https://foldcn.elianiva.com/docs/foldcn), with the palette replaced by the
+   product mock on warp.co (its `.warp-dash` theme): white panels on a #fafafa sidebar, Radix sand
+   for secondary text and icon tiles, Radix blue as the accent, and ring shadows instead of card
+   borders. Dark mode follows the OS preference unless the theme toggle set `data-theme` on <html>. */
 
-@custom-variant dark (@media (prefers-color-scheme: dark));
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:not([data-theme="light"]):not([data-theme="light"] *)) {
+      @slot;
+    }
+  }
+}
 
 @theme inline {
   --color-background: var(--background);
@@ -26,68 +37,117 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-hover: var(--hover);
+  --color-chip: var(--chip);
+  --color-rail: var(--rail);
+  --color-brand: var(--brand);
   --color-signal: var(--signal);
+  --color-signal-foreground: var(--signal-foreground);
   --color-success: var(--success);
-  --color-grid: var(--grid);
+  --color-sand-2: var(--sand-2);
+  --color-sand-3: var(--sand-3);
+  --color-sand-4: var(--sand-4);
+  --color-sand-8: var(--sand-8);
+  --color-sand-10: var(--sand-10);
+  --color-sand-11: var(--sand-11);
+  --color-sand-12: var(--sand-12);
 
-  --font-sans: "IBM Plex Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
   --font-heading: var(--font-sans);
   --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
-  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-xl: calc(var(--radius) * 1.2);
+  --radius-2xl: calc(var(--radius) * 1.4);
   --radius-3xl: calc(var(--radius) * 2.2);
   --radius-4xl: calc(var(--radius) * 2.6);
+
+  --shadow-card: var(--card-shadow);
+  --shadow-raised: var(--raised-shadow);
 }
 
 :root {
-  --radius: 0.375rem;
+  --radius: 0.625rem;
 
-  --background: oklch(0.972 0.007 85);
-  --foreground: oklch(0.235 0.012 60);
-  --card: oklch(0.993 0.004 85);
+  --sand-2: #f9f9f8;
+  --sand-3: #f1f0ef;
+  --sand-4: #e9e8e6;
+  --sand-8: #bcbbb5;
+  --sand-10: #82827c;
+  --sand-11: #63635e;
+  --sand-12: #21201c;
+
+  --background: #fff;
+  --foreground: #0a0a0a;
+  --card: var(--background);
   --card-foreground: var(--foreground);
   --popover: var(--card);
   --popover-foreground: var(--foreground);
-  --primary: oklch(0.235 0.012 60);
-  --primary-foreground: oklch(0.975 0.006 85);
-  --secondary: oklch(0.93 0.01 80);
+  --primary: #171717;
+  --primary-foreground: #fff;
+  --secondary: var(--sand-3);
   --secondary-foreground: var(--foreground);
-  --muted: oklch(0.945 0.009 82);
-  --muted-foreground: oklch(0.52 0.014 65);
-  --accent: var(--muted);
+  --muted: var(--sand-3);
+  --muted-foreground: #0a0a0a99;
+  --accent: var(--sand-3);
   --accent-foreground: var(--foreground);
-  --destructive: oklch(0.55 0.19 30);
-  --destructive-foreground: oklch(0.97 0.01 30);
-  --border: oklch(0.885 0.012 78);
-  --input: oklch(0.86 0.013 76);
-  --ring: oklch(0.64 0.17 45);
-  --signal: oklch(0.64 0.17 45);
-  --success: oklch(0.56 0.11 150);
-  --grid: oklch(0.86 0.012 78);
-}
+  --destructive: #e5484d;
+  --destructive-foreground: #fff;
+  --border: #e5e5e5;
+  --input: #e5e5e5;
+  --ring: #0090ff;
+  --sidebar: #fafafa;
+  --hover: #0000000d;
+  --chip: #00000010;
+  --rail: #e8e8e8;
+  --brand: #2563eb;
+  --signal: #0090ff;
+  --signal-foreground: #fff;
+  --success: #30a46c;
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: oklch(0.185 0.008 60);
-    --foreground: oklch(0.925 0.01 85);
-    --card: oklch(0.215 0.009 60);
-    --primary: oklch(0.925 0.01 85);
-    --primary-foreground: oklch(0.2 0.008 60);
-    --secondary: oklch(0.29 0.01 60);
-    --muted: oklch(0.255 0.009 60);
-    --muted-foreground: oklch(0.68 0.012 75);
-    --destructive: oklch(0.7 0.16 30);
-    --destructive-foreground: oklch(0.25 0.05 30);
-    --border: oklch(0.32 0.01 60);
-    --input: oklch(0.36 0.011 60);
-    --ring: oklch(0.72 0.15 50);
-    --signal: oklch(0.72 0.15 50);
-    --success: oklch(0.72 0.12 150);
-    --grid: oklch(0.3 0.01 60);
+  --card-shadow:
+    0 0 0 1px #00000014, 0 1px 1px -0.5px #0000000f, 0 2px 2px -1px #0000000f,
+    0 4px 4px -2px #0000000f;
+  --raised-shadow:
+    0 1px 2px #0000000a, 0 4px 8px -1px #0000000d, 0 12px 20px -4px #0000000d,
+    0 24px 40px -8px #0000000a;
+
+  color-scheme: light;
+
+  @variant dark {
+    color-scheme: dark;
+
+    --sand-2: #191918;
+    --sand-3: #222221;
+    --sand-4: #2a2a28;
+    --sand-8: #62605b;
+    --sand-10: #7c7b74;
+    --sand-11: #b5b3ad;
+    --sand-12: #eeeeec;
+
+    --background: #292929;
+    --foreground: #fafafa;
+    --primary: #fafafa;
+    --primary-foreground: #171717;
+    --muted-foreground: #a1a1a1;
+    --destructive-foreground: #fff;
+    --border: #ffffff1a;
+    --input: #ffffff26;
+    --sidebar: #1f1f1f;
+    --hover: #ffffff1a;
+    --chip: #ffffff11;
+    --rail: #393939;
+    --success: #3dd68c;
+
+    --card-shadow:
+      inset 0 1px 0 #ffffff0f, 0 0 0 1px #1f1f1f, 0 1px 1px -0.5px #0000004d,
+      0 2px 2px -1px #0000004d, 0 4px 4px -2px #0000004d;
+    --raised-shadow:
+      inset 0 1px 0 #ffffff0f, 0 0 0 1px #1f1f1f, 0 4px 8px -1px #0000004d,
+      0 12px 20px -4px #0000004d;
   }
 }
 
@@ -102,14 +162,65 @@
   }
   body {
     @apply bg-background font-sans text-foreground antialiased;
+    letter-spacing: -0.015em;
   }
   [data-leave] {
     --tw-animation-fill-mode: both;
   }
 }
 
-@utility dot-grid {
-  background-image: radial-gradient(var(--grid) 1px, transparent 1px);
-  background-size: 16px 16px;
-  background-position: -8px -8px;
+/* The mock's widget icon: a small sand tile lit from above. */
+@utility icon-tile {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: --spacing(6);
+  height: --spacing(6);
+  border-radius: 6px;
+  color: var(--sand-11);
+  background-image: linear-gradient(to bottom, var(--sand-2), var(--sand-4));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.6);
+  @variant dark {
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06);
+  }
+}
+
+/* The workflow rail, after the onboarding card on warp.co/it: a thin line down the left that curves
+   into each step's icon. Put `rail-item` on each step <li> of a list with `gap-3`. The line reaches
+   up through the gap to the step (or trigger) above. */
+@utility rail-item {
+  position: relative;
+  padding-left: 30px;
+  &::before {
+    content: "";
+    position: absolute;
+    top: var(--rail-top, -12px);
+    bottom: 0;
+    left: 8.25px;
+    width: 1.5px;
+    background-color: var(--rail);
+  }
+  &:last-child::before {
+    bottom: auto;
+    height: calc(4px - var(--rail-top, -12px));
+  }
+  &::after {
+    content: "";
+    position: absolute;
+    top: 4px;
+    left: 8.25px;
+    width: 9.75px;
+    height: 8.75px;
+    border-bottom: 1.5px solid var(--rail);
+    border-left: 1.5px solid var(--rail);
+    border-bottom-left-radius: 8px;
+  }
+}
+
+/* A rail that starts at its first step instead of continuing from something above it. */
+@utility rail-start {
+  & > :first-child {
+    --rail-top: 0px;
+  }
 }

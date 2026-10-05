@@ -17,9 +17,13 @@ import {
   Braces,
   ChevronDown,
   GitBranch,
+  Hash,
   Hourglass,
+  Monitor,
+  Moon,
   Scale,
   Split,
+  Sun,
   UserRound,
   CircleAlert,
   CornerDownLeft,
@@ -30,11 +34,9 @@ import {
   Webhook,
   Workflow as WorkflowIcon,
 } from "lucide";
-import { badge } from "@/components/ui/badge";
 import { Bubble } from "@/components/ui/bubble";
 import { button } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
-import { inputClass } from "@/components/ui/input";
 import { Message as ChatMessage } from "@/components/ui/message";
 import { textarea } from "@/components/ui/textarea";
 import { icon } from "@/lib/icons";
@@ -48,6 +50,7 @@ import {
   type Condition,
   type Step,
 } from "../workflow.ts";
+import { applyTheme, nextTheme, Theme, type Flags } from "./theme.ts";
 
 // MODEL
 
@@ -94,6 +97,7 @@ export const Model = Schema.Struct({
   maybeRun: Schema.Option(Run),
   expandedStepIds: Schema.Array(Schema.String),
   workflowDisplay: WorkflowDisplay,
+  theme: Theme,
   activity: Activity,
 });
 export type Model = typeof Model.Type;
@@ -112,6 +116,8 @@ export const Message = defineMessageUnion({
   UpdatedMessageInput: { value: Schema.String },
   ToggledStepDetails: { stepId: Schema.String, isOpen: Schema.Boolean },
   SelectedWorkflowDisplay: { display: WorkflowDisplay },
+  ClickedThemeToggle: {},
+  CompletedApplyTheme: {},
   ClickedSend: {},
   ClickedSave: {},
   ClickedStart: {},
@@ -154,7 +160,7 @@ const invalidIdError = "Automation IDs use letters, numbers, - and _ (up to 80 c
 
 const validId = (value: string) => /^[a-zA-Z0-9_-]{1,80}$/.test(value.trim());
 
-export const init: Runtime.RoutingApplicationInit<Model, Message> = (url) => {
+export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flags, url) => {
   const automationId = automationIdFromUrl(url);
   const model = Model.make({
     automationId,
@@ -168,6 +174,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message> = (url) => {
     maybeRun: Option.none(),
     expandedStepIds: [],
     workflowDisplay: "Steps",
+    theme: flags.theme,
     activity: validId(automationId)
       ? Activity.Working({ notice: "Loading automation…" })
       : Activity.Failed({ error: invalidIdError }),
@@ -293,6 +300,14 @@ export const update = (model: Model, message: Message) =>
     SelectedWorkflowDisplay: ({ display }) => ({
       model: modifyFields(model, { workflowDisplay: () => display }),
     }),
+    ClickedThemeToggle: () => {
+      const theme = nextTheme[model.theme];
+      return {
+        model: modifyFields(model, { theme: () => theme }),
+        commands: [ApplyTheme({ theme })],
+      };
+    },
+    CompletedApplyTheme: () => ({ model }),
     UpdatedMessageInput: ({ value }) => ({
       model: modifyFields(model, { messageInput: () => value }),
     }),
@@ -546,6 +561,12 @@ const LoadExternal = Command.define("LoadExternal", {
   execute: ({ href }) => load(href).pipe(Effect.as(Message.CompletedLoadExternal())),
 });
 
+export const ApplyTheme = Command.define("ApplyTheme", {
+  args: { theme: Theme },
+  messages: [Message.CompletedApplyTheme],
+  execute: ({ theme }) => applyTheme(theme).pipe(Effect.as(Message.CompletedApplyTheme())),
+});
+
 const automationIdInputId = "id";
 
 export const FocusAutomationIdInput = Command.define("FocusAutomationIdInput", {
@@ -616,22 +637,27 @@ export const PollRun = Command.define("PollRun", {
 type Exchange = typeof Exchange.Type;
 type Run = typeof Run.Type;
 
-const eyebrowClass =
-  "font-mono text-[11px] font-medium tracking-[0.08em] text-muted-foreground uppercase";
+const eyebrowClass = "text-xs font-medium text-sand-10";
 
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   title: "Automations studio",
   body: h.div(
-    [h.Class("flex min-h-full flex-col lg:h-full")],
+    [h.Class("flex min-h-full flex-col bg-sidebar lg:h-full lg:flex-row")],
     [
-      headerView(model, h),
-      h.main(
+      sidebarView(model, h),
+      h.div(
+        [h.Class("flex min-w-0 flex-1 flex-col bg-background lg:min-h-0 lg:border-l")],
         [
-          h.Class(
-            "grid flex-1 grid-cols-1 lg:min-h-0 lg:grid-cols-[15rem_minmax(0,5fr)_minmax(0,6fr)]",
+          headerView(model, h),
+          h.main(
+            [
+              h.Class(
+                "grid flex-1 grid-cols-1 lg:min-h-0 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]",
+              ),
+            ],
+            [conversationView(model, h), workflowPanelView(model, h)],
           ),
         ],
-        [sidebarView(model, h), conversationView(model, h), workflowPanelView(model, h)],
       ),
     ],
   ),
@@ -639,13 +665,13 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
 
 const headerView = (model: Model, h: HtmlBuilder<Message>) =>
   h.header(
-    [h.Class("flex h-12 shrink-0 items-center gap-2.5 border-b bg-card px-4")],
     [
-      h.div(
-        [h.Class("flex items-center gap-2 text-sm font-semibold tracking-tight")],
-        [h.span([h.Class("size-2.5 rounded-[2px] bg-signal"), h.AriaHidden(true)]), "Automations"],
+      h.Class(
+        "grid h-12 shrink-0 grid-cols-[1fr_minmax(0,28rem)_1fr] items-center gap-2 border-b px-4",
       ),
-      h.span([h.Class("font-mono text-sm text-muted-foreground/50"), h.AriaHidden(true)], ["/"]),
+    ],
+    [
+      h.div([]),
       Input.view(
         {
           id: automationIdInputId,
@@ -654,8 +680,13 @@ const headerView = (model: Model, h: HtmlBuilder<Message>) =>
           onInput: (value) => Message.UpdatedAutomationId({ value }),
           toView: (attributes) =>
             h.div(
-              [],
               [
+                h.Class(
+                  "flex h-8 w-full max-w-md items-center gap-1.5 rounded-[10px] border bg-sidebar px-2 transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/25",
+                ),
+              ],
+              [
+                icon(h, Hash, "size-4 text-muted-foreground"),
                 h.label([...attributes.label, h.Class("sr-only")], ["Automation ID"]),
                 h.input([
                   ...attributes.input,
@@ -663,10 +694,7 @@ const headerView = (model: Model, h: HtmlBuilder<Message>) =>
                   h.Spellcheck(false),
                   h.OnChange(() => Message.ChangedAutomationId()),
                   h.Class(
-                    cn(
-                      inputClass,
-                      "h-7 w-56 border-transparent bg-transparent px-1.5 font-mono text-[13px] hover:border-input dark:bg-transparent md:text-[13px]",
-                    ),
+                    "h-full min-w-0 flex-1 bg-transparent px-0.5 font-mono text-[13px] outline-none placeholder:text-muted-foreground",
                   ),
                 ]),
               ],
@@ -674,38 +702,77 @@ const headerView = (model: Model, h: HtmlBuilder<Message>) =>
         },
         h,
       ),
+      themeToggleView(model.theme, h),
     ],
+  );
+
+const themeIcon: Record<Theme, Parameters<typeof icon>[1]> = {
+  System: Monitor,
+  Light: Sun,
+  Dark: Moon,
+};
+
+const themeToggleView = (theme: Theme, h: HtmlBuilder<Message>) =>
+  button(
+    {
+      onClick: Message.ClickedThemeToggle(),
+      variant: "ghost",
+      size: "icon-sm",
+      className: "justify-self-end rounded-[10px] text-sand-10",
+      attributes: [
+        h.AriaLabel(`Color theme: ${theme}`),
+        h.Title(`Color theme: ${theme}. Click for ${nextTheme[theme]}.`),
+      ],
+    },
+    [icon(h, themeIcon[theme], "size-4")],
+    h,
   );
 
 // VIEW: SIDEBAR
 
-const sidebarNoteClass = "px-2 py-1 text-xs text-muted-foreground";
+const sidebarNoteClass = "px-1.5 py-1 text-xs text-muted-foreground";
 
 const sidebarView = (model: Model, h: HtmlBuilder<Message>) =>
   h.nav(
     [
       h.AriaLabel("Automations"),
-      h.Class("flex flex-col border-b bg-card/40 lg:min-h-0 lg:border-r lg:border-b-0"),
+      h.Class("flex shrink-0 flex-col border-b px-2 pb-2 lg:min-h-0 lg:w-60 lg:border-b-0"),
     ],
     [
       h.div(
-        [h.Class("flex items-center justify-between gap-2 px-4 pt-4 pb-2")],
+        [h.Class("flex items-center gap-1.5 px-2 py-3")],
         [
-          h.h2([h.Class(eyebrowClass)], ["Automations"]),
+          h.span(
+            [
+              h.Class(
+                "flex size-6 shrink-0 items-center justify-center rounded-full bg-gradient-to-b from-brand/80 to-brand text-[13px] font-medium text-signal-foreground shadow-[inset_0_1px_0_rgb(255_255_255/0.3)]",
+              ),
+              h.AriaHidden(true),
+            ],
+            ["A"],
+          ),
+          h.span([h.Class("truncate text-sm font-medium")], ["Automations studio"]),
+        ],
+      ),
+      h.div(
+        [h.Class("mt-1 mb-px flex h-[22px] items-center justify-between gap-2 pr-0.5 pl-1.5")],
+        [
+          h.h2([h.Class("text-[11px] font-semibold tracking-tight text-sand-10")], ["Automations"]),
           button(
             {
               onClick: Message.ClickedNewAutomation(),
               variant: "ghost",
-              size: "xs",
-              attributes: [h.AriaLabel("New automation")],
+              size: "icon-xs",
+              className: "text-sand-10",
+              attributes: [h.AriaLabel("New automation"), h.Title("New automation")],
             },
-            [icon(h, Plus, "size-3", "inline-start"), "New"],
+            [icon(h, Plus, "size-3.5")],
             h,
           ),
         ],
       ),
       h.div(
-        [h.Class("max-h-56 overflow-y-auto px-2 pb-3 lg:max-h-none lg:flex-1")],
+        [h.Class("max-h-56 overflow-y-auto lg:max-h-none lg:flex-1")],
         [
           Directory.match(model.directory, {
             Loading: () => h.p([h.Class(sidebarNoteClass)], ["Loading…"]),
@@ -723,7 +790,7 @@ const sidebarView = (model: Model, h: HtmlBuilder<Message>) =>
                   ),
                 onNonEmpty: (listed) =>
                   h.ul(
-                    [h.Class("flex flex-col gap-0.5")],
+                    [h.Class("flex flex-col")],
                     Array.map(listed, (automation) =>
                       automationLinkView(automation, automation.id === model.automationId, h),
                     ),
@@ -750,17 +817,22 @@ const automationLinkView = (
           ...(isCurrent ? [h.AriaCurrent("page")] : []),
           h.Class(
             cn(
-              "relative flex flex-col gap-0.5 rounded-md px-2.5 py-1.5 outline-none hover:bg-muted focus-visible:ring-3 focus-visible:ring-ring/50",
-              isCurrent &&
-                "bg-muted before:absolute before:inset-y-2 before:left-0 before:w-0.5 before:rounded-full before:bg-signal",
+              "group/nav-item my-px flex items-start gap-2 rounded-[8px] py-1.5 pr-2.5 pl-1.5 text-muted-foreground transition-colors duration-100 outline-none hover:bg-hover hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50",
+              isCurrent && "bg-hover text-foreground",
             ),
           ),
         ],
         [
-          h.span([h.Class("truncate text-sm font-medium")], [automation.name]),
+          h.span([h.Class("flex h-5 shrink-0 items-center")], [icon(h, WorkflowIcon, "size-4")]),
           h.span(
-            [h.Class("truncate font-mono text-[11px] text-muted-foreground")],
-            [automation.id],
+            [h.Class("flex min-w-0 flex-col gap-0.5")],
+            [
+              h.span(
+                [h.Class("truncate text-[13px] font-medium tracking-tight")],
+                [automation.name],
+              ),
+              h.span([h.Class("truncate font-mono text-[11px] text-sand-10")], [automation.id]),
+            ],
           ),
         ],
       ),
@@ -814,7 +886,7 @@ const emptyConversationView = (title: string, description: string, h: HtmlBuilde
       Empty.header(
         { className: "items-start" },
         [
-          Empty.title({ className: "text-base" }, [title], h),
+          Empty.title({ className: "text-xl font-semibold" }, [title], h),
           Empty.description({}, [description], h),
         ],
         h,
@@ -857,7 +929,14 @@ const replyView = (children: ReadonlyArray<Html | string>, h: HtmlBuilder<Messag
       ChatMessage.content(
         { className: "gap-1.5" },
         [
-          ChatMessage.header({ className: eyebrowClass }, ["Agent"], h),
+          ChatMessage.header(
+            { className: "gap-2 text-sm font-medium text-sand-10" },
+            [
+              h.span([h.Class("icon-tile"), h.AriaHidden(true)], [icon(h, Bot, "size-3.5")]),
+              "Agent",
+            ],
+            h,
+          ),
           Bubble({ variant: "ghost" }, [Bubble.content({}, children, h)], h),
         ],
         h,
@@ -911,7 +990,7 @@ const composerView = (model: Model, h: HtmlBuilder<Message>) =>
       h.div(
         [
           h.Class(
-            "rounded-lg border bg-card transition-[border-color,box-shadow] focus-within:border-ring/70 focus-within:ring-3 focus-within:ring-ring/15",
+            "rounded-xl bg-background shadow-raised transition-shadow duration-200 focus-within:ring-3 focus-within:ring-ring/25",
           ),
         ],
         [
@@ -924,12 +1003,12 @@ const composerView = (model: Model, h: HtmlBuilder<Message>) =>
               placeholder: "When an order arrives, summarize its contents and send the summary to…",
               onInput: (value) => Message.UpdatedMessageInput({ value }),
               className:
-                "max-h-60 min-h-20 resize-none border-0 bg-transparent px-3 pt-2.5 focus-visible:ring-0 dark:bg-transparent",
+                "max-h-60 min-h-20 resize-none border-0 bg-transparent px-3.5 pt-3 placeholder:text-muted-foreground/80 focus-visible:ring-0",
             },
             h,
           ),
           h.div(
-            [h.Class("flex items-center justify-between gap-3 px-3 pb-2.5")],
+            [h.Class("flex items-center justify-between gap-3 pr-2 pb-2 pl-3.5")],
             [
               h.span(
                 [h.Class("font-mono text-[11px] text-muted-foreground tabular-nums")],
@@ -939,7 +1018,6 @@ const composerView = (model: Model, h: HtmlBuilder<Message>) =>
                 {
                   onClick: Message.ClickedSend(),
                   isDisabled: Activity.guards.Working(model.activity),
-                  size: "sm",
                   attributes: [h.Id("send")],
                 },
                 ["Send message", icon(h, CornerDownLeft, "size-3.5", "inline-end")],
@@ -956,7 +1034,7 @@ const composerView = (model: Model, h: HtmlBuilder<Message>) =>
 
 const workflowPanelView = (model: Model, h: HtmlBuilder<Message>) =>
   h.section(
-    [h.Class("dot-grid flex flex-col lg:min-h-0"), h.AriaLabel("Workflow")],
+    [h.Class("flex flex-col lg:min-h-0"), h.AriaLabel("Workflow")],
     [
       h.div(
         [h.Class("flex items-start justify-between gap-4 px-6 pt-5")],
@@ -966,7 +1044,7 @@ const workflowPanelView = (model: Model, h: HtmlBuilder<Message>) =>
             [
               h.div([h.Class(eyebrowClass)], ["Draft"]),
               h.h2(
-                [h.Class("truncate text-base font-semibold tracking-tight")],
+                [h.Class("truncate text-xl font-semibold")],
                 [
                   Option.match(model.maybeDraft, {
                     onNone: () => "Untitled workflow",
@@ -1001,7 +1079,7 @@ const workflowPanelView = (model: Model, h: HtmlBuilder<Message>) =>
         ],
       ),
       h.div(
-        [h.Class("flex flex-wrap items-center gap-x-4 gap-y-2 border-t bg-card px-6 py-3")],
+        [h.Class("flex flex-wrap items-center gap-x-4 gap-y-2 border-t px-6 py-3")],
         [
           statusView(model, h),
           h.div(
@@ -1050,7 +1128,7 @@ const workflowJsonView = (workflow: Workflow, h: HtmlBuilder<Message>) =>
     [
       h.AriaLabel("Draft JSON"),
       h.Class(
-        "max-w-3xl overflow-x-auto rounded-lg border bg-card px-4 py-3 font-mono text-xs leading-relaxed shadow-xs",
+        "max-w-3xl overflow-x-auto rounded-[10px] bg-card px-4 py-3 font-mono text-xs leading-relaxed shadow-card",
       ),
     ],
     [JSON.stringify(workflow, null, 2)],
@@ -1058,12 +1136,12 @@ const workflowJsonView = (workflow: Workflow, h: HtmlBuilder<Message>) =>
 
 const emptyWorkflowView = (h: HtmlBuilder<Message>) =>
   Empty(
-    { className: "max-w-xl border border-dashed bg-card/60" },
+    { className: "max-w-xl rounded-[10px] bg-card shadow-card" },
     [
       Empty.header(
         {},
         [
-          Empty.media({ variant: "icon" }, [icon(h, WorkflowIcon)], h),
+          Empty.media({ className: "icon-tile" }, [icon(h, WorkflowIcon, "size-3.5")], h),
           Empty.title({}, ["No draft yet"], h),
           Empty.description(
             {},
@@ -1079,16 +1157,11 @@ const emptyWorkflowView = (h: HtmlBuilder<Message>) =>
     h,
   );
 
-const nodeMarkerClass =
-  "relative z-10 grid size-8 shrink-0 place-items-center rounded-full border bg-card font-mono text-[11px] text-muted-foreground tabular-nums";
-
-const nodeCardClass = "min-w-0 flex-1 rounded-lg border bg-card px-3.5 py-2.5 shadow-xs";
-
-const variableClass =
-  "rounded-sm bg-signal/12 px-1 py-px font-mono text-[0.92em] font-medium text-foreground ring-1 ring-signal/30 ring-inset box-decoration-clone";
+const chipClass =
+  "rounded-[4px] bg-chip px-1.5 py-0.5 font-mono text-[0.92em] box-decoration-clone";
 
 const variableView = (name: string, h: HtmlBuilder<Message>) =>
-  h.span([h.Class(variableClass), h.Title(`Run input: ${name}`)], [name]);
+  h.span([h.Class(cn(chipClass, "text-foreground")), h.Title(`Run input: ${name}`)], [name]);
 
 const templateView = (text: string, h: HtmlBuilder<Message>) =>
   Array.map(templateParts(text), (part) =>
@@ -1100,52 +1173,62 @@ const inputsView = (workflow: Workflow, h: HtmlBuilder<Message>) =>
     onEmpty: () => h.empty,
     onNonEmpty: (names) =>
       h.div(
-        [h.Class("mt-2 flex flex-wrap items-baseline gap-x-2 gap-y-1.5 border-t pt-2")],
+        [h.Class("flex flex-wrap items-baseline gap-x-2 gap-y-1.5")],
         [
-          h.h3([h.Id("trigger-inputs"), h.Class(eyebrowClass)], ["Inputs"]),
+          h.h3([h.Id("trigger-inputs"), h.Class("text-muted-foreground")], ["Inputs"]),
           h.ul(
-            [h.AriaLabelledBy("trigger-inputs"), h.Class("flex flex-wrap gap-1.5 text-xs")],
+            [h.AriaLabelledBy("trigger-inputs"), h.Class("flex flex-wrap gap-1.5")],
             Array.map(names, (name) => h.keyed("li")(name, [], [variableView(name, h)])),
           ),
         ],
       ),
   });
 
+const triggerView = (workflow: Workflow, h: HtmlBuilder<Message>) =>
+  h.div(
+    [h.Class("flex gap-3")],
+    [
+      h.div(
+        [h.Class("flex w-[18px] shrink-0 flex-col items-center"), h.AriaHidden(true)],
+        [
+          icon(h, workflow.event ? Radio : Play, "mt-[3px] size-[18px] text-muted-foreground"),
+          h.div([h.Class("mt-1.5 w-[1.5px] flex-1 bg-rail")]),
+        ],
+      ),
+      h.div(
+        [h.Class("flex min-w-0 flex-1 flex-col gap-2 text-sm")],
+        [
+          workflow.event
+            ? h.p(
+                [h.Class("text-muted-foreground")],
+                [
+                  "When ",
+                  h.span(
+                    [h.Class(cn(chipClass, "text-foreground")), h.Title("Event")],
+                    [workflow.event],
+                  ),
+                  " arrives",
+                ],
+              )
+            : h.p([h.Class("leading-6 text-muted-foreground")], ["Manual start"]),
+          inputsView(workflow, h),
+        ],
+      ),
+    ],
+  );
+
 const workflowView = (
   workflow: Workflow,
   expandedStepIds: ReadonlyArray<string>,
   h: HtmlBuilder<Message>,
 ) =>
-  h.ol(
+  h.div(
+    [h.Class("flex max-w-2xl flex-col")],
     [
-      h.AriaLabel("Steps"),
-      h.Class(
-        "relative flex max-w-2xl flex-col gap-3 before:absolute before:top-4 before:bottom-4 before:left-4 before:w-px before:bg-border",
-      ),
-    ],
-    [
-      h.li(
-        [h.Class("flex gap-3")],
-        [
-          h.span(
-            [h.Class(cn(nodeMarkerClass, "border-signal bg-signal text-primary-foreground"))],
-            [icon(h, workflow.event ? Radio : Play, "size-3.5")],
-          ),
-          h.div(
-            [h.Class(nodeCardClass)],
-            [
-              h.div([h.Class(eyebrowClass)], ["Trigger"]),
-              h.div(
-                [h.Class("text-sm font-medium")],
-                [workflow.event ? `Event: ${workflow.event}` : "Manual start"],
-              ),
-              inputsView(workflow, h),
-            ],
-          ),
-        ],
-      ),
-      ...Array.map(workflow.steps, (step, index) =>
-        stepView(step, String(index + 1).padStart(2, "0"), false, expandedStepIds, h),
+      triggerView(workflow, h),
+      h.ol(
+        [h.AriaLabel("Steps"), h.Class("mt-3 flex flex-col gap-3")],
+        Array.map(workflow.steps, (step) => stepView(step, expandedStepIds, h)),
       ),
     ],
   );
@@ -1178,7 +1261,7 @@ const comparisonLabel: Record<Comparison, string> = {
   contains: "contains",
 };
 
-const stepRefClass = "rounded-sm bg-muted px-1 py-px font-mono text-[0.92em] text-foreground";
+const stepRefClass = cn(chipClass, "text-sand-11");
 
 const refView = (ref: string, h: HtmlBuilder<Message>) => {
   const [root, ...path] = ref.split(".");
@@ -1345,31 +1428,26 @@ const stepLanes = (step: Step, h: HtmlBuilder<Message>): ReadonlyArray<Lane> =>
 
 const laneView = (lane: Lane, expandedStepIds: ReadonlyArray<string>, h: HtmlBuilder<Message>) =>
   h.li(
-    [h.Class("flex flex-col gap-2 border-l-2 border-dashed pl-3")],
+    [h.Class("flex flex-col gap-2")],
     [
       h.div([h.Class("text-xs text-muted-foreground")], lane.heading),
       h.ol(
-        [h.AriaLabel(lane.label), h.Class("flex flex-col gap-2")],
-        Array.map(lane.steps, (step, index) =>
-          stepView(step, String(index + 1), true, expandedStepIds, h),
-        ),
+        [h.AriaLabel(lane.label), h.Class("rail-start flex flex-col gap-3")],
+        Array.map(lane.steps, (step) => stepView(step, expandedStepIds, h)),
       ),
     ],
   );
 
 const stepView = (
   step: Step,
-  marker: string,
-  isNested: boolean,
   expandedStepIds: ReadonlyArray<string>,
   h: HtmlBuilder<Message>,
 ): Html => {
   const isExpanded = Array.contains(expandedStepIds, step.id);
   return h.keyed("li")(
     step.id,
-    [h.Class("flex gap-3 animate-in fade-in slide-in-from-top-1 duration-300")],
+    [h.Class("rail-item animate-in fade-in slide-in-from-top-1 duration-300")],
     [
-      h.span([h.Class(cn(nodeMarkerClass, isNested && "size-6 text-[10px]"))], [marker]),
       Disclosure.view(
         {
           id: `step-${step.id}`,
@@ -1377,39 +1455,40 @@ const stepView = (
           onToggle: (isOpen) => Message.ToggledStepDetails({ stepId: step.id, isOpen }),
           toView: ({ button, panel }) =>
             h.div(
-              [h.Class(cn(nodeCardClass, "p-0"))],
+              [h.Class("flex flex-col gap-1")],
               [
                 h.button(
                   [
                     ...button,
                     h.Class(
-                      "group/step flex w-full cursor-pointer items-start gap-3 rounded-lg px-3.5 pt-2.5 pb-1 text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+                      "group/step flex w-full cursor-pointer items-start gap-2.5 rounded-md text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
                     ),
                   ],
                   [
-                    h.div(
-                      [h.Class("min-w-0 flex-1")],
+                    h.span(
+                      [h.Class("icon-tile"), h.Title(stepLabel[step.kind]), h.AriaHidden(true)],
+                      [icon(h, stepIcon[step.kind], "size-3.5")],
+                    ),
+                    h.span(
+                      [h.Class("min-w-0 flex-1 py-0.5 text-sm")],
                       [
-                        h.div(
-                          [h.Class(cn(eyebrowClass, "flex items-center gap-1.5"))],
-                          [icon(h, stepIcon[step.kind], "size-3"), stepLabel[step.kind]],
-                        ),
-                        h.div([h.Class("text-sm font-medium")], templateView(step.title, h)),
+                        h.span([h.Class("sr-only")], [`${stepLabel[step.kind]}: `]),
+                        ...templateView(step.title, h),
                       ],
                     ),
                     icon(
                       h,
                       ChevronDown,
-                      "mt-0.5 size-4 shrink-0 text-muted-foreground transition-transform group-hover/step:text-foreground group-aria-expanded/step:rotate-180",
+                      "mt-1 size-4 shrink-0 text-muted-foreground opacity-0 transition group-hover/step:opacity-100 group-focus-visible/step:opacity-100 group-aria-expanded/step:rotate-180 group-aria-expanded/step:opacity-100",
                     ),
                   ],
                 ),
-                h.div([...panel, h.Class("mx-3.5 mb-2.5")], [stepDetailView(step, isExpanded, h)]),
+                h.div([...panel, h.Class("pl-[34px]")], [stepDetailView(step, isExpanded, h)]),
                 Array.match(stepLanes(step, h), {
                   onEmpty: () => h.empty,
                   onNonEmpty: (lanes) =>
                     h.ul(
-                      [h.Class("mx-3.5 mb-3 flex flex-col gap-3")],
+                      [h.Class("flex flex-col gap-3 pt-1.5 pl-[34px]")],
                       Array.map(lanes, (lane) => laneView(lane, expandedStepIds, h)),
                     ),
                 }),
@@ -1428,6 +1507,12 @@ const runStatusLabel: Record<Run["status"], string> = {
   failed: "Failed",
 };
 
+const runStatusClass: Record<Run["status"], string> = {
+  running: "text-signal",
+  completed: "text-success",
+  failed: "text-destructive",
+};
+
 const runDotClass: Record<Run["status"], string> = {
   running: "animate-pulse bg-signal",
   completed: "bg-success",
@@ -1435,17 +1520,20 @@ const runDotClass: Record<Run["status"], string> = {
 };
 
 const runBadgeView = (run: Run, h: HtmlBuilder<Message>) =>
-  badge(
-    {
-      variant: run.status === "failed" ? "destructive" : "outline",
-      className: cn("mt-1", run.status !== "failed" && "bg-card"),
-    },
+  h.span(
+    [
+      h.Class(
+        cn(
+          "mt-1.5 inline-flex items-center gap-1.5 text-sm font-semibold whitespace-nowrap",
+          runStatusClass[run.status],
+        ),
+      ),
+    ],
     [
       h.span([h.Class(cn("size-1.5 rounded-full", runDotClass[run.status])), h.AriaHidden(true)]),
       runStatusLabel[run.status],
-      h.span([h.Class("font-mono text-muted-foreground")], [run.id]),
+      h.span([h.Class("font-mono text-xs font-normal text-sand-10")], [run.id]),
     ],
-    h,
   );
 
 const statusView = (model: Model, h: HtmlBuilder<Message>) =>

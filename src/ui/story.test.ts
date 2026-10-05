@@ -4,6 +4,7 @@ import { Command, given, message, model, story } from "foldkit/story";
 import { modifyFields } from "foldkit/struct";
 import type { Url } from "foldkit/url";
 import {
+  ApplyTheme,
   LoadAutomation,
   LoadAutomations,
   Message,
@@ -27,7 +28,7 @@ const studioUrl = (search?: string): Url => ({
 
 const loaded = (search?: string) =>
   update(
-    init(studioUrl(search)).model,
+    init({ theme: "System" }, studioUrl(search)).model,
     Message.SucceededLoadAutomation({
       revision: 0,
       maybeDraft: Option.none(),
@@ -135,7 +136,7 @@ test("chat waits for the agent's reply, shows the draft, and saves that automati
 
 test("reopening an automation while the agent is answering keeps waiting for the reply", () => {
   const reopened = update(
-    init(studioUrl("automation=orders")).model,
+    init({ theme: "System" }, studioUrl("automation=orders")).model,
     Message.SucceededLoadAutomation({
       revision: 0,
       maybeDraft: Option.none(),
@@ -152,7 +153,7 @@ test("reopening an automation while the agent is answering keeps waiting for the
 test("a reply the agent couldn't write puts the prompt back in the composer", () => {
   const failed = { ...working, status: "failed", error: "Agent did not answer" } as const;
   const reopened = update(
-    init(studioUrl("automation=orders")).model,
+    init({ theme: "System" }, studioUrl("automation=orders")).model,
     Message.SucceededLoadAutomation({
       revision: 0,
       maybeDraft: Option.none(),
@@ -297,7 +298,7 @@ test("messages up to 10,000 characters are sent and longer ones are rejected", (
 });
 
 test("the URL picks which automation opens and loads it with the automation list", () => {
-  const opened = init(studioUrl("automation=orders"));
+  const opened = init({ theme: "System" }, studioUrl("automation=orders"));
   expect(opened.model.automationId).toBe("orders");
   expect(opened.model.automationIdInput).toBe("orders");
   expect(opened.model.activity._tag).toBe("Working");
@@ -306,8 +307,10 @@ test("the URL picks which automation opens and loads it with the automation list
     "LoadAutomations",
   ]);
 
-  expect(init(studioUrl()).model.automationId).toBe("my-automation");
-  expect(init(studioUrl("automation=bad%2Fid")).model.activity._tag).toBe("Failed");
+  expect(init({ theme: "System" }, studioUrl()).model.automationId).toBe("my-automation");
+  expect(init({ theme: "System" }, studioUrl("automation=bad%2Fid")).model.activity._tag).toBe(
+    "Failed",
+  );
 });
 
 test("typing an ID doesn't reset the page and committing it navigates to its URL", () => {
@@ -357,4 +360,27 @@ test("a URL change loads that automation and restores its conversation", () => {
       ]);
     }),
   );
+});
+
+test("the theme toggle steps through system, light, and dark, applying each choice", () => {
+  story(
+    update,
+    given(loaded()),
+    message(Message.ClickedThemeToggle()),
+    model((current) => expect(current.theme).toBe("Light")),
+    Command.expectExact(ApplyTheme({ theme: "Light" })),
+    Command.resolve(ApplyTheme, Message.CompletedApplyTheme()),
+    message(Message.ClickedThemeToggle()),
+    model((current) => expect(current.theme).toBe("Dark")),
+    Command.expectExact(ApplyTheme({ theme: "Dark" })),
+    Command.resolve(ApplyTheme, Message.CompletedApplyTheme()),
+    message(Message.ClickedThemeToggle()),
+    model((current) => expect(current.theme).toBe("System")),
+    Command.expectExact(ApplyTheme({ theme: "System" })),
+    Command.resolve(ApplyTheme, Message.CompletedApplyTheme()),
+  );
+});
+
+test("the studio boots with the saved theme", () => {
+  expect(init({ theme: "Dark" }, studioUrl()).model.theme).toBe("Dark");
 });

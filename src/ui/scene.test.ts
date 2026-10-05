@@ -24,7 +24,7 @@ const studioUrl: Url = {
 };
 
 const loaded = update(
-  init(studioUrl).model,
+  init({ theme: "System" }, studioUrl).model,
   Message.SucceededLoadAutomation({
     revision: 0,
     maybeDraft: Option.none(),
