@@ -1,0 +1,116 @@
+import * as Alchemy from "alchemy";
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import { PiAgent } from "../../ai/pi.ts";
+import { ClassifierError, ProgressClassifier } from "../../automation/progress-classifier.ts";
+import { makeAutomation } from "../../automation/application.ts";
+import { AutomationHost, AutomationStorageError } from "../../automation/host.ts";
+import { AutomationIndexD1 } from "./automation-index-d1.ts";
+import { EntityStoreD1 } from "./entity-store-d1.ts";
+import { openPiAgent } from "./pi.ts";
+
+const MODEL = "@cf/moonshotai/kimi-k2.7-code";
+const PROGRESS_MODEL = "@cf/cloudflare/clef-flash";
+
+// Callback names, payloads, and schedule keys are persisted contracts.
+const DesignReply = Schema.Struct({ automationId: Schema.String, chatId: Schema.String });
+const Advance = Schema.Struct({ executionId: Schema.optionalKey(Schema.String) });
+const ClockFired = Schema.Struct({ executionId: Schema.String, deferredName: Schema.String });
+
+/** Cloudflare hosts the application; business operations don't know about bindings or callbacks. */
+export default class Automation extends Cloudflare.DurableObject<Automation>()(
+  "AutomationAgent",
+  Effect.gen(function* () {
+    const state = yield* Cloudflare.DurableObjectState;
+    const ai = yield* Cloudflare.Workers.AI();
+    const index = yield* AutomationIndexD1;
+    const entities = yield* EntityStoreD1;
+
+    // @effect-diagnostics-next-line returnEffectInGen:off
+    return Effect.gen(function* () {
+      const runtime = yield* Alchemy.RuntimeContext;
+      const withRuntime = <A, E, R>(effect: Effect.Effect<A, E, R | Alchemy.RuntimeContext>) =>
+        Effect.provideService(effect, Alchemy.RuntimeContext, runtime);
+      const aiBinding = yield* ai.raw;
+      const pi = yield* openPiAgent({
+        storage: state.raw.storage,
+        ai: aiBinding,
+        model: MODEL,
+      }).pipe(Effect.orDie);
+
+      const host = AutomationHost.of({
+        storage: {
+          get: (key) => withRuntime(state.storage.get(key)),
+          put: (key, value) => withRuntime(state.storage.put(key, value)),
+          delete: (key) => withRuntime(state.storage.delete(key)),
+          list: (options) => withRuntime(state.storage.list(options)),
+          transaction: (effect) =>
+            withRuntime(state.storage.transaction(effect)).pipe(
+              Effect.mapError((error) =>
+                error instanceof Cloudflare.Workers.DurableObjectStorageError
+                  ? new AutomationStorageError({ message: error.message })
+                  : error,
+              ),
+            ),
+        },
+        // Closures are invoked after callback registration. Scheduling stays inside the same
+        // native storage transaction as the application's writes, including the alarm tables.
+        jobs: {
+          designReply: (automationId, chatId) =>
+            withRuntime(
+              designReply.schedule(chatId, { after: 0, payload: { automationId, chatId } }),
+            ).pipe(Effect.orDie),
+          advance: (executionId) =>
+            withRuntime(advance.schedule(executionId, { after: 0, payload: { executionId } })).pipe(
+              Effect.orDie,
+            ),
+          clock: (executionId, deferredName, at) =>
+            withRuntime(
+              clock.schedule(`${executionId}/${deferredName}`, {
+                at,
+                payload: { executionId, deferredName },
+              }),
+            ).pipe(Effect.orDie),
+        },
+      });
+      const classifier = ProgressClassifier.of({
+        classify: (request) =>
+          Effect.tryPromise({
+            try: () => aiBinding.run(PROGRESS_MODEL, { model: "clef-flash", ...request }),
+            catch: (cause) =>
+              new ClassifierError({ message: `Progress classifier: ${String(cause)}` }),
+          }),
+      });
+      const { callbacks, ...operations } = yield* makeAutomation().pipe(
+        Effect.provideService(AutomationHost, host),
+        Effect.provideService(PiAgent, pi),
+        Effect.provideService(ProgressClassifier, classifier),
+      );
+      const designReply = yield* Alchemy.makeCallback("designReply", (payload: unknown) =>
+        Schema.decodeUnknownEffect(DesignReply)(payload).pipe(
+          Effect.orDie,
+          Effect.flatMap(callbacks.designReply),
+        ),
+      );
+      const advance = yield* Alchemy.makeCallback("advance", (payload: unknown) =>
+        Schema.decodeUnknownEffect(Advance)(payload).pipe(
+          Effect.orDie,
+          Effect.flatMap(callbacks.advance),
+        ),
+      );
+      const clock = yield* Alchemy.makeCallback("clock", (payload: unknown) =>
+        Schema.decodeUnknownEffect(ClockFired)(payload).pipe(
+          Effect.orDie,
+          Effect.flatMap(callbacks.clock),
+        ),
+      );
+      return operations;
+    }).pipe(Effect.provide(Layer.merge(entities, index)));
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(Cloudflare.Workers.AIBinding, Cloudflare.D1.QueryDatabaseBinding),
+    ),
+  ),
+) {}

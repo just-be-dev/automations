@@ -4,9 +4,9 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import type { AutomationSummary } from "./model.ts";
-import { AutomationsDatabase } from "../database.ts";
-import { AutomationIndex, AutomationIndexError } from "./index.ts";
+import type { AutomationSummary } from "../../automation/model.ts";
+import { AutomationsDatabase } from "./database.ts";
+import { AutomationIndex, AutomationIndexError } from "../../automation/index.ts";
 
 const Row = Schema.Struct({ id: Schema.String, name: Schema.String, updated_at: Schema.Finite });
 const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));

@@ -24,6 +24,9 @@
               "src/ui/command.ts",
               "src/ui/page/entities/command.ts",
               "src/http/**/*.ts",
+              "src/platform/cloudflare/api.ts",
+              "src/platform/cloudflare/access.ts",
+              "src/platform/cloudflare/access.test.ts",
               "src/connections/runner.ts"
             ],
             "options": { "allowedUnstableApis": ["effect/http"] }
@@ -37,7 +40,7 @@
               "src/workflow/interpreter.ts",
               "src/workflow/interpreter.test.ts",
               "src/workflow/durable-engine.ts",
-              "src/automation/durable-object.ts"
+              "src/automation/application.ts"
             ],
             "options": { "allowedUnstableApis": ["effect/workflow"] }
           }

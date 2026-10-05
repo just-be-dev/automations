@@ -9,21 +9,21 @@ An automation is a JSON `Workflow`: a name, a trigger, and a tree of steps. The 
 
 Values don't have to be declared up front. A step reads what the run knows when it runs: the subject's fields (following references to other entities), and what earlier steps recorded. A value only a person has is collected by a human step at the point it's needed.
 
-| Module                           | Holds                                                                  |
-| -------------------------------- | ---------------------------------------------------------------------- |
-| `src/workflow/model.ts`          | The DSL schema, template strings, and conditions                       |
-| `src/workflow/run.ts`            | Run state, step results, and human tasks                               |
-| `src/entities/model.ts`          | Entity types, records, and reading paths through `ref` fields          |
-| `src/entities/store.ts`          | The `EntityStore` service (entities and templates), and a memory layer |
-| `src/entities/d1.ts`             | The `EntityStore` layer on D1                                          |
-| `src/connections/registry.ts`    | The connections and their operations                                   |
-| `src/entities/templates.ts`      | Templates, their checks, and expanding them before a run               |
-| `src/workflow/catalog.ts`        | Checks a workflow against the entity types and connections             |
-| `src/automation/design.ts`       | The designer agent's prompt                                            |
-| `src/automation/draft.ts`        | Designer replies and their decoding                                    |
-| `src/workflow/interpreter.ts`    | `RunAutomation`, which executes a workflow                             |
-| `src/workflow/durable-engine.ts` | The `effect/workflow` engine journaled in the Durable Object's storage |
-| `src/connections/runner.ts`      | How operations execute                                                 |
+| Module                                       | Holds                                                                  |
+| -------------------------------------------- | ---------------------------------------------------------------------- |
+| `src/workflow/model.ts`                      | The DSL schema, template strings, and conditions                       |
+| `src/workflow/run.ts`                        | Run state, step results, and human tasks                               |
+| `src/entities/model.ts`                      | Entity types, records, and reading paths through `ref` fields          |
+| `src/entities/store.ts`                      | The `EntityStore` service (entities and templates), and a memory layer |
+| `src/platform/cloudflare/entity-store-d1.ts` | The `EntityStore` layer on D1                                          |
+| `src/connections/registry.ts`                | The connections and their operations                                   |
+| `src/entities/templates.ts`                  | Templates, their checks, and expanding them before a run               |
+| `src/workflow/catalog.ts`                    | Checks a workflow against the entity types and connections             |
+| `src/automation/design.ts`                   | The designer agent's prompt                                            |
+| `src/automation/draft.ts`                    | Designer replies and their decoding                                    |
+| `src/workflow/interpreter.ts`                | `RunAutomation`, which executes a workflow                             |
+| `src/workflow/durable-engine.ts`             | The `effect/workflow` engine journaled in the Durable Object's storage |
+| `src/connections/runner.ts`                  | How operations execute                                                 |
 
 ## Example
 

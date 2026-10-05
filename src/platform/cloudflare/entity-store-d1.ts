@@ -4,10 +4,10 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { AutomationsDatabase } from "../database.ts";
-import { EntityData, EntityType, Role, type EntityRecord } from "./model.ts";
-import { EntityStore, EntityStoreError, makeEntityStore } from "./store.ts";
-import { Template } from "./templates.ts";
+import { AutomationsDatabase } from "./database.ts";
+import { EntityData, EntityType, Role, type EntityRecord } from "../../entities/model.ts";
+import { EntityStore, EntityStoreError, makeEntityStore } from "../../entities/store.ts";
+import { Template } from "../../entities/templates.ts";
 
 /**
  * The `EntityStore` on D1, in the `entity_types`, `entities`, `entity_subscriptions`,

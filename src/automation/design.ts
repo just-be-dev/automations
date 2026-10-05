@@ -78,7 +78,7 @@ export const retryInstructions = (error: string) =>
  * prompting again. pi failures aren't the agent's mistake, so they aren't retried.
  */
 export const designDraft = Effect.fn("Design.draft")(function* (
-  designer: Pick<PiAgent, "instruct" | "prompt">,
+  designer: Pick<PiAgent["Service"], "instruct" | "prompt">,
   catalog: Catalog,
   permissions: Permissions,
   chatId: string,

@@ -1,0 +1,293 @@
+import { describe, expect, test } from "bun:test";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
+import { TestClock } from "effect/testing";
+import { PiAgent, type PromptOptions } from "../ai/pi.ts";
+import { ProgressClassifier } from "./progress-classifier.ts";
+import { layerMemory } from "../entities/store.ts";
+import type { Workflow } from "../workflow/model.ts";
+import { makeAutomation } from "./application.ts";
+import { AutomationHost } from "./host.ts";
+import { AutomationIndex } from "./index.ts";
+
+const workflow: Workflow = {
+  name: "Saved workflow",
+  trigger: { kind: "manual" },
+  steps: [{ id: "stop", title: "Stop", kind: "stop", reason: "Snapshot finished" }],
+};
+
+/** A transactional host: cloned values and jobs roll back together, as the host contract requires. */
+const harness = () => {
+  let data = new Map<string, unknown>();
+  const replies: Array<{ automationId: string; chatId: string }> = [];
+  const advances: Array<string> = [];
+  const clocks: Array<{ executionId: string; deferredName: string; at: number }> = [];
+  const prompts: Array<PromptOptions> = [];
+  const recorded: Array<{ id: string; name: string }> = [];
+  const lock = Semaphore.makeUnsafe(1);
+  let failSchedule = false;
+  const host = AutomationHost.of({
+    storage: {
+      get: (key) => Effect.sync(() => structuredClone(data.get(key))),
+      put: (key, value) => Effect.sync(() => void data.set(key, structuredClone(value))),
+      delete: (key) => Effect.sync(() => data.delete(key)),
+      list: ({ prefix }) =>
+        Effect.sync(
+          () =>
+            new Map(
+              [...data]
+                .filter(([key]) => key.startsWith(prefix))
+                .toSorted(([a], [b]) => a.localeCompare(b))
+                .map(([key, value]) => [key, structuredClone(value)]),
+            ),
+        ),
+      transaction: (effect) =>
+        lock.withPermit(
+          Effect.gen(function* () {
+            const before = new Map(data);
+            const counts = [replies.length, advances.length, clocks.length] as const;
+            const result = yield* Effect.exit(effect);
+            if (Exit.isFailure(result)) {
+              data = before;
+              replies.length = counts[0];
+              advances.length = counts[1];
+              clocks.length = counts[2];
+            }
+            return yield* result;
+          }),
+        ),
+    },
+    jobs: {
+      designReply: (automationId, chatId) =>
+        Effect.suspend(() => {
+          if (failSchedule) return Effect.die("Scheduling failed");
+          return Effect.sync(() => void replies.push({ automationId, chatId }));
+        }),
+      advance: (executionId) => Effect.sync(() => void advances.push(executionId)),
+      clock: (executionId, deferredName, at) =>
+        Effect.sync(() => void clocks.push({ executionId, deferredName, at })),
+    },
+  });
+  const layer = Layer.mergeAll(
+    Layer.succeed(AutomationHost, host),
+    Layer.succeed(
+      PiAgent,
+      PiAgent.of({
+        createConversation: Effect.succeed(7),
+        instruct: () => Effect.void,
+        liveAnswer: Effect.succeed(undefined),
+        prompt: (options) =>
+          Effect.sync(() => {
+            prompts.push(options);
+            return JSON.stringify({
+              reply: "Designed",
+              workflow: { ...workflow, name: "New draft" },
+            });
+          }),
+      }),
+    ),
+    Layer.succeed(
+      ProgressClassifier,
+      ProgressClassifier.of({ classify: () => Effect.die("No reasoning to classify") }),
+    ),
+    Layer.succeed(
+      AutomationIndex,
+      AutomationIndex.of({
+        list: Effect.succeed([]),
+        record: (id, name) => Effect.sync(() => void recorded.push({ id, name })),
+        recordIfMissing: () => Effect.void,
+      }),
+    ),
+    layerMemory({
+      types: [
+        {
+          name: "person",
+          label: "Person",
+          title: "name",
+          fields: [
+            { name: "name", label: "Name", type: "text" },
+            { name: "email", label: "Email", type: "text" },
+          ],
+        },
+      ],
+      entities: [
+        {
+          type: "person",
+          id: "sam",
+          data: { name: "Sam", email: "sam@example.com" },
+          updatedAt: 0,
+        },
+      ],
+      roles: [{ name: "ops", label: "Ops", members: [{ type: "person", id: "sam" }] }],
+    }),
+  );
+  return {
+    host,
+    layer,
+    replies,
+    advances,
+    clocks,
+    prompts,
+    recorded,
+    failSchedule: () => {
+      failSchedule = true;
+    },
+  };
+};
+
+describe("Automation application without a platform", () => {
+  test("accepts one chat, persists the original message, and ignores duplicate delivery after completion", async () => {
+    const h = harness();
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const app = yield* makeAutomation();
+        const { pendingChat } = yield* app.chat("a1", "  Keep my wording  ");
+        const busy = yield* app.chat("a1", "Another message").pipe(Effect.flip);
+        const reopened = yield* makeAutomation();
+        const pending = yield* reopened.inspectWorkflow();
+        yield* reopened.callbacks.designReply({ automationId: "a1", chatId: "different" });
+        yield* reopened.callbacks.designReply({ automationId: "a1", chatId: pendingChat.id });
+        yield* reopened.callbacks.designReply({ automationId: "a1", chatId: pendingChat.id });
+        return { pendingChat, busy, pending, finished: yield* reopened.inspectWorkflow() };
+      }).pipe(Effect.provide(h.layer)),
+    );
+    expect(h.replies).toEqual([{ automationId: "a1", chatId: result.pendingChat.id }]);
+    expect(result.busy.message).toBe("The agent is still answering the previous message");
+    expect(result.pending.pendingChat?.prompt).toBe("  Keep my wording  ");
+    expect(result.finished.pendingChat).toBeUndefined();
+    expect(result.finished.draft?.name).toBe("New draft");
+    expect(result.finished.conversation).toEqual([
+      { prompt: "  Keep my wording  ", reply: "Designed" },
+    ]);
+    expect(h.prompts).toHaveLength(1);
+    expect(h.prompts[0]).toMatchObject({
+      requestId: `chat:${result.pendingChat.id}`,
+      text: "  Keep my wording  ",
+    });
+    expect(h.recorded).toEqual([{ id: "a1", name: "New draft" }]);
+  });
+
+  test("doesn't leave a pending message behind when durable scheduling fails", async () => {
+    const h = harness();
+    h.failSchedule();
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const app = yield* makeAutomation();
+        const failure = yield* Effect.exit(app.chat("a1", "Design"));
+        return { failure, inspected: yield* app.inspectWorkflow() };
+      }).pipe(Effect.provide(h.layer)),
+    );
+    expect(Exit.isFailure(result.failure)).toBe(true);
+    expect(result.inspected.pendingChat).toBeUndefined();
+    expect(h.replies).toEqual([]);
+  });
+
+  test("reopens a saved run from the journal, without executing a newer draft", async () => {
+    const h = harness();
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* h.host.storage.put("draft", workflow);
+        const app = yield* makeAutomation();
+        yield* app.save();
+        yield* h.host.storage.put("draft", { ...workflow, name: "Unsaved", steps: [] });
+        const started = yield* app.start(undefined);
+        const executionId = yield* Schema.decodeUnknownEffect(Schema.String)(h.advances[0]);
+        expect(yield* h.host.storage.get(`execution:${executionId}`)).toBe(started.id);
+        expect(yield* h.host.storage.get(`wf:${executionId}:payload`)).toBeDefined();
+        const reopened = yield* makeAutomation();
+        yield* reopened.callbacks.advance({}); // Old callback payloads are still ignored.
+        yield* reopened.callbacks.advance({ executionId });
+        yield* reopened.callbacks.advance({ executionId });
+        return yield* reopened.run(started.id);
+      }).pipe(Effect.provide(h.layer)),
+    );
+    expect(result?.workflow.name).toBe("Saved workflow");
+    expect(result?.status).toBe("stopped");
+    expect(result?.stopReason).toBe("Snapshot finished");
+    expect(result?.steps.stop?.status).toBe("done");
+  });
+
+  test("keeps a durable wait across reopen and resumes it at the scheduled time", async () => {
+    const h = harness();
+    const saved: Workflow = {
+      name: "Wait",
+      trigger: { kind: "manual" },
+      steps: [{ id: "pause", title: "Pause", kind: "wait", duration: "3 minutes" }],
+    };
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* h.host.storage.put("saved", saved);
+        const app = yield* makeAutomation();
+        const started = yield* app.start(undefined);
+        const executionId = yield* Schema.decodeUnknownEffect(Schema.String)(h.advances[0]);
+        yield* app.callbacks.advance({ executionId });
+        const waiting = yield* app.run(started.id);
+        const reopened = yield* makeAutomation();
+        yield* TestClock.setTime(179_999);
+        yield* reopened.callbacks.advance({ executionId });
+        const early = yield* reopened.run(started.id);
+        yield* TestClock.setTime(180_000);
+        const deferredName = yield* Schema.decodeUnknownEffect(Schema.String)(
+          h.clocks[0]?.deferredName,
+        );
+        yield* reopened.callbacks.clock({ executionId, deferredName });
+        yield* reopened.callbacks.advance({ executionId });
+        return { waiting, early, finished: yield* reopened.run(started.id) };
+      }).pipe(Effect.provide(Layer.merge(h.layer, TestClock.layer()))),
+    );
+    expect(h.clocks).toHaveLength(1);
+    expect(h.clocks[0]?.at).toBe(180_000);
+    expect(result.waiting?.status).toBe("waiting");
+    expect(result.early?.status).toBe("waiting");
+    expect(result.finished?.status).toBe("completed");
+    expect(result.finished?.steps.pause).toEqual({ status: "done", record: null });
+    expect(h.advances).toHaveLength(2);
+  });
+
+  test("records and authorizes approval tasks, then resumes on the same durable journal", async () => {
+    const h = harness();
+    const saved: Workflow = {
+      name: "Approval",
+      trigger: { kind: "manual" },
+      permissions: { "slack.sendMessage": { ask: "ops" } },
+      steps: [
+        {
+          id: "send",
+          title: "Send",
+          kind: "action",
+          use: "slack.sendMessage",
+          with: { to: "#ops", text: "Ready" },
+        },
+      ],
+    };
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* h.host.storage.put("saved", saved);
+        const app = yield* makeAutomation();
+        const started = yield* app.start(undefined);
+        const executionId = yield* Schema.decodeUnknownEffect(Schema.String)(h.advances[0]);
+        yield* app.callbacks.advance({ executionId });
+        const waiting = yield* app.run(started.id);
+        const rejected = yield* app
+          .respond(started.id, "send", { approved: true }, "other@example.com")
+          .pipe(Effect.flip);
+        const reopened = yield* makeAutomation();
+        yield* reopened.respond(started.id, "send", { approved: true }, "SAM@example.com");
+        yield* reopened.callbacks.advance({ executionId });
+        return { waiting, rejected, finished: yield* reopened.run(started.id) };
+      }).pipe(Effect.provide(h.layer)),
+    );
+    expect(result.waiting?.status).toBe("waiting");
+    expect(result.waiting?.tasks[0]?.approvers?.members).toEqual([
+      { name: "Sam", email: "sam@example.com" },
+    ]);
+    expect(result.rejected.message).toBe("Only members of Ops can answer this");
+    expect(result.finished?.status).toBe("completed");
+    expect(result.finished?.tasks[0]?.status).toBe("closed");
+    expect(result.finished?.steps.send?.record).toMatchObject({ simulated: true });
+    expect(h.advances).toHaveLength(2);
+  });
+});

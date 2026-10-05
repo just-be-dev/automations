@@ -21,7 +21,7 @@ class PayloadTooLarge extends Schema.TaggedError<PayloadTooLarge>()("PayloadTooL
 export const json = (body: unknown, status = 200) =>
   HttpServerResponse.jsonUnsafe(body, { status, headers: { "cache-control": "no-store" } });
 
-// Durable Object RPC failures arrive as plain objects, so read their message structurally.
+// Remote failures can arrive as plain objects, so read their message structurally.
 export const messageOf = (error: unknown) =>
   typeof error === "object" &&
   error !== null &&
@@ -43,14 +43,6 @@ export const checkBodySize = Effect.gen(function* () {
     return yield* new PayloadTooLarge({ message: "Payload too large" });
   }
 });
-
-/** Cloudflare Access's authenticated email. Local dev and service-token requests have none. */
-export const accessEmail = HttpServerRequest.HttpServerRequest.pipe(
-  Effect.map((request) => {
-    const email = request.headers["cf-access-authenticated-user-email"];
-    return email === undefined || email === "" ? undefined : email;
-  }),
-);
 
 export const limitedBody = <A, I, RD>(schema: Schema.Codec<A, I, RD>) =>
   Effect.andThen(checkBodySize, HttpServerRequest.schemaBodyJson(schema));

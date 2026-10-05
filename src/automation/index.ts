@@ -8,7 +8,7 @@ export class AutomationIndexError extends Schema.TaggedError<AutomationIndexErro
   { message: Schema.String },
 ) {}
 
-/** Durable Object names cannot be enumerated; this service keeps the studio's directory. */
+/** Keeps the studio's directory of automations independently of their host. */
 export class AutomationIndex extends Context.Service<
   AutomationIndex,
   {
