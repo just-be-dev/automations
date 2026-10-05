@@ -406,8 +406,10 @@ test("a run page shows each step's outcome without the designer, and links to th
     expect(text("Completed")).toExist(),
     expect(text("Ari Cho")).toExist(),
     expect(role("button", { name: /Tell the manager.*Done/ })).toExist(),
-    expect(label("Tell the manager record")).toContainText('"channel": "D-sam"'),
-    expect(text("Simulated: nothing was sent. It would have recorded")).toExist(),
+    expect(label("Tell the manager result")).toContainText("ChannelD-sam"),
+    expect(label("Tell the manager result")).not.toContainText("simulated"),
+    expect(label("Approve the plan result")).toHaveText("ApprovedYes"),
+    expect(text("Simulated: nothing was sent. This is what it would have sent.")).toExist(),
     expect(text("Runs the version saved when it started", { exact: false })).toExist(),
     expect(role("link", { name: "Edit automation" })).toHaveAttr(
       "href",
@@ -524,5 +526,57 @@ test("a run opens in a panel beside the editor, which can expand to its page or 
     click(role("button", { name: "Close the run" })),
     expect(role("complementary", { name: "Run preview" })).not.toExist(),
     expect(role("region", { name: "Conversation" })).toExist(),
+  );
+});
+
+test("a step's result reads as labelled fields, not JSON", () => {
+  const workflow: Workflow = {
+    name: "Kickoff",
+    trigger: { kind: "manual" },
+    steps: [
+      { id: "joke", kind: "agent", title: "Write a joke", instruction: "Write one" },
+      {
+        id: "meet",
+        kind: "action",
+        title: "Book the kickoff",
+        use: "calendar.createEvent",
+        with: { title: "Kickoff", attendees: ["ari@example.com"], start: "2026-11-02" },
+      },
+    ],
+  };
+  const completed = runOf({
+    status: "completed",
+    workflow,
+    steps: {
+      joke: { status: "done", record: "Why did the email cross the road?" },
+      meet: {
+        status: "done",
+        record: {
+          simulated: true,
+          eventId: "sim_123",
+          attendees: ["ari@example.com", "sam@example.com"],
+          start_date: "2026-11-02",
+          repeat: null,
+          is_remote: false,
+          room: { floor: 3, name: "Lighthouse" },
+        },
+      },
+    },
+  });
+  scene(
+    { update, view },
+    given(withOpenRun(completed)),
+    expect(label("Write a joke result")).toHaveText("Why did the email cross the road?"),
+    expect(label("Book the kickoff result")).toContainText("Event IDsim_123"),
+    expect(label("Book the kickoff result")).toContainText(
+      "Attendeesari@example.comsam@example.com",
+    ),
+    expect(label("Book the kickoff result")).toContainText("Start dateNov 2, 2026"),
+    expect(label("Book the kickoff result")).toContainText("RepeatNone"),
+    expect(label("Book the kickoff result")).toContainText("Is remoteNo"),
+    expect(label("Book the kickoff result")).toContainText("RoomFloor3NameLighthouse"),
+    expect(label("Book the kickoff result")).not.toContainText("{"),
+    expect(label("Book the kickoff result")).not.toContainText('"'),
+    expect(label("Book the kickoff result")).not.toContainText("start_date"),
   );
 });

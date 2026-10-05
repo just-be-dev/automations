@@ -83,6 +83,7 @@ import {
   withArticle,
 } from "./format.ts";
 import * as Overview from "./overview.ts";
+import { recordView } from "./record.ts";
 import { AppRoute, automationHref, overviewHref, routeFromUrl, runHref } from "./route.ts";
 import { applyTheme, nextTheme, Theme, type Flags } from "./theme.ts";
 
@@ -2441,34 +2442,29 @@ const stepStatusView = (runStep: RunStep, h: HtmlBuilder<Message>) =>
     ],
   );
 
-const recordView = (
+const stepResultView = (
   step: Step,
   record: Schema.Json,
   isExpanded: boolean,
   h: HtmlBuilder<Message>,
 ) =>
   h.div(
-    [h.Class("flex flex-col gap-1")],
+    [h.Class("flex flex-col gap-1.5")],
     [
       h.div(
         [h.Class("text-[11px] text-muted-foreground")],
         [
           step.kind === "action" && isSimulated(step.use)
-            ? "Simulated: nothing was sent. It would have recorded"
-            : "Recorded",
+            ? "Simulated: nothing was sent. This is what it would have sent."
+            : "Result",
         ],
       ),
-      h.pre(
+      h.div(
         [
-          h.AriaLabel(`${step.title} record`),
-          h.Class(
-            cn(
-              "overflow-x-auto rounded-md bg-sidebar px-2.5 py-1.5 font-mono text-[11px] leading-relaxed",
-              isExpanded ? "whitespace-pre-wrap break-words" : "max-h-24 overflow-y-hidden",
-            ),
-          ),
+          h.AriaLabel(`${step.title} result`),
+          h.Class("rounded-md bg-sidebar px-3 py-2.5 text-[13px] leading-relaxed"),
         ],
-        [JSON.stringify(record, null, 2)],
+        [recordView(record, isExpanded, h)],
       ),
     ],
   );
@@ -2540,7 +2536,7 @@ const stepView = (step: Step, context: StepContext, h: HtmlBuilder<Message>): Ht
                       ),
                       {
                         onNone: () => h.empty,
-                        onSome: (record) => recordView(step, record, isExpanded, h),
+                        onSome: (record) => stepResultView(step, record, isExpanded, h),
                       },
                     ),
                   ],
