@@ -2,6 +2,10 @@ import * as Schema from "effect/Schema";
 import { Trigger } from "../workflow/model.ts";
 import { RunSummary } from "../workflow/run.ts";
 
+export class AutomationError extends Schema.TaggedError<AutomationError>()("AutomationError", {
+  message: Schema.String,
+}) {}
+
 /** One chat turn, stored so the studio can show the conversation again after a reload. */
 export const Exchange = Schema.Struct({ prompt: Schema.String, reply: Schema.String });
 export interface Exchange extends Schema.Schema.Type<typeof Exchange> {}

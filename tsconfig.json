@@ -40,7 +40,7 @@
               "src/workflow/interpreter.ts",
               "src/workflow/interpreter.test.ts",
               "src/workflow/durable-engine.ts",
-              "src/automation/application.ts"
+              "src/automation/runs.ts"
             ],
             "options": { "allowedUnstableApis": ["effect/workflow"] }
           }
