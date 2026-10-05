@@ -11,7 +11,7 @@ A single-tenant prototype on Cloudflare: you design sequential automations in a 
 - `src/workflow.ts`: the pure DSL. It holds the Schema models (`Workflow`, `Trigger`, the recursive `Step` tree, `Run`), `{{ref}}` template strings, and condition evaluation, including an action's `template` use and `match`. `docs/workflow-dsl.md` is its reference; keep the two in step.
 - `src/templates.ts`: the pure model of stored templates: approved wording with slots (`hire → employee`) whose `content` fills an action's text inputs. It checks a template against the entity types and expands the templates a workflow uses into plain inputs (`expandTemplates`). The code calls `{{ref}}` text a template string too; keep the two apart in names and docs.
 - `src/entities.ts`: the pure entity model: entity types, records, checking data against a type, and reading a ref through `ref` fields.
-- `src/connections.ts`: the registry of connections and their operations. It is pure, so the designer, the checker, and the UI all read it. `src/connection-runner.ts` executes the operations.
+- `src/connections.ts`: the registry of connections and their operations, with each operation's default permission and `permissionOf`, which says whether a workflow runs an operation on its own (`auto`) or asks first (`ask`). It is pure, so the designer, the checker, and the UI all read it. `src/connection-runner.ts` executes the operations.
 - `src/catalog.ts`: checks a workflow against the entity types, templates, and connections (refs, step ordering, operation inputs on every path through a match, template slots), and describes them to the designer.
 - `src/interpreter.ts`: `RunAutomation`, an `effect/workflow` Workflow whose payload is a saved workflow and its subject. It walks the step tree with Activities, DurableClocks, and DurableDeferreds, and reaches the outside world only through the `StepRunner` service. Code outside an Activity reruns on every replay, so keep it deterministic.
 - `src/durable-engine.ts`: a replaying `WorkflowEngine` that journals into a key-value store, the Automation object's storage. It never keeps a run in memory between events; the host replays on `wake` and fires clocks on `wakeAt`.
@@ -74,7 +74,7 @@ Stick to these `GET` routes unless the user asks for more. `chat` calls Workers 
   - Chat replies reuse the pi `requestId` `chat:${chatId}`, and their decode retry `chat:${chatId}:retry`. Only the delivery that still finds that message pending writes the exchange.
   - Callback names and payloads are persisted contracts. Keep them compatible: `designReply` `{ automationId, chatId }`, `advance` `{ executionId }` (jobs from before entity-based triggers carried `{ runId }` and are ignored), and `clock` `{ executionId, deferredName }`.
 - Storage keys are persisted contracts too: `draft`, `saved`, `pendingChat`, `run:<id>`, `execution:<executionId>` (its run ID), `exchange:<000000>`, and `exchangeCount` in `Automation`, plus the engine's journal under `wf:<executionId>:` (see `src/durable-engine.ts`). Workflows and runs from before entity-based triggers don't decode; reading one drops it.
-- Activity and deferred names in `src/interpreter.ts` (`<id>`, `<id>/refs`, `<id>/now`, `<id>/request`, `<id>/outcome`, `<id>/timeout`) are journal keys for runs in flight. Renaming one makes a waiting run redo that step.
+- Activity and deferred names in `src/interpreter.ts` (`<id>`, `<id>/refs`, `<id>/now`, `<id>/request`, `<id>/outcome`, `<id>/timeout`, `<id>/approval-request`, `<id>/approval`) are journal keys for runs in flight. Renaming one makes a waiting run redo that step.
 - Never edit an applied D1 migration. Add the next numbered file in `migrations/` instead; Alchemy tracks applied files by hash in `__alchemy_migrations`.
 
 ## Invariants
@@ -83,6 +83,8 @@ Stick to these `GET` routes unless the user asks for more. `chat` calls Workers 
 - Runs always execute the saved snapshot, never the draft. Workflows must not contain secrets; connections will hold credentials.
 - A run starts by checking the saved workflow against the current catalog and expanding its templates (`beginRun` in `src/automation.ts`). The run's payload carries the expanded workflow, so replays never read a template; the interpreter fails an action that still uses one.
 - The designer prefers templates to writing text or adding agent steps that write it. Keep that guidance in `designInstructions` when changing the prompt.
+- The designer suggests permissions and the person can change them; both merge into the draft's `permissions`. The designer is told the current ones on every turn so it keeps the person's changes.
+- A step that didn't run (declined or skipped) records nothing, and the interpreter skips any step that needs its record (`stepNeeds`). That relies on the checker's guarantee that every step a ref names finishes before the reader on every path. Don't loosen one without the other.
 - `http.post` doesn't forward trace headers.
 - Email, Slack, and Calendar are simulated until they have credentials: they contact nothing and record `simulated: true`. Say so wherever results are shown.
 - `/api` keeps a 32 KB request-body limit and returns `{ "error": string }` on failure. The UI relies on that shape.

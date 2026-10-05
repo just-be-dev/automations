@@ -102,3 +102,22 @@ export const summaryOf = (run: Run): RunSummary => ({
   subject: "Ari Cho",
   openTasks: run.tasks.filter((task) => task.status === "open").length,
 });
+
+export const permissionTask: HumanTask = {
+  step: "notify",
+  token: "token-notify",
+  title: "Tell the manager",
+  prompt:
+    "Send a Slack message with the details below? Rejecting skips this step and the steps that need its result.",
+  assignee: null,
+  response: "approval",
+  defaults: {},
+  action: {
+    use: "slack.sendMessage",
+    inputs: {
+      to: { $title: "Sam Park", email: "sam@example.com" },
+      text: "Ari Cho starts on 2026-11-02",
+    },
+  },
+  status: "open",
+};

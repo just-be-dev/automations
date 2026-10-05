@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -10,15 +11,17 @@ import { makeDurableEngine, type EngineStore } from "./durable-engine.ts";
 import {
   RunAutomation,
   RunAutomationLive,
+  RunStopped,
   StepRunner,
   respondToHuman,
   type Decision,
   type HumanRequest,
   type HumanResponse,
+  type PermissionRequest,
   type StepEvent,
 } from "./interpreter.ts";
 import { readJsonPath, type Subject } from "./entities.ts";
-import type { RunState, Step, Workflow } from "./workflow.ts";
+import type { ActionStep, RunState, Step, Workflow } from "./workflow.ts";
 
 const agent = (id: string, instruction = `Do ${id}`): Step => ({
   id,
@@ -31,6 +34,12 @@ const workflow = (...steps: ReadonlyArray<Step>): Workflow => ({
   name: "Test",
   trigger: { kind: "entity", entity: "employee" },
   steps,
+});
+
+/** A workflow whose actions run without asking. */
+const automatic = (...steps: ReadonlyArray<Step>): Workflow => ({
+  ...workflow(...steps),
+  permissions: { "slack.sendMessage": "auto", "calendar.createEvent": "auto" },
 });
 
 const ada: Subject = {
@@ -55,6 +64,7 @@ const readRef = (state: RunState, ref: string): Schema.Json => {
 const makeHarness = (decision: Decision = { choice: "a", confidence: 1, probabilities: {} }) => {
   const calls: Array<string> = [];
   const requests: Array<HumanRequest> = [];
+  const permissionRequests: Array<PermissionRequest> = [];
   const events: Array<StepEvent> = [];
   const data = new Map<string, unknown>();
   const woken = new Set<string>();
@@ -77,6 +87,7 @@ const makeHarness = (decision: Decision = { choice: "a", confidence: 1, probabil
     action: ({ step, inputs }) => Effect.sync(() => (calls.push(step.id), { sent: inputs })),
     decide: ({ step }) => Effect.sync(() => (calls.push(step.id), decision)),
     requestHuman: (request) => Effect.sync(() => void requests.push(request)),
+    requestPermission: (request) => Effect.sync(() => void permissionRequests.push(request)),
     report: (event) => Effect.sync(() => void events.push(event)),
   });
   const layer = RunAutomationLive.pipe(
@@ -100,7 +111,7 @@ const makeHarness = (decision: Decision = { choice: "a", confidence: 1, probabil
       yield* durable.replay(RunAutomation, next);
     }
   });
-  return { calls, requests, events, layer, drain, data };
+  return { calls, requests, permissionRequests, events, layer, drain, data };
 };
 
 type Harness = ReturnType<typeof makeHarness>;
@@ -134,7 +145,11 @@ const finalSteps = (executionId: string) =>
     }),
   );
 
-const respond = (harness: Harness, request: HumanRequest | undefined, response: HumanResponse) =>
+const respond = (
+  harness: Harness,
+  request: HumanRequest | PermissionRequest | undefined,
+  response: HumanResponse,
+) =>
   Effect.gen(function* () {
     if (request === undefined) {
       throw new Error("No human request was made");
@@ -156,7 +171,7 @@ describe("RunAutomation", () => {
       Effect.flatMap(
         start(
           harness,
-          workflow(agent("summarize", "Welcome {{employee.name}}"), {
+          automatic(agent("summarize", "Welcome {{employee.name}}"), {
             id: "notify",
             title: "Notify",
             kind: "action",
@@ -249,7 +264,7 @@ describe("RunAutomation", () => {
   });
 
   test("an action's match supplies the inputs of the first case that fits, or otherwise", async () => {
-    const notify = workflow({
+    const notify = automatic({
       id: "notify",
       title: "Notify",
       kind: "action",
@@ -419,7 +434,7 @@ describe("RunAutomation", () => {
       Effect.gen(function* () {
         const executionId = yield* start(
           harness,
-          workflow(
+          automatic(
             agent("propose"),
             {
               id: "confirm",
@@ -522,6 +537,165 @@ describe("RunAutomation", () => {
       }),
     );
     expect(steps["confirm"]).toEqual({ timedOut: true, values: { start: "2026-10-12" } });
+  });
+
+  const welcome: ActionStep = {
+    id: "welcome",
+    title: "Welcome {{employee.name}}",
+    kind: "action",
+    use: "email.send",
+    with: { to: "{{employee.manager}}", subject: "Hi", body: "{{employee.name}} starts soon" },
+  };
+
+  test("an action set to ask first waits for approval, then runs with the inputs shown", async () => {
+    const harness = makeHarness();
+    const steps = await runTest(
+      harness,
+      Effect.gen(function* () {
+        const executionId = yield* start(harness, {
+          ...workflow(welcome, agent("after")),
+          permissions: { "email.send": "ask" },
+        });
+        expect(yield* outcome(executionId)).toBe("suspended");
+        expect(harness.calls).toEqual([]);
+        expect(
+          harness.permissionRequests.map(({ step, title, inputs }) => ({
+            step: step.id,
+            title,
+            inputs,
+          })),
+        ).toEqual([
+          {
+            step: "welcome",
+            title: "Welcome Ada",
+            inputs: { to: "grace", subject: "Hi", body: "Ada starts soon" },
+          },
+        ]);
+        yield* respond(harness, harness.permissionRequests[0], { approved: true });
+        return yield* finalSteps(executionId);
+      }),
+    );
+    expect(harness.calls).toEqual(["welcome", "after"]);
+    expect(steps["welcome"]).toEqual({
+      sent: { to: "grace", subject: "Hi", body: "Ada starts soon" },
+    });
+    expect(harness.events).toContainEqual({ runId: "run-1", step: "welcome", status: "waiting" });
+  });
+
+  test("declining an action skips it and the steps that need its record; the rest goes on", async () => {
+    const harness = makeHarness();
+    const steps = await runTest(
+      harness,
+      Effect.gen(function* () {
+        const executionId = yield* start(
+          harness,
+          workflow(
+            welcome,
+            agent("log", "Log {{steps.welcome.messageId}}"),
+            agent("chain", "Read {{steps.log.output}}"),
+            agent("other"),
+            {
+              id: "unsent",
+              title: "If the welcome wasn't sent",
+              kind: "if",
+              cases: [
+                {
+                  when: { not: { ref: "steps.welcome", op: "exists" } },
+                  steps: [agent("follow-up")],
+                },
+              ],
+            },
+          ),
+        );
+        yield* respond(harness, harness.permissionRequests[0], { approved: false });
+        return yield* finalSteps(executionId);
+      }),
+    );
+    expect(harness.calls).toEqual(["other", "follow-up"]);
+    expect(Object.keys(steps)).toEqual(["other", "unsent", "follow-up"]);
+    expect(harness.events.filter((event) => event.status === "declined")).toEqual([
+      { runId: "run-1", step: "welcome", status: "declined" },
+    ]);
+    expect(harness.events.filter((event) => event.status === "skipped")).toEqual([
+      { runId: "run-1", step: "log", status: "skipped" },
+      { runId: "run-1", step: "chain", status: "skipped" },
+    ]);
+  });
+
+  test("operations without a permission ask first when they send, unless set to run automatically", async () => {
+    const asked = makeHarness();
+    await runTest(
+      asked,
+      Effect.gen(function* () {
+        expect(yield* outcome(yield* start(asked, workflow(welcome)))).toBe("suspended");
+      }),
+    );
+    expect(asked.permissionRequests.map(({ step }) => step.id)).toEqual(["welcome"]);
+
+    const automatic = makeHarness();
+    await runTest(
+      automatic,
+      Effect.flatMap(
+        start(automatic, { ...workflow(welcome), permissions: { "email.send": "auto" } }),
+        finalSteps,
+      ),
+    );
+    expect(automatic.permissionRequests).toEqual([]);
+    expect(automatic.calls).toEqual(["welcome"]);
+  });
+
+  test("a denied operation is declined without asking", async () => {
+    const harness = makeHarness();
+    const steps = await runTest(
+      harness,
+      Effect.flatMap(
+        start(harness, {
+          ...workflow(welcome, agent("log", "Log {{steps.welcome.messageId}}"), agent("other")),
+          permissions: { "email.send": "deny" },
+        }),
+        finalSteps,
+      ),
+    );
+    expect(harness.permissionRequests).toEqual([]);
+    expect(harness.calls).toEqual(["other"]);
+    expect(Object.keys(steps)).toEqual(["other"]);
+    expect(harness.events).toContainEqual({ runId: "run-1", step: "welcome", status: "declined" });
+    expect(harness.events).toContainEqual({ runId: "run-1", step: "log", status: "skipped" });
+  });
+
+  test("a stop step ends the run, with every branch", async () => {
+    const harness = makeHarness();
+    const result = await runTest(
+      harness,
+      Effect.flatMap(
+        start(
+          harness,
+          workflow(
+            {
+              id: "both",
+              title: "Both",
+              kind: "parallel",
+              branches: [
+                [
+                  agent("first"),
+                  { id: "halt", title: "Halt", kind: "stop", reason: "No {{employee.name}}" },
+                ],
+                [{ id: "pause", title: "Pause", kind: "wait", duration: "1 day" }, agent("late")],
+              ],
+            },
+            agent("after"),
+          ),
+        ),
+        outcome,
+      ),
+    );
+    if (typeof result === "string" || Exit.isSuccess(result)) {
+      throw new Error(`The run didn't stop: ${String(result)}`);
+    }
+    const failure = Cause.squash(result.cause);
+    expect(failure).toBeInstanceOf(RunStopped);
+    expect(failure).toMatchObject({ step: "halt", reason: "No Ada" });
+    expect(harness.calls).toEqual(["first"]);
   });
 
   test("journals the payload, each Activity result, and the final result", async () => {

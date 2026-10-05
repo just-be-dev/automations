@@ -325,6 +325,36 @@ describe("workflowProblems", () => {
     ]);
   });
 
+  test("rejects steps after a stop step in the same list, wherever it is nested", () => {
+    const stop = { id: "halt", title: "Halt", kind: "stop", reason: "Rejected" };
+    expect(problems([agent("one"), stop])).toEqual([]);
+    expect(
+      problems([
+        {
+          id: "check",
+          title: "Check",
+          kind: "if",
+          cases: [{ when: { ref: "employee.name", op: "exists" }, steps: [stop, agent("late")] }],
+        },
+        agent("after"),
+      ]),
+    ).toEqual(["Step late comes after stop step halt, so it never runs"]);
+  });
+
+  test("permissions name known operations", () => {
+    const workflow = Effect.runSync(
+      decodeWorkflow({
+        name: "Test",
+        trigger: { kind: "manual" },
+        steps: [agent("one")],
+        permissions: { "email.send": "auto", "fax.send": "ask" },
+      }),
+    );
+    expect(workflowProblems(catalog, workflow)).toEqual([
+      "permissions names unknown operation fax.send",
+    ]);
+  });
+
   test("checks the trigger and refs in workflows without a subject", () => {
     expect(problems([agent("a")], { kind: "entity", entity: "contractor" })).toEqual([
       "The trigger names unknown entity type contractor (types: employee)",

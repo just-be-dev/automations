@@ -53,7 +53,7 @@ const scriptedPrompt = (answers: ReadonlyArray<Effect.Effect<string, PiError>>) 
 };
 
 const design = (designer: ReturnType<typeof scriptedPrompt>["designer"]) =>
-  designDraft(designer, catalog, "c1", "Wait for the start date");
+  designDraft(designer, catalog, { "email.send": "auto" }, "c1", "Wait for the start date");
 
 describe("designDraft", () => {
   test("sends the catalog and uses a reply that checks without retrying", async () => {
@@ -64,7 +64,10 @@ describe("designDraft", () => {
     expect(result.workflow.name).toBe("Onboarding");
     expect(requests.map((request) => request.requestId)).toEqual(["chat:c1"]);
     // The instructions, catalog included, are the system prompt, so the message goes as written.
-    expect(instructions).toEqual([designInstructions(catalog)]);
+    expect(instructions).toEqual([designInstructions(catalog, { "email.send": "auto" })]);
+    expect(instructions[0]).toContain(
+      "Current permissions, which the person may have changed: email.send: auto.",
+    );
     expect(instructions[0]).toContain("- employee (Employee; shown as its name)");
     expect(requests[0]?.text).toBe("Wait for the start date");
   });
@@ -102,7 +105,7 @@ describe("designDraft", () => {
 });
 
 test("the instructions push automation around every human step", () => {
-  const instructions = designInstructions(catalog);
+  const instructions = designInstructions(catalog, {});
   expect(instructions).toContain("Automate everything that can be automated");
   expect(instructions).toContain("- calendar.findTimes:");
 });

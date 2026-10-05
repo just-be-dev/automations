@@ -21,6 +21,7 @@ export const runStatusLabel: Record<RunStatus, string> = {
   waiting: "Waiting",
   completed: "Completed",
   failed: "Failed",
+  stopped: "Stopped",
 };
 
 export const runStatusClass: Record<RunStatus, string> = {
@@ -28,6 +29,7 @@ export const runStatusClass: Record<RunStatus, string> = {
   waiting: "text-sand-11",
   completed: "text-success",
   failed: "text-destructive",
+  stopped: "text-foreground",
 };
 
 export const runDotClass: Record<RunStatus, string> = {
@@ -35,4 +37,5 @@ export const runDotClass: Record<RunStatus, string> = {
   waiting: "bg-sand-10",
   completed: "bg-success",
   failed: "bg-destructive",
+  stopped: "bg-foreground",
 };

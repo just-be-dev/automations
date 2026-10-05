@@ -14,12 +14,15 @@ import { defineTaggedUnion } from "foldkit/schema";
 import { modifyFields } from "foldkit/struct";
 import { Checkbox, Disclosure, Input } from "@foldkit/ui";
 import {
+  Ban,
   Bot,
   Braces,
   CalendarDays,
   Check,
   ChevronDown,
+  CircleCheck,
   GitBranch,
+  Hand,
   Hash,
   Hourglass,
   LayoutDashboard,
@@ -29,7 +32,9 @@ import {
   MessageSquare,
   Monitor,
   Moon,
+  OctagonX,
   Scale,
+  SkipForward,
   Split,
   Sun,
   UserRound,
@@ -53,10 +58,14 @@ import { Message as ChatMessage } from "@/components/ui/message";
 import { textarea } from "@/components/ui/textarea";
 import { icon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
-import { connectionOf, findOperation } from "../connections.ts";
+import { connectionOf, findOperation, permissionOf, permissionsOf } from "../connections.ts";
 import {
+  displayValue,
   HumanTask,
+  operationsUsed,
   PendingChat,
+  Permission,
+  type Permissions,
   Run,
   RunStatus,
   RunSummary,
@@ -233,6 +242,7 @@ export const Message = defineMessageUnion({
   CompletedApplyTheme: {},
   ClickedSend: {},
   ClickedSave: {},
+  SelectedPermission: { operation: Schema.String, permission: Permission },
   SelectedSubject: { subjectId: Schema.String },
   ClickedStart: {},
   ClickedCloseRunPanel: {},
@@ -265,6 +275,7 @@ export const Message = defineMessageUnion({
     pendingChat: PendingChat,
   },
   SucceededSaveDraft: { revision: Schema.Int, saved: Workflow },
+  SucceededSetPermission: { revision: Schema.Int, draft: Workflow },
   SucceededStartRun: { revision: Schema.Int, runId: Schema.String },
   SucceededLoadRun: {
     revision: Schema.Int,
@@ -825,6 +836,30 @@ export const update = (model: Model, message: Message) =>
         ],
       };
     },
+    SelectedPermission: ({ operation, permission }) => {
+      if (Activity.guards.Working(model.activity)) {
+        return { model };
+      }
+      if (Option.isNone(model.maybeDraft)) {
+        return fail(model, "Create a draft first");
+      }
+      if (permissionOf(model.maybeDraft.value, operation) === permission) {
+        return { model };
+      }
+      return {
+        model: modifyFields(model, {
+          activity: () => Activity.Working({ notice: "Updating permissions…" }),
+        }),
+        commands: [
+          SetPermission({
+            automationId: model.automationId.trim(),
+            revision: model.revision,
+            operation,
+            permission,
+          }),
+        ],
+      };
+    },
     SelectedSubject: ({ subjectId }) => ({
       model: modifyFields(model, {
         maybeSubjectId: () => (subjectId === "" ? Option.none() : Option.some(subjectId)),
@@ -938,6 +973,16 @@ export const update = (model: Model, message: Message) =>
             }),
             [(stepModel) => ({ model: stepModel, commands: [LoadAutomations()] }), chooseSubjects],
           ),
+    SucceededSetPermission: ({ revision, draft }) =>
+      revision !== model.revision
+        ? { model }
+        : {
+            model: modifyFields(model, {
+              maybeDraft: () => Option.some(draft),
+              activity: () =>
+                Activity.Ready({ notice: "Permission updated. Save the draft to use it in runs." }),
+            }),
+          },
     SucceededLoadAutomations: ({ automations }) => ({
       model: modifyFields(model, { directory: () => Directory.Ready({ automations }) }),
     }),
@@ -1183,6 +1228,19 @@ export const SaveDraft = Command.define("SaveDraft", {
   execute: ({ automationId, revision }) =>
     request(automationId, "/save", Schema.Struct({ saved: Workflow }), {}).pipe(
       Effect.map(({ saved }) => Message.SucceededSaveDraft({ revision, saved })),
+      recoverRequest(revision),
+      Effect.provide(Http.layer),
+    ),
+});
+
+export const SetPermission = Command.define("SetPermission", {
+  args: { ...requestArgs, operation: Schema.String, permission: Permission },
+  messages: [Message.SucceededSetPermission, Message.FailedRequest],
+  execute: ({ automationId, revision, operation, permission }) =>
+    request(automationId, "/permissions", Schema.Struct({ draft: Workflow }), {
+      permissions: { [operation]: permission },
+    }).pipe(
+      Effect.map(({ draft }) => Message.SucceededSetPermission({ revision, draft })),
       recoverRequest(revision),
       Effect.provide(Http.layer),
     ),
@@ -1979,6 +2037,10 @@ const draftView = (model: Model, h: HtmlBuilder<Message>) =>
                 h,
               ),
       }),
+      Option.match(model.maybeDraft, {
+        onNone: () => h.empty,
+        onSome: (workflow) => permissionsView(workflow, model, h),
+      }),
       recentRunsView(model, h),
     ],
   );
@@ -2188,16 +2250,24 @@ interface StepContext {
   readonly scope: "draft" | "run";
   readonly expandedStepIds: ReadonlyArray<string>;
   readonly maybeRunSteps: Option.Option<Readonly<Record<string, RunStep>>>;
+  /** The permission of each operation the workflow uses. */
+  readonly permissions: Permissions;
 }
 
-const workflowView = (workflow: Workflow, context: StepContext, h: HtmlBuilder<Message>) =>
+const workflowView = (
+  workflow: Workflow,
+  context: Omit<StepContext, "permissions">,
+  h: HtmlBuilder<Message>,
+) =>
   h.div(
     [h.Class("flex max-w-2xl flex-col")],
     [
       triggerView(workflow, h),
       h.ol(
         [h.AriaLabel("Steps"), h.Class("mt-3 flex flex-col gap-3")],
-        Array.map(workflow.steps, (step) => stepView(step, context, h)),
+        Array.map(workflow.steps, (step) =>
+          stepView(step, { ...context, permissions: permissionsOf(workflow) }, h),
+        ),
       ),
     ],
   );
@@ -2221,6 +2291,7 @@ const stepIcon = (step: Step): IconNode =>
       if: () => GitBranch,
       decide: () => Scale,
       human: () => UserRound,
+      stop: () => OctagonX,
     }),
   );
 
@@ -2236,6 +2307,7 @@ const stepLabel = (step: Step): string =>
       if: () => "Condition",
       decide: () => "Decision",
       human: () => "Human",
+      stop: () => "Stop",
     }),
   );
 
@@ -2390,8 +2462,17 @@ const matchView = (
     ],
   );
 
-const simulatedTagView = (h: HtmlBuilder<Message>) =>
-  badge({ variant: "secondary", className: "h-4 px-1.5 text-[10px]" }, ["Simulated"], h);
+const tagView = (label: string, h: HtmlBuilder<Message>) =>
+  badge({ variant: "secondary", className: "h-4 px-1.5 text-[10px]" }, [label], h);
+
+const simulatedTagView = (h: HtmlBuilder<Message>) => tagView("Simulated", h);
+
+const permissionTagView = (permission: Permission | undefined, h: HtmlBuilder<Message>) =>
+  permission === "ask"
+    ? tagView("Asks first", h)
+    : permission === "deny"
+      ? tagView("Denied", h)
+      : h.empty;
 
 const humanFieldView = (field: HumanField, h: HtmlBuilder<Message>) =>
   h.keyed("li")(
@@ -2404,7 +2485,12 @@ const humanFieldView = (field: HumanField, h: HtmlBuilder<Message>) =>
     ],
   );
 
-const stepDetailView = (step: Step, isExpanded: boolean, h: HtmlBuilder<Message>) =>
+const stepDetailView = (
+  step: Step,
+  context: StepContext,
+  isExpanded: boolean,
+  h: HtmlBuilder<Message>,
+) =>
   Match.value(step).pipe(
     Match.discriminatorsExhaustive("kind")({
       agent: (agent) =>
@@ -2437,7 +2523,11 @@ const stepDetailView = (step: Step, isExpanded: boolean, h: HtmlBuilder<Message>
           [
             h.div(
               [h.Class("flex items-center gap-2 text-xs text-muted-foreground")],
-              [operationTitle(action.use), isSimulated(action.use) ? simulatedTagView(h) : h.empty],
+              [
+                operationTitle(action.use),
+                isSimulated(action.use) ? simulatedTagView(h) : h.empty,
+                permissionTagView(context.permissions[action.use], h),
+              ],
             ),
             inputListView(`${action.title} inputs`, action.with, isExpanded, h),
             action.template === undefined ? h.empty : templateUseView(action.template, h),
@@ -2469,6 +2559,11 @@ const stepDetailView = (step: Step, isExpanded: boolean, h: HtmlBuilder<Message>
             h.p([h.Class(detailClass(isExpanded))], templateView(decide.question, h)),
             stepMetaView([`Model: ${decide.model}`], h),
           ],
+        ),
+      stop: (stop) =>
+        h.p(
+          [h.Class(detailClass(isExpanded))],
+          ["Ends the run: ", ...templateView(stop.reason, h)],
         ),
       human: (human) =>
         h.div(
@@ -2521,6 +2616,7 @@ const stepLanes = (step: Step, h: HtmlBuilder<Message>): ReadonlyArray<Lane> =>
       action: () => [],
       wait: () => [],
       human: () => [],
+      stop: () => [],
       parallel: (parallel) =>
         Array.map(parallel.branches, (steps, index) => ({
           label: `Branch ${index + 1}`,
@@ -2565,6 +2661,8 @@ const stepStatusLabel: Record<RunStep["status"], string> = {
   running: "Running",
   waiting: "Waiting",
   done: "Done",
+  declined: "Declined",
+  skipped: "Skipped",
 };
 
 const stepStatusView = (runStep: RunStep, h: HtmlBuilder<Message>) =>
@@ -2576,6 +2674,8 @@ const stepStatusView = (runStep: RunStep, h: HtmlBuilder<Message>) =>
           runStep.status === "done" && "text-success",
           runStep.status === "running" && "text-signal",
           runStep.status === "waiting" && "text-sand-11",
+          runStep.status === "declined" && "text-destructive",
+          runStep.status === "skipped" && "text-muted-foreground",
         ),
       ),
     ],
@@ -2584,6 +2684,8 @@ const stepStatusView = (runStep: RunStep, h: HtmlBuilder<Message>) =>
         Match.when("done", () => icon(h, Check, "size-3.5")),
         Match.when("running", () => icon(h, LoaderCircle, "size-3.5 animate-spin")),
         Match.when("waiting", () => icon(h, Hourglass, "size-3.5")),
+        Match.when("declined", () => icon(h, X, "size-3.5")),
+        Match.when("skipped", () => icon(h, SkipForward, "size-3.5")),
         Match.exhaustive,
       ),
       stepStatusLabel[runStep.status],
@@ -2623,7 +2725,9 @@ const stepView = (step: Step, context: StepContext, h: HtmlBuilder<Message>): Ht
   const maybeRunStep = Option.flatMap(context.maybeRunSteps, (runSteps) =>
     Option.fromNullishOr(runSteps[step.id]),
   );
-  const isUnreached = Option.isSome(context.maybeRunSteps) && Option.isNone(maybeRunStep);
+  const isUnreached =
+    Option.isSome(context.maybeRunSteps) &&
+    !Option.exists(maybeRunStep, (runStep) => runStep.status !== "skipped");
   return h.keyed("li")(
     step.id,
     [
@@ -2677,7 +2781,7 @@ const stepView = (step: Step, context: StepContext, h: HtmlBuilder<Message>): Ht
                 h.div(
                   [...panel, h.Class("flex flex-col gap-2 pl-[34px]")],
                   [
-                    stepDetailView(step, isExpanded, h),
+                    stepDetailView(step, context, isExpanded, h),
                     Option.match(
                       Option.flatMap(maybeRunStep, (runStep) =>
                         Option.fromNullishOr(runStep.record),
@@ -2705,6 +2809,104 @@ const stepView = (step: Step, context: StepContext, h: HtmlBuilder<Message>): Ht
     ],
   );
 };
+
+// VIEW: PERMISSIONS
+
+const permissionChoices: ReadonlyArray<{
+  readonly permission: Permission;
+  readonly label: string;
+  readonly hint: string;
+  readonly icon: IconNode;
+}> = [
+  { permission: "auto", label: "Allow", hint: "Runs on its own", icon: CircleCheck },
+  { permission: "ask", label: "Ask first", hint: "Waits for your approval", icon: Hand },
+  { permission: "deny", label: "Deny", hint: "Never runs", icon: Ban },
+];
+
+const permissionsView = (workflow: Workflow, model: Model, h: HtmlBuilder<Message>) =>
+  Array.match(operationsUsed(workflow.steps), {
+    onEmpty: () => h.empty,
+    onNonEmpty: (operationIds) =>
+      h.section(
+        [h.AriaLabelledBy("permissions"), h.Class("flex max-w-2xl flex-col gap-2")],
+        [
+          h.h3([h.Id("permissions"), h.Class(eyebrowClass)], ["Permissions"]),
+          h.p(
+            [h.Class("text-xs text-muted-foreground")],
+            [
+              "The agent sets these permissions. You can change them. Save the draft to apply the changes to runs.",
+            ],
+          ),
+          h.ul(
+            [h.AriaLabelledBy("permissions"), h.Class("flex flex-col")],
+            Array.map(operationIds, (operationId) =>
+              permissionRowView(operationId, permissionOf(workflow, operationId), model, h),
+            ),
+          ),
+        ],
+      ),
+  });
+
+const permissionRowView = (
+  operationId: string,
+  permission: Permission,
+  model: Model,
+  h: HtmlBuilder<Message>,
+) =>
+  h.keyed("li")(
+    operationId,
+    [h.Class("flex items-center gap-2.5 py-1.5")],
+    [
+      h.span(
+        [h.Class("icon-tile"), h.AriaHidden(true)],
+        [icon(h, connectionIcon[connectionOf(operationId)?.id ?? ""] ?? Webhook, "size-3.5")],
+      ),
+      h.div(
+        [h.Class("flex min-w-0 flex-1 items-center gap-2 text-sm")],
+        [
+          h.span([], [operationTitle(operationId)]),
+          isSimulated(operationId) ? simulatedTagView(h) : h.empty,
+        ],
+      ),
+      h.div(
+        [
+          h.Role("group"),
+          h.AriaLabel(`${operationTitle(operationId)} permission`),
+          h.Class("flex shrink-0 items-center gap-px rounded-[9px] bg-sidebar p-0.5"),
+        ],
+        Array.map(permissionChoices, (choice) =>
+          permissionChoiceView(operationId, choice, choice.permission === permission, model, h),
+        ),
+      ),
+    ],
+  );
+
+const permissionChoiceView = (
+  operationId: string,
+  choice: (typeof permissionChoices)[number],
+  isChosen: boolean,
+  model: Model,
+  h: HtmlBuilder<Message>,
+) =>
+  h.button(
+    [
+      h.Type("button"),
+      h.AriaLabel(choice.label),
+      h.AriaPressed(String(isChosen)),
+      h.Title(`${choice.label}: ${choice.hint}`),
+      h.Disabled(Activity.guards.Working(model.activity)),
+      h.OnClick(
+        Message.SelectedPermission({ operation: operationId, permission: choice.permission }),
+      ),
+      h.Class(
+        cn(
+          "flex size-6 cursor-pointer items-center justify-center rounded-[7px] text-sand-10 transition-colors outline-none hover:text-foreground focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60",
+          isChosen && "bg-background text-foreground shadow-card",
+        ),
+      ),
+    ],
+    [icon(h, choice.icon, "size-3.5")],
+  );
 
 // VIEW: RUNS
 
@@ -2828,6 +3030,17 @@ const runView = (
             ],
             [icon(h, CircleAlert, "mt-0.5 size-3.5"), run.error],
           ),
+      run.stopReason === undefined
+        ? h.empty
+        : h.p(
+            [
+              h.Role("status"),
+              h.Class(
+                "flex items-start gap-2 rounded-[10px] bg-sidebar px-3 py-2 text-sm text-foreground",
+              ),
+            ],
+            [icon(h, OctagonX, "mt-0.5 size-3.5"), `Stopped: ${run.stopReason}`],
+          ),
       openTasksView(run, openRun, h),
       workflowView(
         run.workflow,
@@ -2901,12 +3114,24 @@ const taskView = (task: HumanTask, openRun: OpenRun, h: HtmlBuilder<Message>) =>
       h.div(
         [h.Class("flex items-start gap-2.5")],
         [
-          h.span([h.Class("icon-tile"), h.AriaHidden(true)], [icon(h, UserRound, "size-3.5")]),
+          h.span(
+            [h.Class("icon-tile"), h.AriaHidden(true)],
+            [
+              icon(
+                h,
+                task.action === undefined
+                  ? UserRound
+                  : (connectionIcon[connectionOf(task.action.use)?.id ?? ""] ?? Webhook),
+                "size-3.5",
+              ),
+            ],
+          ),
           h.div(
             [h.Class("flex min-w-0 flex-col gap-1")],
             [
               h.h4([h.Class("text-sm font-medium")], [task.title]),
               h.p([h.Class("text-sm whitespace-pre-wrap text-muted-foreground")], [task.prompt]),
+              task.action === undefined ? h.empty : taskActionView(task.action, h),
               stepMetaView(
                 [
                   ...assigneeView(task.assignee, h),
@@ -2946,6 +3171,42 @@ const taskView = (task: HumanTask, openRun: OpenRun, h: HtmlBuilder<Message>) =>
             ],
           )
         : taskFormView(task, task.response.fields, openRun, h),
+    ],
+  );
+
+const personText = (value: Schema.Json) =>
+  Option.match(jsonString(value, "email"), {
+    onNone: () => displayValue(value),
+    onSome: (email) => `${displayValue(value)} <${email}>`,
+  });
+
+const isJsonList = (value: Schema.Json): value is ReadonlyArray<Schema.Json> =>
+  Array.isArray(value);
+
+const inputText = (value: Schema.Json) =>
+  isJsonList(value) ? Array.map(value, personText).join(", ") : personText(value);
+
+const taskActionView = (action: NonNullable<HumanTask["action"]>, h: HtmlBuilder<Message>) =>
+  h.div(
+    [h.Class("flex flex-col gap-1.5 pt-1")],
+    [
+      h.div(
+        [h.Class("flex items-center gap-2 text-xs text-muted-foreground")],
+        [operationTitle(action.use), isSimulated(action.use) ? simulatedTagView(h) : h.empty],
+      ),
+      h.ul(
+        [
+          h.AriaLabel(`${operationTitle(action.use)} details`),
+          h.Class("flex flex-col gap-0.5 text-xs"),
+        ],
+        Array.map(Object.entries(action.inputs), ([name, value]) =>
+          h.keyed("li")(
+            name,
+            [h.Class("break-words whitespace-pre-wrap text-muted-foreground")],
+            [h.span([h.Class("font-mono text-sand-11")], [`${name}: `]), inputText(value)],
+          ),
+        ),
+      ),
     ],
   );
 

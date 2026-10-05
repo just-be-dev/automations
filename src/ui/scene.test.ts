@@ -14,6 +14,7 @@ import {
   submit,
   text,
   type,
+  within,
 } from "foldkit/scene";
 import {
   AnswerTask,
@@ -23,6 +24,7 @@ import {
   NavigateInternal,
   PollAutomation,
   SendMessage,
+  SetPermission,
   StartRun,
   init,
   update,
@@ -31,7 +33,15 @@ import {
   type Workflow,
 } from "./main.ts";
 import * as Entities from "./entities/main.ts";
-import { approvalTask, laptopTask, onboarding, runOf, studioUrl, summaryOf } from "./fixtures.ts";
+import {
+  approvalTask,
+  laptopTask,
+  onboarding,
+  permissionTask,
+  runOf,
+  studioUrl,
+  summaryOf,
+} from "./fixtures.ts";
 
 const automationLoaded = (
   fields: Partial<Parameters<typeof Message.SucceededLoadAutomation>[0]> = {},
@@ -289,6 +299,113 @@ test("action steps show the template they use and the inputs each match case sup
       "OtherwiseTemplate welcome_email · hire: employee",
     ),
     expect(role("list", { name: "Otherwise inputs" })).toHaveText("subject: Welcome"),
+  );
+});
+
+test("the draft lists the operations it uses, and a changed permission updates the draft", () => {
+  const choice = (name: string) =>
+    within(role("group", { name: "Send a Slack message permission" }), role("button", { name }));
+  scene(
+    { update, view },
+    given(withDraft({ ...onboarding, permissions: {} })),
+    expect(role("list", { name: "Permissions" })).toContainText("Send a Slack message"),
+    expect(choice("Ask first")).toHaveAttr("aria-pressed", "true"),
+    expect(choice("Allow")).toHaveAttr("aria-pressed", "false"),
+    expect(text("Asks first")).toExist(),
+    click(choice("Ask first")),
+    click(choice("Deny")),
+    Command.expectExact(
+      SetPermission({ ...requestArgs, operation: "slack.sendMessage", permission: "deny" }),
+    ),
+    expect(choice("Allow")).toBeDisabled(),
+    Command.resolve(
+      SetPermission,
+      Message.SucceededSetPermission({
+        revision: 0,
+        draft: { ...onboarding, permissions: { "slack.sendMessage": "deny" } },
+      }),
+    ),
+    expect(choice("Deny")).toHaveAttr("aria-pressed", "true"),
+    expect(text("Asks first")).not.toExist(),
+    expect(text("Denied")).toExist(),
+    expect(text("Permission updated. Save the draft to use it in runs.")).toExist(),
+  );
+});
+
+test("a run shows declined and skipped steps, and why a stop step ended it", () => {
+  const stopped = runOf({
+    workflow: {
+      ...onboarding,
+      steps: [
+        ...onboarding.steps,
+        {
+          id: "follow-up",
+          kind: "agent",
+          title: "Follow up",
+          instruction: "Check {{steps.notify.ts}}",
+        },
+        { id: "halt", kind: "stop", title: "Halt", reason: "{{employee.name}} withdrew" },
+      ],
+    },
+    status: "stopped",
+    stopReason: "Ari Cho withdrew",
+    steps: {
+      approve: { status: "done", record: { approved: true } },
+      laptop: { status: "done" },
+      notify: { status: "declined" },
+      "follow-up": { status: "skipped" },
+      halt: { status: "done", record: { reason: "Ari Cho withdrew" } },
+    },
+  });
+  scene(
+    { update, view },
+    given(withOpenRun(stopped)),
+    expect(text("Stopped: Ari Cho withdrew")).toExist(),
+    expect(role("button", { name: /Tell the manager.*Declined/ })).toExist(),
+    expect(role("button", { name: /Follow up.*Skipped/ })).toExist(),
+    expect(role("button", { name: /Stop: Halt.*Done/ })).toExist(),
+    expect(text("Ends the run: employee.name withdrew")).toExist(),
+  );
+});
+
+test("a permission request shows what the action will send and sends the approval", () => {
+  const waiting = runOf({
+    workflow: { ...onboarding, permissions: { "slack.sendMessage": "ask" } },
+    steps: {
+      approve: { status: "done", record: { approved: true } },
+      laptop: { status: "done" },
+      notify: { status: "waiting" },
+    },
+    tasks: [permissionTask],
+  });
+  const sent = runOf({
+    ...waiting,
+    status: "completed",
+    steps: {
+      ...waiting.steps,
+      notify: { status: "done", record: { simulated: true, channel: "@sam@example.com", ts: "1" } },
+    },
+    tasks: [{ ...permissionTask, status: "closed" }],
+  });
+  scene(
+    { update, view },
+    given(withOpenRun(waiting)),
+    expect(text(permissionTask.prompt)).toExist(),
+    expect(role("list", { name: "Send a Slack message details" })).toHaveText(
+      "to: Sam Park <sam@example.com>text: Ari Cho starts on 2026-11-02",
+    ),
+    expect(role("button", { name: /Tell the manager.*Waiting/ })).toExist(),
+    click(role("button", { name: "Approve" })),
+    Command.expectExact(
+      AnswerTask({ ...requestArgs, runId: "run-1", step: "notify", answer: { approved: true } }),
+    ),
+    Command.resolve(
+      AnswerTask,
+      Message.SucceededAnswerTask({ revision: 0, runId: "run-1", step: "notify" }),
+    ),
+    Command.resolve(LoadRun, runLoaded({ revision: 0, poll: 2, run: sent })),
+    expect(role("list", { name: "Open tasks" })).not.toExist(),
+    expect(text("Answer sent.")).toExist(),
   );
 });
 

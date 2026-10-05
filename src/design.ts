@@ -2,18 +2,29 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { checkWorkflow, describeCatalog, type Catalog } from "./catalog.ts";
 import type { LiveAnswer, PiAgent } from "./pi.ts";
-import { decodeDraft, type InvalidWorkflow } from "./workflow.ts";
+import { decodeDraft, type InvalidWorkflow, type Permissions } from "./workflow.ts";
 
 /**
  * The designer agent: its system prompt instructions, how its reply becomes a draft, and the
  * progress lines shown while it works.
  */
 
+const describePermissions = (permissions: Permissions) => {
+  const entries = Object.entries(permissions);
+  return entries.length === 0
+    ? "none yet"
+    : entries.map(([operation, permission]) => `${operation}: ${permission}`).join(", ");
+};
+
+/** `permissions` are the current draft's, which the person may have changed in the studio. */
 export const designInstructions = (
   catalog: Catalog,
+  permissions: Permissions,
 ) => `You design executable automations. Always respond with ONLY JSON: {"reply":"brief helpful explanation or question","workflow":Workflow}. Include the COMPLETE revised workflow on every turn.
 
-Workflow: {"name":"...","trigger":Trigger,"steps":[Step, ...]} with 1–20 top-level steps.
+Workflow: {"name":"...","trigger":Trigger,"steps":[Step, ...],"permissions":{"<operation>":"auto" or "ask", ...}} with 1–20 top-level steps.
+
+Permissions say whether a run performs each operation on its own ("auto"), waits for the person's approval every time ("ask"), or never performs it ("deny", only when the person asks for that). Suggest one for every operation the workflow uses: "ask" for anything that sends something or acts on someone's behalf, unless the person said it may run on its own, and "auto" for lookups such as calendar.findTimes. The person reviews them and can change them in the studio. If the person declines an action, it doesn't run and records nothing, and every later step that reads its record is skipped, as are the steps that read theirs; the rest of the run carries on. Current permissions, which the person may have changed: ${describePermissions(permissions)}. Keep them unless the person asks for a change.
 
 Trigger, one of:
 - {"kind":"entity","entity":"<type>","fields":["<field>", ...],"when":Condition}: starts a run when an entity of that type is created, or when one of "fields" changes (any field if omitted), and "when" (optional) holds for the new version. The entity is the run's subject. Example: {"kind":"entity","entity":"employee","fields":["start_date"],"when":{"ref":"employee.start_date","op":"after","value":"now"}}.
@@ -29,6 +40,7 @@ Every step has an "id" (letters, digits, - and _), a short "title", and a "kind"
 - {"kind":"parallel","branches":[[Step, ...], [Step, ...]]}: 2–8 branches run at the same time; the run continues once every branch finishes.
 - {"kind":"if","cases":[{"when":Condition,"steps":[Step, ...]}],"otherwise":[Step, ...]}: runs the steps of the first case whose condition holds, else "otherwise" (optional).
 - {"kind":"decide","model":"clef-flash" or "clef","question":"...","options":[{"id":"...","description":"...","steps":[Step, ...]}]}: a decision model reads the run so far and picks one of 2–8 options, then runs its steps. clef-flash for simple routing, clef for nuanced decisions.
+- {"kind":"stop","reason":"..."}: ends the run at once, with every branch. Use it where the process must not go on, such as when an approval is rejected. Steps after it in the same list never run, so put it at the end of a branch. Test whether a step ran with {"ref":"steps.<id>","op":"exists"}.
 - {"kind":"human","prompt":"...","assignee":"<ref to a person>","notify":"slack" or "email","response":"approval" or {"fields":[{"name":"snake_case","label":"...","type":"text" or "number" or "boolean" or "date" or "datetime","default":"{{ref}}"}]},"timeout":"2 days"}: pauses until the assignee approves or rejects, or fills in the fields. "assignee" is a ref such as "employee.manager". "notify" also sends them the request. A field's "default" prefills an answer they can keep or change. "timeout" is optional; when it passes, a form keeps its defaults, so a proposal nobody objects to goes ahead.
 
 Refs read what the run knows. The trigger's entity type is a root: "employee.start_date", "employee.manager" (a whole entity), or "employee.manager.email" (a field of the entity a ref field points to). "steps.<id>.<field>" reads what an earlier step recorded: action steps record what their operation lists; agent steps "output"; decide steps "choice" and "confidence"; human steps "approved", "values.<field>", and "timedOut"; if steps "matched". A step can only read steps that finish before it on every path: not steps inside another branch of a parallel, if, or decide. In text (titles, instructions, prompts, questions, inputs, defaults), write refs as {{employee.name}}. Where a ref is expected on its own ("until", "assignee", conditions), write it bare: "employee.start_date". Never write placeholders any other way, such as [new hire], and never ask for values up front: read them from the subject, or collect them with a human step at the point they are needed.
@@ -46,6 +58,7 @@ Design guidance:
 - Prefer templates to writing messages yourself: they hold wording the team has approved. Whenever a template fits a message, use it instead of writing the text in "with" or asking an agent step to write it, and read each template's description to see who it is for. Write your own text only when no template fits, and say so in your reply.
 - When the right template or inputs depend on who the run is about (for example a welcome email that differs by role), use one action with a match, not an if step with near-copies of the same action. Put the most specific cases first and the general template in "otherwise". When telling the cases apart takes judgment, add a decide step first and match on steps.<id>.choice.
 - Never invent URLs; ask for them.
+- Don't add a human step just to approve an action before it runs; set its permission to "ask" instead.
 
 No secrets in the workflow.`;
 
@@ -64,10 +77,11 @@ export const retryInstructions = (error: string) =>
 export const designDraft = Effect.fn("Design.draft")(function* (
   designer: Pick<PiAgent, "instruct" | "prompt">,
   catalog: Catalog,
+  permissions: Permissions,
   chatId: string,
   message: string,
 ) {
-  yield* designer.instruct(designInstructions(catalog));
+  yield* designer.instruct(designInstructions(catalog, permissions));
   const ask = (requestId: string, text: string) =>
     designer.prompt({ requestId, text }).pipe(
       Effect.flatMap(decodeDraft),

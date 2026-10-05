@@ -3,7 +3,7 @@
 An automation is a JSON `Workflow`: a name, a trigger, and a tree of steps. The designer agent writes it, and runs execute the saved copy. The pieces:
 
 - **Entities** are the records a workflow is about, such as an `employee`. The `EntityStore` service keeps their types and records; its D1 layer is the implementation in use. A run's **subject** is the entity it's about.
-- **Capabilities** are what the interpreter does itself: run an agent, wait, branch, run branches in parallel, decide, and ask a person.
+- **Capabilities** are what the interpreter does itself: run an agent, wait, branch, run branches in parallel, decide, ask a person, and stop the run.
 - **Connections** are outside services, such as email, Slack, a calendar, or HTTP. An `action` step performs one of their operations.
 - **Templates** are approved, reusable wording, such as the standard welcome email. An `action` step fills its inputs from one, and a `match` picks a different one per case, for example by role.
 
@@ -134,11 +134,12 @@ When a new hire's start date is set, remind the manager to greet them, propose a
 
 ## Workflow
 
-| Field     | Meaning                                        |
-| --------- | ---------------------------------------------- |
-| `name`    | Non-blank, at most 120 characters.             |
-| `trigger` | What starts a run. See [Triggers](#triggers).  |
-| `steps`   | 1–20 top-level steps. Each list runs in order. |
+| Field         | Meaning                                                                                |
+| ------------- | -------------------------------------------------------------------------------------- |
+| `name`        | Non-blank, at most 120 characters.                                                     |
+| `trigger`     | What starts a run. See [Triggers](#triggers).                                          |
+| `steps`       | 1–20 top-level steps. Each list runs in order.                                         |
+| `permissions` | Whether each operation runs on its own or asks first. See [Permissions](#permissions). |
 
 Rules for the whole tree:
 
@@ -295,6 +296,14 @@ Open requests appear on the run as tasks. `POST /api/automations/:id/runs/:runId
 
 It records `{ "approved"?: boolean, "values"?: { field: JSON }, "respondedBy"?: string, "timedOut": boolean }`.
 
+### `stop`
+
+```json
+{ "kind": "stop", "reason": "{{employee.name}} withdrew" }
+```
+
+Ends the run at once, every branch included: nothing after it runs, and its open tasks close. The run's status becomes `stopped`, with the rendered `reason` (up to 1000 characters) as its `stopReason`. Put it at the end of a branch; a step that follows a stop step in the same list never runs, so `checkWorkflow` rejects it. It records `{ "reason": string }`.
+
 ## Connections
 
 ### `action`
@@ -358,6 +367,14 @@ An action can also take inputs from a [template](#templates) with `template: { "
 | `http.post`            | `url` (literal), `body?` JSON                                                        | `status`, `body` (up to 4000 characters) |
 
 Email, Slack, and Calendar are **simulated**: there are no credentials yet, so their operations contact nothing. They succeed and record what they would have sent, with `simulated: true`. Their IDs derive from the step's idempotency key. `calendar.findTimes` offers weekday slots at 10:00 and 14:00 UTC.
+
+### Permissions
+
+`permissions` maps operation IDs to `auto` (the run performs it on its own), `ask` (each run waits for the person's approval first), or `deny` (the run never performs it). The studio shows them as allow, ask first, and deny. The designer suggests them and is told the current ones on every turn. The person can change any of them in the studio, or with `POST /api/automations/:id/permissions` and `{ "permissions": { "email.send": "auto" } }`, which merges into the draft. A designer reply merges into the draft's permissions too, so leaving one out keeps it. `checkWorkflow` rejects permissions for unknown operations. Runs follow the saved copy.
+
+An operation without an entry gets its default. `calendar.findTimes` only looks times up, so it runs on its own. Every other operation sends or changes something, so it asks first.
+
+When an action asks first, the run resolves its inputs, opens an approval task that shows the operation and those inputs, and waits with the step `waiting`. Answer it like a human step's task with `{ "approved": boolean }`. Approving performs the operation with the inputs shown. Declining marks the step `declined`, and it records nothing. Every later step that reads its record is then `skipped`, as are the steps that read theirs; the rest of the run carries on. A `deny` operation is declined the same way, without asking. Use a [`stop`](#stop) step to end the run instead. A human step's `notify` doesn't ask.
 
 `http.post` really sends:
 
@@ -438,6 +455,8 @@ When a run starts, `expandTemplates` replaces each use with the inputs its conte
 | `before` / `after`         | Both are dates `Date.parse` reads. `"now"` is the current time.         |
 | `exists`                   | The value is neither missing nor `null`.                                |
 
+A step that didn't run records nothing, so `{ "ref": "steps.<id>", "op": "exists" }` tests whether it ran. Unlike a ref that reads a value, it doesn't make the step that holds it skip.
+
 A comparison between mismatched types is false. Conditions never call a model; use `decide` for judgment calls. An `if` step reads the current time once, in an Activity, so a replay gets the same answer.
 
 ## Run state and execution
@@ -446,14 +465,18 @@ A run executes the saved workflow with its templates expanded. It starts with `{
 
 `RunAutomation` maps the tree onto `effect/workflow` primitives:
 
-| Kind                        | Primitive                                                                  |
-| --------------------------- | -------------------------------------------------------------------------- |
-| Every step's refs           | An Activity named `<id>/refs`.                                             |
-| `agent`, `action`, `decide` | An Activity, retried twice. A replay reuses its result.                    |
-| `wait`                      | A `DurableClock`. The current time is an Activity.                         |
-| `human`                     | A `DurableDeferred`, raced against a `DurableClock` when it has a timeout. |
-| `parallel`, `if`, `match`   | Plain control flow, evaluated again on every replay.                       |
+| Kind                        | Primitive                                                                                                                      |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Every step's refs           | An Activity named `<id>/refs`.                                                                                                 |
+| `agent`, `action`, `decide` | An Activity, retried twice. A replay reuses its result.                                                                        |
+| `action` that asks first    | Before that, an Activity `<id>/approval-request` opens the task, and a `DurableDeferred` `<id>/approval` waits for the answer. |
+| `stop`                      | Fails the execution with `RunStopped`, which interrupts every branch.                                                          |
+| `wait`                      | A `DurableClock`. The current time is an Activity.                                                                             |
+| `human`                     | A `DurableDeferred`, raced against a `DurableClock` when it has a timeout.                                                     |
+| `parallel`, `if`, `match`   | Plain control flow, evaluated again on every replay.                                                                           |
 
 The engine in `src/durable-engine.ts` journals payloads, Activity results, deferred completions, and clock times in the Automation object's storage under `wf:<executionId>:…`. It never keeps a run in memory between events: each `advance` callback replays the run from the start, reusing everything journaled, until it completes or reaches a clock or a person. A `clock` callback fires each durable clock at its time, and answering a task completes its deferred. Both schedule another replay.
 
-As it goes, the interpreter reports each step as `running`, `waiting`, or `done`, with its record. That fills in the run's `steps` and `tasks` (`GET /api/automations/:id/runs/:runId`). A run's status is `running`, `waiting` (on a clock or a person), `completed`, or `failed` with an `error`.
+Before a step runs, the interpreter checks the steps it needs a value from: those its refs read, except through `exists` checks. If one of them didn't run, because it was declined or skipped, the step is `skipped` without resolving anything. The checker guarantees every step a ref names finishes on every path before the reader, so a missing record always means a step that didn't run.
+
+As it goes, the interpreter reports each step as `running`, `waiting`, `done` (with its record), `declined`, or `skipped`. That fills in the run's `steps` and `tasks` (`GET /api/automations/:id/runs/:runId`). A run's status is `running`, `waiting` (on a clock or a person), `completed`, `failed` with an `error`, or `stopped` with a `stopReason`. When a run ends, its open tasks close.

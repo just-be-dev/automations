@@ -168,14 +168,25 @@ export const Condition: Schema.Codec<Condition> = Schema.Union([
   Schema.Struct({ not: Schema.suspend((): Schema.Codec<Condition> => Condition) }),
 ]);
 
-export const conditionRefs = (condition: Condition): ReadonlyArray<string> =>
+const refsWhere = (
+  condition: Condition,
+  include: (condition: Extract<Condition, { readonly ref: string }>) => boolean,
+): ReadonlyArray<string> =>
   "ref" in condition
-    ? [condition.ref]
+    ? include(condition)
+      ? [condition.ref]
+      : []
     : "all" in condition
-      ? condition.all.flatMap(conditionRefs)
+      ? condition.all.flatMap((inner) => refsWhere(inner, include))
       : "any" in condition
-        ? condition.any.flatMap(conditionRefs)
-        : conditionRefs(condition.not);
+        ? condition.any.flatMap((inner) => refsWhere(inner, include))
+        : refsWhere(condition.not, include);
+
+export const conditionRefs = (condition: Condition) => refsWhere(condition, () => true);
+
+/** The refs a condition reads a value through. An `exists` check only asks whether one is there. */
+const conditionValueRefs = (condition: Condition) =>
+  refsWhere(condition, (comparison) => comparison.op !== "exists");
 
 /** Whether evaluating the condition needs the current time. */
 export const usesNow = (condition: Condition): boolean =>
@@ -296,6 +307,11 @@ const ActionInput = Schema.Union([
 ]);
 export type ActionInput = typeof ActionInput.Type;
 
+const OperationId = Identifier(
+  /^[a-z]+\.[a-zA-Z]+$/,
+  'An action uses an operation such as "email.send"',
+);
+
 const ActionInputs = Schema.Record(
   Identifier(/^[a-zA-Z]{1,40}$/, "Input names are identifiers"),
   ActionInput,
@@ -342,7 +358,7 @@ export const ActionStep = Schema.Struct({
   id: StepId,
   title: StepTitle,
   kind: Schema.Literal("action"),
-  use: Identifier(/^[a-z]+\.[a-zA-Z]+$/, 'An action uses an operation such as "email.send"'),
+  use: OperationId,
   with: ActionInputs,
   template: Schema.optionalKey(TemplateUse),
   match: Schema.optionalKey(ActionMatch),
@@ -464,6 +480,15 @@ export const HumanStep = Schema.Struct({
 });
 export interface HumanStep extends Schema.Schema.Type<typeof HumanStep> {}
 
+/** Ends the run: no later step runs, in any branch. */
+export const StopStep = Schema.Struct({
+  id: StepId,
+  title: StepTitle,
+  kind: Schema.Literal("stop"),
+  reason: NonBlank("A stop step needs a reason", 1000),
+});
+export interface StopStep extends Schema.Schema.Type<typeof StopStep> {}
+
 export type Step =
   | AgentStep
   | ActionStep
@@ -472,7 +497,8 @@ export type Step =
   | ParallelStep
   | IfStep
   | DecideStep
-  | HumanStep;
+  | HumanStep
+  | StopStep;
 
 const Steps = Schema.Array(Schema.suspend((): Schema.Codec<Step> => Step));
 
@@ -532,6 +558,7 @@ export const Step: Schema.Codec<Step> = Schema.Union([
   IfStep,
   DecideStep,
   HumanStep,
+  StopStep,
 ]);
 
 /** The step sequences nested directly inside a step. */
@@ -580,20 +607,41 @@ export const stepTemplates = (step: Step): ReadonlyArray<string> => {
       return [step.title, step.question];
     case "human":
       return [step.title, step.prompt, ...humanFieldDefaults(step)];
+    case "stop":
+      return [step.title, step.reason];
     default:
       return [step.title];
   }
 };
 
-/** Every ref a step reads itself, in templates and fields, not counting nested steps. */
-export const stepRefs = (step: Step): ReadonlyArray<string> => [
+const refsReadBy = (
+  step: Step,
+  readCondition: (condition: Condition) => ReadonlyArray<string>,
+): ReadonlyArray<string> => [
   ...new Set([
     ...stepTemplates(step).flatMap(templateRefs),
     ...(step.kind === "wait" && "until" in step ? [step.until] : []),
-    ...(step.kind === "if" ? step.cases.flatMap((branch) => conditionRefs(branch.when)) : []),
+    ...(step.kind === "if" ? step.cases.flatMap((branch) => readCondition(branch.when)) : []),
     ...(step.kind === "action" && step.match !== undefined ? [step.match.on] : []),
     ...(step.kind === "human" && step.assignee !== undefined ? [step.assignee] : []),
   ]),
+];
+
+/** Every ref a step reads itself, in templates and fields, not counting nested steps. */
+export const stepRefs = (step: Step) => refsReadBy(step, conditionRefs);
+
+/**
+ * The IDs of the steps a step needs a value from, not counting nested steps. A step that didn't
+ * run, because the person declined it or it was skipped, leaves nothing to read, so the run skips
+ * the steps that need it. An `exists` check needs no value, so it can test whether a step ran.
+ */
+export const stepNeeds = (step: Step): ReadonlyArray<string> => [
+  ...new Set(
+    refsReadBy(step, conditionValueRefs).flatMap((ref) => {
+      const [root, id] = ref.split(".");
+      return root === "steps" && id !== undefined ? [id] : [];
+    }),
+  ),
 ];
 
 /** Every ref the workflow reads, in order of first use, the trigger's condition included. */
@@ -605,6 +653,25 @@ export const workflowRefs = (workflow: Pick<Workflow, "trigger" | "steps">) => [
     ...flattenSteps(workflow.steps).flatMap(stepRefs),
   ]),
 ];
+
+/** The operations the workflow's action steps use, in order of first use. */
+export const operationsUsed = (steps: ReadonlyArray<Step>) => [
+  ...new Set(flattenSteps(steps).flatMap((step) => (step.kind === "action" ? [step.use] : []))),
+];
+
+/**
+ * Whether a run performs an operation on its own (`auto`), waits for the person to approve each
+ * time (`ask`), or never performs it (`deny`), as if the person declined it.
+ */
+export const Permission = Schema.Literals(["auto", "ask", "deny"]);
+export type Permission = typeof Permission.Type;
+
+/**
+ * Permissions by operation ID. The designer suggests them and the person can change them in the
+ * studio. An operation without one gets its default (see `src/connections.ts`).
+ */
+export const Permissions = Schema.Record(OperationId, Permission);
+export type Permissions = typeof Permissions.Type;
 
 const MAX_STEPS = 60;
 const MAX_DEPTH = 4;
@@ -627,6 +694,7 @@ export const Workflow = Schema.Struct({
     }),
     Schema.makeFilter(hasUniqueIds, { message: "Step IDs must be unique identifiers" }),
   ),
+  permissions: Schema.optionalKey(Permissions),
 });
 export interface Workflow extends Schema.Schema.Type<typeof Workflow> {}
 
@@ -663,9 +731,13 @@ export const AutomationSummary = Schema.Struct({
 });
 export interface AutomationSummary extends Schema.Schema.Type<typeof AutomationSummary> {}
 
-/** Where one step of a run stands. `waiting` is a step parked on a clock or a person. */
+/**
+ * Where one step of a run stands. `waiting` is a step parked on a clock or a person. `declined` is
+ * an action the person didn't approve, and `skipped` a step that needed a value from a step that
+ * didn't run.
+ */
 export const RunStep = Schema.Struct({
-  status: Schema.Literals(["running", "waiting", "done"]),
+  status: Schema.Literals(["running", "waiting", "done", "declined", "skipped"]),
   record: Schema.optionalKey(Schema.Json),
 });
 export interface RunStep extends Schema.Schema.Type<typeof RunStep> {}
@@ -682,11 +754,19 @@ export const HumanTask = Schema.Struct({
   defaults: Schema.Record(Schema.String, Schema.String),
   /** The connection that also delivered the request. */
   notify: Schema.optionalKey(Schema.Literals(["email", "slack"])),
+  /**
+   * Set when the task asks permission for an action step: the operation, and the inputs it will
+   * perform it with once approved.
+   */
+  action: Schema.optionalKey(
+    Schema.Struct({ use: Schema.String, inputs: Schema.Record(Schema.String, Schema.Json) }),
+  ),
   status: Schema.Literals(["open", "closed"]),
 });
 export interface HumanTask extends Schema.Schema.Type<typeof HumanTask> {}
 
-export const RunStatus = Schema.Literals(["running", "waiting", "completed", "failed"]);
+/** `stopped` is a run a stop step ended. */
+export const RunStatus = Schema.Literals(["running", "waiting", "completed", "failed", "stopped"]);
 export type RunStatus = typeof RunStatus.Type;
 
 /** A run as persisted in the automation's Durable Object storage. */
@@ -698,6 +778,8 @@ export const Run = Schema.Struct({
   steps: Schema.Record(Schema.String, RunStep),
   tasks: Schema.Array(HumanTask),
   error: Schema.optionalKey(Schema.String),
+  /** The reason of the stop step that ended the run. */
+  stopReason: Schema.optionalKey(Schema.String),
   startedAt: Schema.Finite,
   /** The pi conversation the run's agent steps share. */
   conversation: Schema.optionalKey(Schema.Int),

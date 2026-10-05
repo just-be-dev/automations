@@ -20,7 +20,7 @@ import {
 } from "./entity-mcp.ts";
 import { EntityStore, type EntityChange } from "./entity-store.ts";
 import { EntityStoreD1 } from "./entity-store-d1.ts";
-import type { AutomationOverview } from "./workflow.ts";
+import { Permissions, type AutomationOverview } from "./workflow.ts";
 import { Template } from "./templates.ts";
 
 const MAX_BODY_BYTES = 32_000;
@@ -35,6 +35,7 @@ const EntityParams = Schema.Struct({ type: EntityName, entityId: EntityId });
 const TemplateParams = Schema.Struct({ name: EntityName });
 const ChatBody = Schema.Struct({ message: Schema.optionalKey(Schema.String) });
 const StartBody = Schema.Struct({ subject: Schema.optionalKey(EntityId) });
+const PermissionsBody = Schema.Struct({ permissions: Permissions });
 const EntityBody = Schema.Struct({ data: EntityData });
 
 class NotFound extends Schema.TaggedError<NotFound>()("NotFound", {
@@ -177,6 +178,17 @@ export default class Api extends Cloudflare.Worker<Api>()(
               yield* index.record(id, saved.saved.name).pipe(Effect.ignore);
               return saved;
             }).pipe(Effect.provide(entityStore)),
+          ),
+        ),
+        HttpRouter.route(
+          "POST",
+          "/:id/permissions",
+          respond(
+            Effect.gen(function* () {
+              const { id } = yield* automationParams;
+              const body = yield* limitedBody(PermissionsBody);
+              return yield* automations.getByName(id).setPermissions(body.permissions);
+            }),
           ),
         ),
         HttpRouter.route(

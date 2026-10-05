@@ -12,6 +12,7 @@ import {
   InvalidWorkflow,
   actionPaths,
   actionTemplates,
+  childSequences,
   conditionRefs,
   isPublicHttpsUrl,
   loneRef,
@@ -422,12 +423,36 @@ const triggerProblems = (catalog: Catalog, workflow: Workflow): ReadonlyArray<st
   ];
 };
 
+const sequences = (steps: ReadonlyArray<Step>): ReadonlyArray<ReadonlyArray<Step>> => [
+  steps,
+  ...steps.flatMap((step) => childSequences(step).flatMap(sequences)),
+];
+
+/** A stop step ends the run, so nothing may follow it in its list. */
+const unreachableProblems = (steps: ReadonlyArray<Step>): ReadonlyArray<string> =>
+  sequences(steps).flatMap((list) => {
+    const stop = list.findIndex((step) => step.kind === "stop");
+    const next = list[stop + 1];
+    return stop === -1 || next === undefined
+      ? []
+      : [`Step ${next.id} comes after stop step ${list[stop]?.id}, so it never runs`];
+  });
+
+const permissionProblems = (workflow: Workflow): ReadonlyArray<string> =>
+  Object.keys(workflow.permissions ?? {}).flatMap((operation) =>
+    findOperation(operation) === undefined
+      ? [`permissions names unknown operation ${operation}`]
+      : [],
+  );
+
 /** Everything wrong with a workflow given the catalog, or nothing. */
 export const workflowProblems = (catalog: Catalog, workflow: Workflow): ReadonlyArray<string> => {
   const subject = findType(catalog, subjectType(workflow.trigger));
   return [
     ...triggerProblems(catalog, workflow),
     ...checkSequence(catalog, subject, workflow.steps, new Map()).problems,
+    ...unreachableProblems(workflow.steps),
+    ...permissionProblems(workflow),
   ];
 };
 

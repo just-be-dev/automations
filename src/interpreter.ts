@@ -9,6 +9,7 @@ import {
   Workflow as EffectWorkflow,
   type WorkflowEngine,
 } from "effect/workflow";
+import { permissionOf } from "./connections.ts";
 import { Subject } from "./entities.ts";
 import {
   actionTemplates,
@@ -18,6 +19,7 @@ import {
   patternCondition,
   renderTemplate,
   RunState,
+  stepNeeds,
   stepRefs,
   usesNow,
   Workflow,
@@ -27,6 +29,8 @@ import {
   type DecideStep,
   type HumanStep,
   type IfStep,
+  type Permission,
+  type RunStep,
   type Step,
   type WaitUntilStep,
 } from "./workflow.ts";
@@ -40,9 +44,15 @@ import {
  * - agent, action, and decide steps are Activities, so a replayed run reuses their results. An
  *   action's match picks its case from the resolved values, before its Activity. Templates are
  *   expanded before a run starts (`expandTemplates`), so an action that still uses one fails.
+ * - An action whose operation the workflow's permissions set to `ask` first parks on a
+ *   DurableDeferred until the person approves or declines it with `respondToHuman`. One set to
+ *   `deny` is declined without asking. A declined action records nothing.
+ * - A step that needs a value from a step that didn't run (see `stepNeeds`) is skipped, and
+ *   records nothing either, so the steps that need it are skipped in turn.
  * - parallel branches run concurrently and merge what they recorded.
  * - wait steps are DurableClocks.
  * - human steps park on a DurableDeferred until `respondToHuman` completes it.
+ * - A stop step fails the execution with `RunStopped`, which interrupts every branch.
  *
  * Everything outside an Activity runs again on every replay, so it must stay deterministic.
  */
@@ -51,6 +61,14 @@ export class StepFailed extends Schema.TaggedError<StepFailed>()("StepFailed", {
   step: Schema.String,
   message: Schema.String,
 }) {}
+
+/** A stop step ended the run. */
+export class RunStopped extends Schema.TaggedError<RunStopped>()("RunStopped", {
+  step: Schema.String,
+  reason: Schema.String,
+}) {}
+
+type RunError = StepFailed | RunStopped;
 
 export const Decision = Schema.Struct({
   choice: Schema.String,
@@ -82,11 +100,21 @@ export interface HumanRequest {
   readonly defaults: Readonly<Record<string, string>>;
 }
 
+/** Asks the person whether an action step may perform its operation with these inputs. */
+export interface PermissionRequest {
+  readonly runId: string;
+  readonly token: DurableDeferred.Token;
+  readonly step: ActionStep;
+  /** The step's title with its templates filled in. */
+  readonly title: string;
+  readonly inputs: Readonly<Record<string, Schema.Json>>;
+}
+
 /** Progress the interpreter reports as it goes. A replay reports finished steps again. */
 export interface StepEvent {
   readonly runId: string;
   readonly step: string;
-  readonly status: "running" | "waiting" | "done";
+  readonly status: RunStep["status"];
   readonly record?: Schema.Json;
 }
 
@@ -119,6 +147,7 @@ export class StepRunner extends Context.Service<
       readonly state: RunState;
     }) => Effect.Effect<Decision, StepFailed>;
     readonly requestHuman: (request: HumanRequest) => Effect.Effect<void, StepFailed>;
+    readonly requestPermission: (request: PermissionRequest) => Effect.Effect<void, StepFailed>;
     readonly report: (event: StepEvent) => Effect.Effect<void>;
   }
 >()("automations/StepRunner") {}
@@ -127,10 +156,20 @@ export const RunAutomation = EffectWorkflow.make("RunAutomation", {
   payload: { runId: Schema.String, workflow: Workflow, subject: Schema.NullOr(Subject) },
   idempotencyKey: ({ runId }) => runId,
   success: RunState,
-  error: StepFailed,
+  error: Schema.Union([StepFailed, RunStopped]),
 });
 
-type Requirements = StepRunner | WorkflowEngine.WorkflowEngine | WorkflowEngine.WorkflowInstance;
+/** The permissions of the workflow a run executes. */
+class RunPermissions extends Context.Service<
+  RunPermissions,
+  { readonly of: (operationId: string) => Permission }
+>()("automations/RunPermissions") {}
+
+type Requirements =
+  | StepRunner
+  | RunPermissions
+  | WorkflowEngine.WorkflowEngine
+  | WorkflowEngine.WorkflowInstance;
 
 const retried = { times: 2 } as const;
 
@@ -181,24 +220,26 @@ export const renderInput = (value: ActionInput, values: Values): Schema.Json => 
 const runSteps = (
   steps: ReadonlyArray<Step>,
   state: RunState,
-): Effect.Effect<RunState, StepFailed, Requirements> =>
+): Effect.Effect<RunState, RunError, Requirements> =>
   Effect.reduce(
     steps,
     () => state,
     (current, step) => runStep(step, current),
   );
 
-const runStep = (step: Step, state: RunState): Effect.Effect<RunState, StepFailed, Requirements> =>
-  Effect.andThen(
-    report({ runId: state.runId, step: step.id, status: "running" }),
-    Effect.flatMap(resolveRefs(step, state), (values) => runResolved(step, state, values)),
-  );
+const runStep = (step: Step, state: RunState): Effect.Effect<RunState, RunError, Requirements> =>
+  stepNeeds(step).some((id) => !Object.hasOwn(state.steps, id))
+    ? report({ runId: state.runId, step: step.id, status: "skipped" }).pipe(Effect.as(state))
+    : Effect.andThen(
+        report({ runId: state.runId, step: step.id, status: "running" }),
+        Effect.flatMap(resolveRefs(step, state), (values) => runResolved(step, state, values)),
+      );
 
 const runResolved = (
   step: Step,
   state: RunState,
   values: Values,
-): Effect.Effect<RunState, StepFailed, Requirements> => {
+): Effect.Effect<RunState, RunError, Requirements> => {
   switch (step.kind) {
     case "agent":
       return Effect.gen(function* () {
@@ -233,6 +274,17 @@ const runResolved = (
             renderInput(value, values),
           ]),
         );
+        const permission = (yield* RunPermissions).of(step.use);
+        if (permission === "deny") {
+          yield* report({ runId: state.runId, step: step.id, status: "declined" });
+          return state;
+        }
+        if (
+          permission === "ask" &&
+          !(yield* askPermission(step, state, renderTemplate(step.title, values), inputs))
+        ) {
+          return state;
+        }
         const output = yield* Activity.make({
           name: step.id,
           success: Schema.Json,
@@ -272,6 +324,12 @@ const runResolved = (
       return decide(step, state, values);
     case "human":
       return askHuman(step, state, values);
+    case "stop": {
+      const reason = renderTemplate(step.reason, values);
+      return record(state, step, { reason }).pipe(
+        Effect.andThen(Effect.fail(new RunStopped({ step: step.id, reason }))),
+      );
+    }
   }
 };
 
@@ -388,7 +446,28 @@ const askHuman = Effect.fnUntraced(function* (step: HumanStep, state: RunState, 
   return yield* record(state, step, outcome);
 });
 
-/** Completes a human step from the token its `HumanRequest` carried. */
+/** Waits for the person to approve or decline an action, and says whether they approved it. */
+const askPermission = Effect.fnUntraced(function* (
+  step: ActionStep,
+  state: RunState,
+  title: string,
+  inputs: Record<string, Schema.Json>,
+) {
+  const runner = yield* StepRunner;
+  const deferred = humanDeferred(`${step.id}/approval`);
+  const token = yield* DurableDeferred.token(deferred);
+  yield* Activity.make({
+    name: `${step.id}/approval-request`,
+    error: StepFailed,
+    execute: runner.requestPermission({ runId: state.runId, token, step, title, inputs }),
+  }).pipe(Activity.retry(retried));
+  yield* report({ runId: state.runId, step: step.id, status: "waiting" });
+  const { approved } = yield* DurableDeferred.await(deferred);
+  yield* report({ runId: state.runId, step: step.id, status: approved ? "running" : "declined" });
+  return approved === true;
+});
+
+/** Completes a human step, or a permission request, from the token its request carried. */
 export const respondToHuman = (token: DurableDeferred.Token, response: HumanResponse) =>
   DurableDeferred.succeed(
     humanDeferred(DurableDeferred.TokenParsed.fromString(token).deferredName),
@@ -396,5 +475,9 @@ export const respondToHuman = (token: DurableDeferred.Token, response: HumanResp
   );
 
 export const RunAutomationLive = RunAutomation.toLayer(({ runId, workflow, subject }) =>
-  runSteps(workflow.steps, { runId, subject, steps: {} }),
+  runSteps(workflow.steps, { runId, subject, steps: {} }).pipe(
+    Effect.provideService(RunPermissions, {
+      of: (operationId) => permissionOf(workflow, operationId),
+    }),
+  ),
 );

@@ -15,6 +15,7 @@ import { agentOutput, agentPrompt, decidePrompt, decision } from "./agent-step.t
 import { openAutomationIndex } from "./automation-index.ts";
 import { checkWorkflow } from "./catalog.ts";
 import { runAction } from "./connection-runner.ts";
+import { findOperation, permissionsOf } from "./connections.ts";
 import {
   designDraft,
   fixedProgress,
@@ -28,10 +29,12 @@ import {
   HumanResponse,
   respondToHuman,
   RunAutomation,
+  RunStopped,
   RunAutomationLive,
   StepFailed,
   StepRunner,
   type HumanRequest,
+  type PermissionRequest,
   type StepEvent,
 } from "./interpreter.ts";
 import { EntityStore } from "./entity-store.ts";
@@ -50,6 +53,7 @@ import {
   Exchange,
   holds,
   PendingChat,
+  type Permissions,
   Run,
   subjectType,
   valueMatches,
@@ -276,6 +280,26 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
           return { ...run, tasks: [...run.tasks, task] };
         });
 
+      const requestPermission = (request: PermissionRequest) =>
+        updateRun(request.runId, (run) => {
+          if (run.tasks.some((task) => task.step === request.step.id)) {
+            return run;
+          }
+          const operation = findOperation(request.step.use)?.title ?? request.step.use;
+          const task: HumanTask = {
+            step: request.step.id,
+            token: request.token,
+            title: request.title,
+            prompt: `${operation} with the details below? Rejecting skips this step and the steps that need its result.`,
+            assignee: null,
+            response: "approval",
+            defaults: {},
+            action: { use: request.step.use, inputs: request.inputs },
+            status: "open",
+          };
+          return { ...run, tasks: [...run.tasks, task] };
+        });
+
       const stepFailed = (step: string) => (error: { readonly message: string }) =>
         new StepFailed({ step, message: error.message });
 
@@ -308,6 +332,7 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
             }),
           ).pipe(Effect.mapError(stepFailed(step.id))),
         requestHuman: (request) => withRuntime(requestHuman(request)),
+        requestPermission: (request) => withRuntime(requestPermission(request)),
         report: (event) => withRuntime(updateRun(event.runId, (run) => applyEvent(run, event))),
       });
 
@@ -342,9 +367,18 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
           if (result._tag === "Suspended") {
             return { ...run, status: "waiting" };
           }
-          return Exit.isSuccess(result.exit)
-            ? { ...run, status: "completed" }
-            : { ...run, status: "failed", error: causeMessage(result.exit.cause) };
+          // A run that ended answers no more tasks, such as those in branches a stop step cut off.
+          const ended = {
+            ...run,
+            tasks: run.tasks.map((task): HumanTask => ({ ...task, status: "closed" })),
+          };
+          if (Exit.isSuccess(result.exit)) {
+            return { ...ended, status: "completed" };
+          }
+          const failure = Cause.squash(result.exit.cause);
+          return failure instanceof RunStopped
+            ? { ...ended, status: "stopped", stopReason: failure.reason }
+            : { ...ended, status: "failed", error: causeMessage(result.exit.cause) };
         });
 
       // Delivery is at least once, and a replay only reruns what the journal lacks: Activities
@@ -537,8 +571,12 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
           if (pending === undefined || !isWorking(pending, chatId)) {
             return;
           }
+          const draft = yield* readWorkflow("draft");
+          const permissions = draft === undefined ? {} : permissionsOf(draft);
           const reply = yield* catalog.pipe(
-            Effect.flatMap((current) => designDraft(pi, current, chatId, pending.prompt)),
+            Effect.flatMap((current) =>
+              designDraft(pi, current, permissions, chatId, pending.prompt),
+            ),
             Effect.result,
             Effect.raceFirst(trackProgress(chatId)),
           );
@@ -558,11 +596,17 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
                   yield* state.storage.put("pendingChat", failed);
                   return false;
                 }
+                // The designer may leave out permissions it isn't changing.
+                const previous = yield* readWorkflow("draft");
+                const designed: Workflow = {
+                  ...reply.success.workflow,
+                  permissions: { ...previous?.permissions, ...reply.success.workflow.permissions },
+                };
                 const exchangeCount =
                   (yield* state.storage
                     .get("exchangeCount")
                     .pipe(Effect.flatMap(decodeStoredExchangeCount))) ?? 0;
-                yield* state.storage.put("draft", reply.success.workflow);
+                yield* state.storage.put("draft", designed);
                 yield* state.storage.put(exchangeKey(exchangeCount), {
                   prompt: pending.prompt,
                   reply: reply.success.reply,
@@ -621,6 +665,37 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         yield* checkWorkflow(yield* catalog, draft);
         yield* state.storage.put("saved", draft);
         return { saved: draft };
+      });
+
+      /**
+       * Sets whether operations run on their own or ask first, over what the designer suggested.
+       * Saving applies them.
+       */
+      const setPermissions = Effect.fn("Automation.setPermissions")(function* (
+        permissions: Permissions,
+      ) {
+        const unknown = Object.keys(permissions).filter((id) => findOperation(id) === undefined);
+        if (unknown.length > 0) {
+          return yield* new AutomationError({
+            message: `Unknown operations: ${unknown.join(", ")}`,
+          });
+        }
+        return yield* state.storage
+          .transaction(
+            Effect.gen(function* () {
+              const current = yield* readWorkflow("draft");
+              if (current === undefined) {
+                return yield* new AutomationError({ message: "No draft to set permissions on" });
+              }
+              const draft: Workflow = {
+                ...current,
+                permissions: { ...current.permissions, ...permissions },
+              };
+              yield* state.storage.put("draft", draft);
+              return { draft };
+            }),
+          )
+          .pipe(Effect.catchTag("DurableObjectStorageError", Effect.die));
       });
 
       /** Starts the saved workflow by hand, for the entity `subjectId` names when it has a subject. */
@@ -720,7 +795,17 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         return { ...found, subjectTitle: summary(types, found).subject };
       });
 
-      return { inspectWorkflow, overview, chat, save, start, entityChanged, respond, run };
+      return {
+        inspectWorkflow,
+        overview,
+        chat,
+        save,
+        setPermissions,
+        start,
+        entityChanged,
+        respond,
+        run,
+      };
     }).pipe(Effect.provide(entityStore));
   }).pipe(
     Effect.provide(
