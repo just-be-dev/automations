@@ -1,7 +1,7 @@
 import { test } from "bun:test";
 import * as Option from "effect/Option";
 import { Command, change, click, expect, given, label, role, scene, text } from "foldkit/scene";
-import { onboarding, runOf, summaryOf } from "./fixtures.ts";
+import { onboarding, runOf, summaryOf } from "../../fixtures.ts";
 import {
   LoadOverview,
   LoadSubjects,
@@ -11,7 +11,7 @@ import {
   init,
   update,
   view,
-} from "./overview.ts";
+} from "./index.ts";
 
 const waiting = summaryOf(runOf({ status: "waiting", tasks: [] }));
 

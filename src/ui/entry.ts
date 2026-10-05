@@ -1,6 +1,10 @@
 import { Runtime } from "foldkit";
-import { Message, Model, init, update, view } from "./main.ts";
+import { init } from "./main.ts";
+import { Message } from "./message.ts";
+import { Model } from "./model.ts";
 import { Flags, loadFlags } from "./theme.ts";
+import { update } from "./update/index.ts";
+import { view } from "./view/index.ts";
 import "@fontsource-variable/inter";
 import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";

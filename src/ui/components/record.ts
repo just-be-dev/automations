@@ -2,8 +2,8 @@ import * as Array from "effect/Array";
 import * as Predicate from "effect/Predicate";
 import type * as Schema from "effect/Schema";
 import type { Html, HtmlBuilder } from "foldkit/html";
+import { formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { formatTime } from "./format.ts";
 
 // What a step recorded, laid out for people who don't read JSON: labelled fields, readable dates,
 // lists as tags.

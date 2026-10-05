@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import { Command, given, message, model, story } from "foldkit/story";
+import { ada, employee, employeesOpen } from "./fixtures.ts";
 import {
   DeleteEntity,
   LoadEntities,
@@ -12,8 +13,7 @@ import {
   init,
   reflectUrl,
   update,
-} from "./main.ts";
-import { ada, employee, employeesOpen } from "./fixtures.ts";
+} from "./index.ts";
 
 const named = (commands: ReadonlyArray<{ readonly name: string; readonly args?: unknown }> = []) =>
   commands.map(({ name, args }) => ({ name, args }));

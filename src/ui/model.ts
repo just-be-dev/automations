@@ -1,0 +1,116 @@
+import * as Schema from "effect/Schema";
+import { defineTaggedUnion } from "foldkit/schema";
+import { PendingChat, Run, RunSummary, Workflow } from "../workflow.ts";
+import { Role } from "../entities.ts";
+import { SubjectOption } from "./api.ts";
+import { TaskAnswer } from "./domain/index.ts";
+import { Entities, Overview } from "./page/index.ts";
+import { Theme } from "./theme.ts";
+
+export const Activity = defineTaggedUnion({
+  Ready: { notice: Schema.String },
+  Working: { notice: Schema.String },
+  Failed: { error: Schema.String },
+});
+
+export const Exchange = Schema.Struct({
+  id: Schema.Int,
+  prompt: Schema.String,
+  reply: Schema.String,
+});
+export type Exchange = typeof Exchange.Type;
+
+export const WorkflowDisplay = Schema.Literals(["Steps", "Json"]);
+export type WorkflowDisplay = typeof WorkflowDisplay.Type;
+
+export const AutomationSummary = Schema.Struct({ id: Schema.String, name: Schema.String });
+
+export const Directory = defineTaggedUnion({
+  Loading: {},
+  Ready: { automations: Schema.Array(AutomationSummary) },
+  Unavailable: { error: Schema.String },
+});
+
+export const RoleChoices = defineTaggedUnion({
+  Loading: {},
+  Ready: { roles: Schema.Array(Role) },
+  Unavailable: { error: Schema.String },
+});
+export type RoleChoices = typeof RoleChoices.Type;
+
+export const readyRoles = (choices: RoleChoices): ReadonlyArray<Role> =>
+  RoleChoices.guards.Ready(choices) ? choices.roles : [];
+
+export const SubjectChoices = defineTaggedUnion({
+  NotNeeded: {},
+  Loading: { entityType: Schema.String },
+  Ready: { entityType: Schema.String, label: Schema.String, subjects: Schema.Array(SubjectOption) },
+  Unavailable: { entityType: Schema.String, error: Schema.String },
+});
+export type SubjectChoices = typeof SubjectChoices.Type;
+
+export const RunDetail = defineTaggedUnion({
+  Loading: {},
+  Loaded: { run: Run, maybeSubjectTitle: Schema.Option(Schema.String) },
+  Unavailable: { error: Schema.String },
+});
+
+/** How the last answer to one of the run's tasks, or the last reload of the run, went. */
+export const RunNotice = defineTaggedUnion({
+  Idle: {},
+  Sending: {},
+  Sent: {},
+  Failed: { error: Schema.String },
+});
+export type RunNotice = typeof RunNotice.Type;
+
+/** A run being followed, on its own page or in the panel beside the overview or the studio. */
+export const OpenRun = Schema.Struct({
+  automationId: Schema.String,
+  runId: Schema.String,
+  detail: RunDetail,
+  taskEdits: Schema.Array(TaskAnswer.TaskFieldEdit),
+  notice: RunNotice,
+});
+export type OpenRun = typeof OpenRun.Type;
+
+/**
+ * The overview of every automation, the studio that edits the one in `automationId`, or one of its
+ * runs. A run page shows what the run did without the designer: it ran a saved snapshot, not the
+ * draft.
+ */
+export const Page = defineTaggedUnion({
+  Overview: { overview: Overview.Model },
+  Entities: { entities: Entities.Model },
+  Studio: {},
+  Run: { openRun: OpenRun },
+});
+export type Page = typeof Page.Type;
+
+export const Model = Schema.Struct({
+  page: Page,
+  automationId: Schema.String,
+  automationIdInput: Schema.String,
+  directory: Directory,
+  roles: RoleChoices,
+  revision: Schema.Int,
+  messageInput: Schema.String,
+  conversation: Schema.Array(Exchange),
+  maybeDraft: Schema.Option(Workflow),
+  maybeSaved: Schema.Option(Workflow),
+  maybePendingChat: Schema.Option(PendingChat),
+  runs: Schema.Array(RunSummary),
+  /** The run open beside the overview or the studio. Changing pages closes it. */
+  maybeRunPanel: Schema.Option(OpenRun),
+  /** Each load of the open run starts a new chain of polls and drops the replies of older ones. */
+  runPoll: Schema.Int,
+  subjectChoices: SubjectChoices,
+  maybeSubjectId: Schema.Option(Schema.String),
+  /** What the agent is doing while it answers, as the server last described it. */
+  maybeProgress: Schema.Option(Schema.String),
+  expandedStepIds: Schema.Array(Schema.String),
+  workflowDisplay: WorkflowDisplay,
+  theme: Theme,
+  activity: Activity,
+});
+export type Model = typeof Model.Type;

@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import { Command, given, message, model, story } from "foldkit/story";
-import { onboarding, runOf, summaryOf } from "./fixtures.ts";
+import { onboarding, runOf, summaryOf } from "../../fixtures.ts";
 import {
   LoadOverview,
   LoadSubjects,
@@ -11,7 +11,7 @@ import {
   init,
   triggerSummary,
   update,
-} from "./overview.ts";
+} from "./index.ts";
 
 const ordersRow = {
   id: "orders",

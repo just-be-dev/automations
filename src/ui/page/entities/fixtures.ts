@@ -1,6 +1,6 @@
 import * as Option from "effect/Option";
-import type { EntityRecord, EntityType } from "../../entities.ts";
-import { Message, init, update, type Model } from "./main.ts";
+import type { EntityRecord, EntityType } from "../../../entities.ts";
+import { Message, init, update, type Model } from "./index.ts";
 
 export const employee: EntityType = {
   name: "employee",

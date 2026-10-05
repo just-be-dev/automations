@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { formatTime } from "./format.ts";
+import { formatTime } from "@/lib/format";
 import { fieldLabel, formatText } from "./record.ts";
 
 test("field names read as labels", () => {

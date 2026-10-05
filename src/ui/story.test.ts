@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 import { Command, given, message, model, story } from "foldkit/story";
 import { UrlRequest } from "foldkit/navigation";
 import { modifyFields } from "foldkit/struct";
+import type { Workflow } from "../workflow.ts";
 import {
   AnswerTask,
   ApplyTheme,
@@ -11,20 +12,18 @@ import {
   LoadRun,
   LoadRuns,
   LoadSubjects,
-  Message,
   NavigateInternal,
   PollAutomation,
   PollRun,
   SendMessage,
   SaveDraft,
   StartRun,
-  init,
-  update,
-  type Model,
-  type Workflow,
-} from "./main.ts";
-import * as Overview from "./overview.ts";
-import { LoadOverview } from "./overview.ts";
+} from "./command.ts";
+import { init } from "./main.ts";
+import { Message } from "./message.ts";
+import type { Model } from "./model.ts";
+import { Overview } from "./page/index.ts";
+import { update } from "./update/index.ts";
 import { approvalTask, laptopTask, onboarding, runOf, studioUrl, summaryOf } from "./fixtures.ts";
 
 const automationLoaded = (
@@ -668,7 +667,7 @@ test("the overview drops the studio's late replies, and a run link from it opens
     update,
     given(sending),
     message(Message.ChangedUrl({ url: studioUrl() })),
-    Command.expectExact(LoadOverview({ session: 1, poll: 0 })),
+    Command.expectExact(Overview.LoadOverview({ session: 1, poll: 0 })),
     model((current) => {
       expect(current.page._tag).toBe("Overview");
       expect(current.automationIdInput).toBe("");
@@ -676,7 +675,7 @@ test("the overview drops the studio's late replies, and a run link from it opens
       expect(late.model).toBe(current);
     }),
     Command.resolve(
-      LoadOverview,
+      Overview.LoadOverview,
       Overview.Message.SucceededLoadOverview({ session: 1, poll: 0, automations: [] }),
     ),
     model((current) =>

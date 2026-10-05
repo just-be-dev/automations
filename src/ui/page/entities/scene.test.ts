@@ -13,8 +13,8 @@ import {
   text,
   type,
 } from "foldkit/scene";
-import { Message, SaveEntity, SaveType, init, update, view } from "./main.ts";
 import { employeesOpen } from "./fixtures.ts";
+import { Message, SaveEntity, SaveType, init, update, view } from "./index.ts";
 
 test("a type shows its fields and its entities, which open in a form", () => {
   scene(

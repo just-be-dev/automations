@@ -5,9 +5,20 @@
 These instructions apply to `src/ui/` and its descendants. The UI uses Foldkit, a framework built on Effect-TS and architected like Elm.
 
 - Do not vendor the Foldkit repository or offer to add a subtree. Import from installed npm packages.
-- Keep browser definitions in `src/ui/main.ts` and runtime boot in `src/ui/entry.ts`. Server code lives outside `src/ui/` (see the root `AGENTS.md`). Alchemy runs the Vite build for the Studio Worker on deploy and the Vite dev server under `alchemy dev`. `bun run build` is only a local check.
+- Keep runtime boot in `src/ui/entry.ts` and the definitions it boots in their own modules (see Layout below). Server code lives outside `src/ui/` (see the root `AGENTS.md`). Alchemy runs the Vite build for the Studio Worker on deploy and the Vite dev server under `alchemy dev`. `bun run build` is only a local check.
 - Keep Foldkit architectural lint rules scoped to `src/ui/`.
 - Use installed package types and upstream source at the `foldkit@<installed-version>` GitHub tag, not `main`. Source and examples are authoritative when these conventions or online docs disagree with the installed APIs.
+
+## Layout
+
+The app follows [Foldkit's project organization](https://foldkit.dev/patterns/project-organization):
+
+- `entry.ts` boots the runtime. `main.ts` holds the root `init`; `model.ts`, `message.ts`, and `command.ts` hold the root Model, Messages, and Commands. `constant.ts` holds DOM ids and limits that update and view share. `route.ts` maps URLs to pages.
+- The root app owns the studio and the run page, because both share the open automation and the run panel. Its update and view are split by area: `update/` (`update.ts` is the matcher; `navigation.ts`, `studio.ts`, and `open-run.ts` are the transitions it calls) and `view/` (`view.ts` is the page shell; `sidebar.ts`, `conversation.ts`, `studio.ts`, `workflow.ts`, `run.ts`, and `task.ts` are its parts, and `shared.ts` holds pieces several of them use). Import each folder through its `index.ts`.
+- `page/` holds the Submodels: `page/overview/` and `page/entities/`. Each owns its `model.ts`, `message.ts`, `init.ts`, `update.ts`, `command.ts`, `view.ts`, and its `story.test.ts` and `scene.test.ts`. Import them as namespaces from `page/index.ts` (`Overview.update`, `Entities.Model`). A page never imports the root app; keep barrel dependencies pointing inward.
+- `domain/` holds pure business modules, each with its Schema and operations, imported as namespaces from `domain/index.ts` (`AutomationId.isValid`, `TaskAnswer.fromForm`).
+- Shared leaves that know nothing about the root app: `api.ts` (HTTP helpers for Commands), `theme.ts` (Flags and the saved theme), `lib/` (`cn`, `icon`, text formatting, dates), and `components/` (`record.ts` plus the vendored foldcn components in `components/ui/`).
+- Root `story.test.ts` and `scene.test.ts` cover the studio, run pages, and flows that cross pages. `fixtures.ts` is shared test data.
 
 ## Styling and foldcn
 

@@ -20,9 +20,9 @@
         "overrides": [
           {
             "include": [
-              "src/ui/main.ts",
               "src/ui/api.ts",
-              "src/ui/entities/main.ts",
+              "src/ui/command.ts",
+              "src/ui/page/entities/command.ts",
               "src/api.ts",
               "src/connection-runner.ts"
             ],

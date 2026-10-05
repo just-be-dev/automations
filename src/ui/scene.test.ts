@@ -16,23 +16,17 @@ import {
   type,
   within,
 } from "foldkit/scene";
+import type { Workflow } from "../workflow.ts";
 import {
   AnswerTask,
   LoadAutomations,
   LoadRun,
-  Message,
   NavigateInternal,
   PollAutomation,
   SendMessage,
   SetPermission,
   StartRun,
-  init,
-  update,
-  view,
-  type Model,
-  type Workflow,
-} from "./main.ts";
-import * as Entities from "./entities/main.ts";
+} from "./command.ts";
 import {
   approvalTask,
   laptopTask,
@@ -42,6 +36,12 @@ import {
   studioUrl,
   summaryOf,
 } from "./fixtures.ts";
+import { init } from "./main.ts";
+import { Message } from "./message.ts";
+import type { Model } from "./model.ts";
+import { Entities } from "./page/index.ts";
+import { update } from "./update/index.ts";
+import { view } from "./view/index.ts";
 
 const automationLoaded = (
   fields: Partial<Parameters<typeof Message.SucceededLoadAutomation>[0]> = {},

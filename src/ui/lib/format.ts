@@ -1,8 +1,8 @@
-import type { RunStatus } from "../workflow.ts";
+import type { RunStatus } from "../../workflow.ts";
 
 export const withArticle = (entityType: string) => {
   const noun = entityType.replaceAll("_", " ");
-  return `${/^[aeiou]/.test(noun) ? "an" : "a"} ${noun}`;
+  return `${/^[aeiou]/i.test(noun) ? "an" : "a"} ${noun}`;
 };
 
 export const formatTime = (millis: number) =>
@@ -12,6 +12,9 @@ export const formatTime = (millis: number) =>
     hour: "numeric",
     minute: "2-digit",
   });
+
+export const plural = (count: number, one: string, many: string) =>
+  `${count} ${count === 1 ? one : many}`;
 
 export const openTasksText = (count: number) =>
   count === 1 ? "1 open task" : `${count} open tasks`;
