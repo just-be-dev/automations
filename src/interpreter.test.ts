@@ -554,19 +554,21 @@ describe("RunAutomation", () => {
       Effect.gen(function* () {
         const executionId = yield* start(harness, {
           ...workflow(welcome, agent("after")),
-          permissions: { "email.send": "ask" },
+          permissions: { "email.send": { ask: "people_ops" } },
         });
         expect(yield* outcome(executionId)).toBe("suspended");
         expect(harness.calls).toEqual([]);
         expect(
-          harness.permissionRequests.map(({ step, title, inputs }) => ({
+          harness.permissionRequests.map(({ step, role, title, inputs }) => ({
             step: step.id,
+            role,
             title,
             inputs,
           })),
         ).toEqual([
           {
             step: "welcome",
+            role: "people_ops",
             title: "Welcome Ada",
             inputs: { to: "grace", subject: "Hi", body: "Ada starts soon" },
           },
@@ -587,9 +589,8 @@ describe("RunAutomation", () => {
     const steps = await runTest(
       harness,
       Effect.gen(function* () {
-        const executionId = yield* start(
-          harness,
-          workflow(
+        const executionId = yield* start(harness, {
+          ...workflow(
             welcome,
             agent("log", "Log {{steps.welcome.messageId}}"),
             agent("chain", "Read {{steps.log.output}}"),
@@ -606,7 +607,8 @@ describe("RunAutomation", () => {
               ],
             },
           ),
-        );
+          permissions: { "email.send": { ask: "people_ops" } },
+        });
         yield* respond(harness, harness.permissionRequests[0], { approved: false });
         return yield* finalSteps(executionId);
       }),
@@ -622,16 +624,7 @@ describe("RunAutomation", () => {
     ]);
   });
 
-  test("operations without a permission ask first when they send, unless set to run automatically", async () => {
-    const asked = makeHarness();
-    await runTest(
-      asked,
-      Effect.gen(function* () {
-        expect(yield* outcome(yield* start(asked, workflow(welcome)))).toBe("suspended");
-      }),
-    );
-    expect(asked.permissionRequests.map(({ step }) => step.id)).toEqual(["welcome"]);
-
+  test("an operation set to auto runs without asking, and one with no permission fails", async () => {
     const automatic = makeHarness();
     await runTest(
       automatic,
@@ -642,25 +635,11 @@ describe("RunAutomation", () => {
     );
     expect(automatic.permissionRequests).toEqual([]);
     expect(automatic.calls).toEqual(["welcome"]);
-  });
 
-  test("a denied operation is declined without asking", async () => {
-    const harness = makeHarness();
-    const steps = await runTest(
-      harness,
-      Effect.flatMap(
-        start(harness, {
-          ...workflow(welcome, agent("log", "Log {{steps.welcome.messageId}}"), agent("other")),
-          permissions: { "email.send": "deny" },
-        }),
-        finalSteps,
-      ),
-    );
-    expect(harness.permissionRequests).toEqual([]);
-    expect(harness.calls).toEqual(["other"]);
-    expect(Object.keys(steps)).toEqual(["other"]);
-    expect(harness.events).toContainEqual({ runId: "run-1", step: "welcome", status: "declined" });
-    expect(harness.events).toContainEqual({ runId: "run-1", step: "log", status: "skipped" });
+    const unset = makeHarness();
+    const result = await runTest(unset, Effect.flatMap(start(unset, workflow(welcome)), outcome));
+    expect(Exit.isExit(result) && Exit.isFailure(result)).toBe(true);
+    expect(unset.calls).toEqual([]);
   });
 
   test("a stop step ends the run, with every branch", async () => {

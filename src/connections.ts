@@ -1,10 +1,9 @@
-import { operationsUsed, type Permission, type Permissions, type Workflow } from "./workflow.ts";
+import type { Permission, Workflow } from "./workflow.ts";
 
 /**
  * Connections are the outside services a workflow can act through, and each one offers
  * operations. An `action` step names an operation (`use: "slack.sendMessage"`) and fills its
- * inputs (`with`). This module is the registry: what each operation accepts and records, and
- * whether a run performs it on its own or asks the person first. It is
+ * inputs (`with`). This module is the registry: what each operation accepts and records. It is
  * pure, so the designer prompt, the workflow checker, and the studio UI all read it. How the
  * operations execute lives in `src/connection-runner.ts`.
  */
@@ -39,11 +38,6 @@ export interface Operation {
   readonly records: string;
   /** The fields of that record a later step may read. */
   readonly recordFields: ReadonlyArray<string>;
-  /**
-   * The permission it runs with when the workflow sets none: operations that only look something
-   * up run on their own, and operations that send or change something ask first.
-   */
-  readonly defaultPermission: Permission;
 }
 
 export interface Connection {
@@ -81,7 +75,6 @@ export const connections: ReadonlyArray<Connection> = [
         ],
         records: '{"messageId": string}',
         recordFields: ["messageId"],
-        defaultPermission: "ask",
       },
     ],
   },
@@ -100,7 +93,6 @@ export const connections: ReadonlyArray<Connection> = [
         ],
         records: '{"channel": string, "ts": string}',
         recordFields: ["channel", "ts"],
-        defaultPermission: "ask",
       },
     ],
   },
@@ -121,7 +113,6 @@ export const connections: ReadonlyArray<Connection> = [
         ],
         records: '{"times": [datetime, ...]}, the first few open start times',
         recordFields: ["times"],
-        defaultPermission: "auto",
       },
       {
         id: "calendar.createEvent",
@@ -137,7 +128,6 @@ export const connections: ReadonlyArray<Connection> = [
         ],
         records: '{"eventId": string, "start": datetime}',
         recordFields: ["eventId", "start"],
-        defaultPermission: "ask",
       },
     ],
   },
@@ -157,7 +147,6 @@ export const connections: ReadonlyArray<Connection> = [
         ],
         records: '{"status": number, "body": string}',
         recordFields: ["status", "body"],
-        defaultPermission: "ask",
       },
     ],
   },
@@ -172,18 +161,8 @@ export const findOperation = (id: string) => operations.find((operation) => oper
 export const connectionOf = (operationId: string) =>
   connections.find((connection) => operationId.startsWith(`${connection.id}.`));
 
-/** The permission an operation runs with in a workflow. */
+/** The permission an operation runs with in a workflow, if the workflow sets one. */
 export const permissionOf = (
   workflow: Pick<Workflow, "permissions">,
   operationId: string,
-): Permission =>
-  workflow.permissions?.[operationId] ?? findOperation(operationId)?.defaultPermission ?? "ask";
-
-/** The permission of every operation the workflow uses. */
-export const permissionsOf = (workflow: Workflow): Permissions =>
-  Object.fromEntries(
-    operationsUsed(workflow.steps).map((operationId) => [
-      operationId,
-      permissionOf(workflow, operationId),
-    ]),
-  );
+): Permission | undefined => workflow.permissions?.[operationId];

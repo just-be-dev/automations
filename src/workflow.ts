@@ -660,15 +660,18 @@ export const operationsUsed = (steps: ReadonlyArray<Step>) => [
 ];
 
 /**
- * Whether a run performs an operation on its own (`auto`), waits for the person to approve each
- * time (`ask`), or never performs it (`deny`), as if the person declined it.
+ * Whether a run performs an operation on its own (`"auto"`), or waits each time until a member of
+ * a role approves it (`{ "ask": "<role>" }`).
  */
-export const Permission = Schema.Literals(["auto", "ask", "deny"]);
+export const Permission = Schema.Union([
+  Schema.Literal("auto"),
+  Schema.Struct({ ask: EntityName }),
+]);
 export type Permission = typeof Permission.Type;
 
 /**
- * Permissions by operation ID. The designer suggests them and the person can change them in the
- * studio. An operation without one gets its default (see `src/connections.ts`).
+ * Permissions by operation ID. Every operation a workflow uses needs one. The designer suggests
+ * them and the person can change them in the studio.
  */
 export const Permissions = Schema.Record(OperationId, Permission);
 export type Permissions = typeof Permissions.Type;
@@ -760,6 +763,17 @@ export const HumanTask = Schema.Struct({
    */
   action: Schema.optionalKey(
     Schema.Struct({ use: Schema.String, inputs: Schema.Record(Schema.String, Schema.Json) }),
+  ),
+  /**
+   * Set with `action`: the role that approves it, and its members when the request was made. Only
+   * they may answer, when the studio knows who is answering.
+   */
+  approvers: Schema.optionalKey(
+    Schema.Struct({
+      role: Schema.String,
+      label: Schema.String,
+      members: Schema.Array(Schema.Struct({ name: Schema.String, email: Schema.String })),
+    }),
   ),
   status: Schema.Literals(["open", "closed"]),
 });

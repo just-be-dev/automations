@@ -562,7 +562,7 @@ test("messages up to 10,000 characters are sent and longer ones are rejected", (
   expect(rejected.commands).toBeUndefined();
 });
 
-test("the URL picks which automation opens and loads it with the automation list", () => {
+test("the URL picks which automation opens and loads it with the automation list and roles", () => {
   const opened = init({ theme: "System" }, studioUrl("automation=orders"));
   expect(opened.model.automationId).toBe("orders");
   expect(opened.model.automationIdInput).toBe("orders");
@@ -570,6 +570,7 @@ test("the URL picks which automation opens and loads it with the automation list
   expect(opened.commands?.map((command) => command.name)).toEqual([
     "LoadAutomation",
     "LoadAutomations",
+    "LoadRoles",
   ]);
 
   const overview = init({ theme: "System" }, studioUrl());
@@ -577,6 +578,7 @@ test("the URL picks which automation opens and loads it with the automation list
   expect(overview.commands?.map((command) => command.name)).toEqual([
     "LoadOverview",
     "LoadAutomations",
+    "LoadRoles",
   ]);
   expect(init({ theme: "System" }, studioUrl("automation=bad%2Fid")).model.activity._tag).toBe(
     "Failed",

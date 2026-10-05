@@ -71,6 +71,24 @@ export const EntityRecord = Schema.Struct({
 });
 export interface EntityRecord extends Schema.Schema.Type<typeof EntityRecord> {}
 
+/** A person's address: a text field named `email`. An entity with one is a person. */
+export const isEmailField = (field: EntityField) => field.name === "email" && field.type === "text";
+
+/** A member of a role: a person (see `isEmailField`), by type and ID. */
+export const RoleMember = Schema.Struct({ type: EntityName, id: Schema.String });
+export interface RoleMember extends Schema.Schema.Type<typeof RoleMember> {}
+
+/**
+ * A named group of people, such as People Ops. An operation a workflow sets to ask first names the
+ * role whose members approve it.
+ */
+export const Role = Schema.Struct({
+  name: EntityName,
+  label: Schema.String.check(Schema.isMinLength(1)),
+  members: Schema.Array(RoleMember),
+});
+export interface Role extends Schema.Schema.Type<typeof Role> {}
+
 /** The entity a run is about: a snapshot of it when the run started. */
 export const Subject = Schema.Struct({ type: Schema.String, id: Schema.String, data: EntityData });
 export interface Subject extends Schema.Schema.Type<typeof Subject> {}

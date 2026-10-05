@@ -41,7 +41,7 @@ Deploys also create a 30-day Access service token for machine testing. Send it a
 
 Open the Studio URL, describe a process, review the steps, and save. Runs always use the last saved snapshot, not the current draft.
 
-Under **Permissions**, the draft lists every connection operation it uses. Each one is set to allow (it runs automatically), ask first, or deny (it never runs). The agent suggests these, and you can change any of them. An operation that asks first makes every run wait on an approval task that shows exactly what it will send. Rejecting the task, or denying the operation, skips that step and every step that needs its result; the rest of the run carries on. When the process must not go on, the agent adds a stop step. If the agent doesn't suggest a permission, looking up calendar times runs automatically and everything that sends or changes something asks first. Save the draft to apply permission changes to new runs.
+Under **Permissions**, the draft lists every connection operation it uses. Each one is set to allow (it runs automatically) or ask first, with the role whose members approve it, such as the seeded People Ops. The agent suggests these, and you can change any of them. An operation that asks first makes every run wait on an approval task that shows exactly what it will send and who can approve it. Rejecting the task skips that step and every step that needs its result; the rest of the run carries on. When the process must not go on, the agent adds a stop step. Save the draft to apply permission changes to new runs.
 
 The studio opens on the **Overview**: the runs in flight across every automation, and every automation with how it starts and how its last run went. Start a saved automation from there with **Run**. If it is about an entity, such as an employee, pick which one first. Draft-only automations are listed but can't run until they are saved. The page refreshes every 5 seconds while a run is in flight.
 
@@ -59,25 +59,26 @@ The response lists the runs the change `triggered`. People answer human steps fr
 
 Templates hold approved wording, such as the standard welcome email, with slots the automation fills (`hire → employee`). The designer uses a template whenever one fits instead of writing the text, and picks one per case with a `match`, for example a different welcome email by role. Write them with `PUT /api/templates/:name` (see [Templates](docs/workflow-dsl.md#templates)). Editing a template changes runs that start afterwards; runs already going keep the wording they started with.
 
-| Endpoint                                                   | Purpose                                                                        |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `GET /api/overview`                                        | Each automation's trigger and runs in flight                                   |
-| `GET /api/automations`                                     | List automations                                                               |
-| `GET /api/automations/:id`                                 | Inspect an automation and its recent runs                                      |
-| `POST /api/automations/:id/chat`                           | Send a design message                                                          |
-| `POST /api/automations/:id/save`                           | Save the draft and subscribe to its trigger                                    |
-| `POST /api/automations/:id/permissions`                    | Set which operations ask first (`{ "permissions": { "email.send": "auto" } }`) |
-| `POST /api/automations/:id/start`                          | Start a run by hand (`{ "subject": "<id>" }`)                                  |
-| `GET /api/automations/:id/runs/:runId`                     | Inspect a run, its steps, and its tasks                                        |
-| `POST /api/automations/:id/runs/:runId/tasks/:stepId`      | Answer a human step                                                            |
-| `GET /api/entities/types`, `PUT /api/entities/types/:type` | List or define entity types                                                    |
-| `GET /api/entities/:type`, `GET /api/entities/:type/:id`   | Read entities                                                                  |
-| `PUT /api/entities/:type/:id`                              | Create or update an entity and start its runs                                  |
-| `DELETE /api/entities/types/:type`                         | Delete a type nothing depends on                                               |
-| `DELETE /api/entities/:type/:id`                           | Delete an entity (starts no runs)                                              |
-| `POST /api/mcp`                                            | The entity store as an MCP server                                              |
-| `GET /api/templates`, `GET /api/templates/:name`           | List or read templates                                                         |
-| `PUT /api/templates/:name`, `DELETE /api/templates/:name`  | Create, replace, or delete a template                                          |
+| Endpoint                                                   | Purpose                                                                                                    |
+| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `GET /api/overview`                                        | Each automation's trigger and runs in flight                                                               |
+| `GET /api/automations`                                     | List automations                                                                                           |
+| `GET /api/automations/:id`                                 | Inspect an automation and its recent runs                                                                  |
+| `POST /api/automations/:id/chat`                           | Send a design message                                                                                      |
+| `POST /api/automations/:id/save`                           | Save the draft and subscribe to its trigger                                                                |
+| `POST /api/automations/:id/permissions`                    | Set which operations ask which role first (`{ "permissions": { "email.send": { "ask": "people_ops" } } }`) |
+| `GET /api/roles`, `PUT /api/roles/:name`                   | List or define roles (`{ "name", "label", "members": [{ "type", "id" }] }`)                                |
+| `POST /api/automations/:id/start`                          | Start a run by hand (`{ "subject": "<id>" }`)                                                              |
+| `GET /api/automations/:id/runs/:runId`                     | Inspect a run, its steps, and its tasks                                                                    |
+| `POST /api/automations/:id/runs/:runId/tasks/:stepId`      | Answer a human step                                                                                        |
+| `GET /api/entities/types`, `PUT /api/entities/types/:type` | List or define entity types                                                                                |
+| `GET /api/entities/:type`, `GET /api/entities/:type/:id`   | Read entities                                                                                              |
+| `PUT /api/entities/:type/:id`                              | Create or update an entity and start its runs                                                              |
+| `DELETE /api/entities/types/:type`                         | Delete a type nothing depends on                                                                           |
+| `DELETE /api/entities/:type/:id`                           | Delete an entity (starts no runs)                                                                          |
+| `POST /api/mcp`                                            | The entity store as an MCP server                                                                          |
+| `GET /api/templates`, `GET /api/templates/:name`           | List or read templates                                                                                     |
+| `PUT /api/templates/:name`, `DELETE /api/templates/:name`  | Create, replace, or delete a template                                                                      |
 
 ### Entity store
 
@@ -94,7 +95,7 @@ Deployed stages sit behind Access, so send the service token as headers (`--head
 ## Caveats
 
 - Email, Slack, and Calendar are simulated until they have credentials. Their steps succeed, contact nothing, and record what they would have sent with `simulated: true`. A human step's `notify` is recorded, not sent.
-- Anyone who can open the studio can answer an approval task; there's no per-person approver yet.
+- Only a role's members may answer its approval tasks, going by the email Cloudflare Access sends in `Cf-Access-Authenticated-User-Email`. The Api trusts that header because only the Access-protected Studio Worker reaches it. Verify the Access JWT before production. Under `alchemy dev`, and with the test service token, there's no email, so anyone can answer.
 - `http.post` steps are delivered **at least once**, with an `Idempotency-Key` header that stays the same across retries, so receiving endpoints must be idempotent. Without a `body`, they POST the run's subject and step records to a public HTTPS URL. Don't put secrets in step definitions.
 - Chat is asynchronous: `POST /chat` returns `202` with a `pendingChat`, and the reply and new draft appear on `GET /api/automations/:id` once `pendingChat` is gone. Until then the response includes `progress`, a plain phrase such as "Planning the steps…". If the agent fails, `pendingChat` stays with `status: "failed"` and an `error` until the next message.
 - Runs advance through Alchemy durable callbacks that replay them from a journal in the Durable Object's storage. If the Durable Object is evicted mid-step, that step runs again; agent steps reuse their pi request ID instead of prompting twice.

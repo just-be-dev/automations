@@ -5,17 +5,19 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import {
   checkEntityData,
+  isEmailField,
   checkEntityType,
   InvalidEntity,
   type EntityData,
   type EntityRecord,
   type EntityType,
+  type Role,
   type Subject,
 } from "./entities.ts";
 import { checkTemplate, type InvalidTemplate, type Template } from "./templates.ts";
 
 /**
- * Where entity types, entities, templates, and subscriptions to entity changes live. Templates sit
+ * Where entity types, entities, templates, roles, and subscriptions to entity changes live. Templates sit
  * beside the types because each one is checked against them. `EntityStore` is the service steps,
  * triggers, and the API use; `src/entity-store-d1.ts` implements it on D1, and `layerMemory` below
  * implements it in memory for tests.
@@ -87,6 +89,9 @@ export class EntityStore extends Context.Service<
     ) => Effect.Effect<Template, EntityStoreError | InvalidTemplate>;
     /** Deletes a template. Saved workflows that use it fail their check when they next start. */
     readonly deleteTemplate: (name: string) => Effect.Effect<void, EntityStoreError>;
+    readonly listRoles: Effect.Effect<ReadonlyArray<Role>, EntityStoreError>;
+    /** Creates or replaces a role, once every member is a stored entity with an email field. */
+    readonly putRole: (role: Role) => Effect.Effect<Role, EntityStoreError | InvalidEntity>;
   }
 >()("automations/EntityStore") {}
 
@@ -112,6 +117,8 @@ export interface EntityStorage {
   readonly listTemplates: Effect.Effect<ReadonlyArray<Template>, EntityStoreError>;
   readonly writeTemplate: (template: Template) => Effect.Effect<void, EntityStoreError>;
   readonly deleteTemplate: (name: string) => Effect.Effect<void, EntityStoreError>;
+  readonly listRoles: Effect.Effect<ReadonlyArray<Role>, EntityStoreError>;
+  readonly putRole: (role: Role) => Effect.Effect<void, EntityStoreError>;
 }
 
 /** Builds the service over an implementation's storage, so every one merges and checks alike. */
@@ -201,13 +208,33 @@ export const makeEntityStore = (storage: EntityStorage) =>
       return template;
     }),
     deleteTemplate: storage.deleteTemplate,
+    listRoles: storage.listRoles,
+    putRole: Effect.fn("EntityStore.putRole")(function* (role: Role) {
+      const types = yield* storage.listTypes;
+      const problems = yield* Effect.forEach(role.members, (member) =>
+        Effect.gen(function* () {
+          const type = types.find((candidate) => candidate.name === member.type);
+          if (type === undefined || !type.fields.some(isEmailField)) {
+            return [`${member.type} has no email field, so it can't be a member`];
+          }
+          const found = yield* storage.getEntity(member.type, member.id);
+          return found === undefined ? [`No ${member.type} ${member.id}`] : [];
+        }),
+      );
+      if (problems.flat().length > 0) {
+        return yield* new InvalidEntity({ message: problems.flat().join("; ") });
+      }
+      yield* storage.putRole(role);
+      return role;
+    }),
   });
 
-/** An in-memory store, seeded with `types`, `entities`, and `templates`. */
+/** An in-memory store, seeded with `types`, `entities`, `templates`, and `roles`. */
 export const layerMemory = (seed: {
   readonly types?: ReadonlyArray<EntityType>;
   readonly entities?: ReadonlyArray<EntityRecord>;
   readonly templates?: ReadonlyArray<Template>;
+  readonly roles?: ReadonlyArray<Role>;
 }) =>
   Layer.sync(EntityStore, () => {
     const types = new Map((seed.types ?? []).map((type) => [type.name, type]));
@@ -217,6 +244,7 @@ export const layerMemory = (seed: {
     );
     const subscriptions = new Map<string, string>();
     const templates = new Map((seed.templates ?? []).map((template) => [template.name, template]));
+    const roles = new Map((seed.roles ?? []).map((role) => [role.name, role]));
     return makeEntityStore({
       listTypes: Effect.sync(() => [...types.values()]),
       putType: (type) => Effect.sync(() => void types.set(type.name, type)),
@@ -242,5 +270,7 @@ export const layerMemory = (seed: {
       listTemplates: Effect.sync(() => [...templates.values()]),
       writeTemplate: (template) => Effect.sync(() => void templates.set(template.name, template)),
       deleteTemplate: (name) => Effect.sync(() => void templates.delete(name)),
+      listRoles: Effect.sync(() => [...roles.values()]),
+      putRole: (role) => Effect.sync(() => void roles.set(role.name, role)),
     });
   });

@@ -44,9 +44,9 @@ import {
  * - agent, action, and decide steps are Activities, so a replayed run reuses their results. An
  *   action's match picks its case from the resolved values, before its Activity. Templates are
  *   expanded before a run starts (`expandTemplates`), so an action that still uses one fails.
- * - An action whose operation the workflow's permissions set to `ask` first parks on a
- *   DurableDeferred until the person approves or declines it with `respondToHuman`. One set to
- *   `deny` is declined without asking. A declined action records nothing.
+ * - An action whose operation the workflow's permissions set to ask first parks on a
+ *   DurableDeferred until a member of the role approves or declines it with `respondToHuman`. A
+ *   declined action records nothing.
  * - A step that needs a value from a step that didn't run (see `stepNeeds`) is skipped, and
  *   records nothing either, so the steps that need it are skipped in turn.
  * - parallel branches run concurrently and merge what they recorded.
@@ -100,11 +100,13 @@ export interface HumanRequest {
   readonly defaults: Readonly<Record<string, string>>;
 }
 
-/** Asks the person whether an action step may perform its operation with these inputs. */
+/** Asks a role's members whether an action step may perform its operation with these inputs. */
 export interface PermissionRequest {
   readonly runId: string;
   readonly token: DurableDeferred.Token;
   readonly step: ActionStep;
+  /** The role whose members approve it. */
+  readonly role: string;
   /** The step's title with its templates filled in. */
   readonly title: string;
   readonly inputs: Readonly<Record<string, Schema.Json>>;
@@ -162,7 +164,7 @@ export const RunAutomation = EffectWorkflow.make("RunAutomation", {
 /** The permissions of the workflow a run executes. */
 class RunPermissions extends Context.Service<
   RunPermissions,
-  { readonly of: (operationId: string) => Permission }
+  { readonly of: (operationId: string) => Permission | undefined }
 >()("automations/RunPermissions") {}
 
 type Requirements =
@@ -275,13 +277,18 @@ const runResolved = (
           ]),
         );
         const permission = (yield* RunPermissions).of(step.use);
-        if (permission === "deny") {
-          yield* report({ runId: state.runId, step: step.id, status: "declined" });
-          return state;
+        if (permission === undefined) {
+          return yield* failed(step, `The workflow sets no permission for ${step.use}`);
         }
         if (
-          permission === "ask" &&
-          !(yield* askPermission(step, state, renderTemplate(step.title, values), inputs))
+          permission !== "auto" &&
+          !(yield* askPermission(
+            step,
+            state,
+            permission.ask,
+            renderTemplate(step.title, values),
+            inputs,
+          ))
         ) {
           return state;
         }
@@ -450,6 +457,7 @@ const askHuman = Effect.fnUntraced(function* (step: HumanStep, state: RunState, 
 const askPermission = Effect.fnUntraced(function* (
   step: ActionStep,
   state: RunState,
+  role: string,
   title: string,
   inputs: Record<string, Schema.Json>,
 ) {
@@ -459,7 +467,7 @@ const askPermission = Effect.fnUntraced(function* (
   yield* Activity.make({
     name: `${step.id}/approval-request`,
     error: StepFailed,
-    execute: runner.requestPermission({ runId: state.runId, token, step, title, inputs }),
+    execute: runner.requestPermission({ runId: state.runId, token, step, role, title, inputs }),
   }).pipe(Activity.retry(retried));
   yield* report({ runId: state.runId, step: step.id, status: "waiting" });
   const { approved } = yield* DurableDeferred.await(deferred);

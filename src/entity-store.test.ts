@@ -13,6 +13,16 @@ const employee: EntityType = {
   ],
 };
 
+const person: EntityType = {
+  name: "person",
+  label: "Person",
+  title: "name",
+  fields: [
+    { name: "name", label: "Name", type: "text" },
+    { name: "email", label: "Email", type: "text" },
+  ],
+};
+
 const run = <A, E>(effect: Effect.Effect<A, E, EntityStore>) =>
   Effect.runPromise(
     effect.pipe(
@@ -20,6 +30,27 @@ const run = <A, E>(effect: Effect.Effect<A, E, EntityStore>) =>
         layerMemory({
           types: [employee],
           entities: [{ type: "employee", id: "ada", data: { name: "Ada" }, updatedAt: 0 }],
+        }),
+      ),
+    ),
+  );
+
+/** A store that also has people, who can be members of roles. */
+const runWithPeople = <A, E>(effect: Effect.Effect<A, E, EntityStore>) =>
+  Effect.runPromise(
+    effect.pipe(
+      Effect.provide(
+        layerMemory({
+          types: [employee, person],
+          entities: [
+            { type: "employee", id: "ada", data: { name: "Ada" }, updatedAt: 0 },
+            {
+              type: "person",
+              id: "sam",
+              data: { name: "Sam", email: "sam@example.com" },
+              updatedAt: 0,
+            },
+          ],
         }),
       ),
     ),
@@ -96,6 +127,33 @@ describe("EntityStore", () => {
       }),
     );
     expect(subscribers).toEqual(["onboarding"]);
+  });
+
+  test("keeps roles whose members are stored entities with an email field", async () => {
+    const ops = { name: "ops", label: "Ops", members: [{ type: "person", id: "sam" }] };
+    const roles = await runWithPeople(
+      Effect.gen(function* () {
+        const entities = yield* EntityStore;
+        yield* entities.putRole(ops);
+        return yield* entities.listRoles;
+      }),
+    );
+    expect(roles).toEqual([ops]);
+    const invalid = await runWithPeople(
+      EntityStore.use((entities) =>
+        entities.putRole({
+          name: "ops",
+          label: "Ops",
+          members: [
+            { type: "employee", id: "ada" },
+            { type: "person", id: "nobody" },
+          ],
+        }),
+      ).pipe(Effect.flip),
+    );
+    expect(invalid.message).toBe(
+      "employee has no email field, so it can't be a member; No person nobody",
+    );
   });
 });
 

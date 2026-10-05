@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema";
 import { openAutomationIndex } from "./automation-index.ts";
 import Automation from "./automation.ts";
 import { HumanResponse } from "./interpreter.ts";
-import { EntityData, EntityId, EntityName, EntityType } from "./entities.ts";
+import { EntityData, EntityId, EntityName, EntityType, Role } from "./entities.ts";
 import {
   answerMcp,
   EntitySubscribers,
@@ -31,6 +31,7 @@ const AutomationParams = Schema.Struct({
 const RunParams = Schema.Struct({ ...AutomationParams.fields, runId: Schema.String });
 const TaskParams = Schema.Struct({ ...RunParams.fields, stepId: Schema.String });
 const TypeParams = Schema.Struct({ type: EntityName });
+const RoleParams = Schema.Struct({ role: EntityName });
 const EntityParams = Schema.Struct({ type: EntityName, entityId: EntityId });
 const TemplateParams = Schema.Struct({ name: EntityName });
 const ChatBody = Schema.Struct({ message: Schema.optionalKey(Schema.String) });
@@ -76,6 +77,17 @@ const checkBodySize = Effect.gen(function* () {
     return yield* new PayloadTooLarge({ message: "Payload too large" });
   }
 });
+
+/**
+ * The email address Cloudflare Access authenticated, if any. Deployed stages sit behind Access;
+ * `alchemy dev` doesn't, so there it's missing.
+ */
+const accessEmail = HttpServerRequest.HttpServerRequest.pipe(
+  Effect.map((request) => {
+    const email = request.headers["cf-access-authenticated-user-email"];
+    return email === undefined || email === "" ? undefined : email;
+  }),
+);
 
 const limitedBody = <A, I, RD>(schema: Schema.Codec<A, I, RD>) =>
   Effect.andThen(checkBodySize, HttpServerRequest.schemaBodyJson(schema));
@@ -149,7 +161,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
             Effect.gen(function* () {
               const { id, runId, stepId } = yield* pathParams(TaskParams);
               const body = yield* limitedBody(HumanResponse);
-              return yield* automations.getByName(id).respond(runId, stepId, body);
+              const responder = yield* accessEmail;
+              return yield* automations.getByName(id).respond(runId, stepId, body, responder);
             }),
           ),
         ),
@@ -322,6 +335,32 @@ export default class Api extends Cloudflare.Worker<Api>()(
       { prefix: "/api/entities" },
     );
 
+    const roleRoutes = HttpRouter.addAll(
+      [
+        HttpRouter.route(
+          "GET",
+          "/",
+          withEntities(EntityStore.use((entities) => entities.listRoles)),
+        ),
+        HttpRouter.route(
+          "PUT",
+          "/:role",
+          withEntities(
+            Effect.gen(function* () {
+              const { role } = yield* pathParams(RoleParams);
+              const body = yield* limitedBody(Role);
+              if (body.name !== role) {
+                return yield* new BadRequest({ message: "The role's name must match the URL" });
+              }
+              const entities = yield* EntityStore;
+              return yield* entities.putRole(body);
+            }),
+          ),
+        ),
+      ],
+      { prefix: "/api/roles" },
+    );
+
     // Each automation is its own Durable Object, so the overview asks every listed one. One that
     // can't answer is listed with its error instead of failing the whole overview.
     const overviewRoute = HttpRouter.add(
@@ -458,6 +497,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
         Layer.mergeAll(
           automationRoutes,
           entityRoutes,
+          roleRoutes,
           overviewRoute,
           mcpRoutes,
           templateRoutes,

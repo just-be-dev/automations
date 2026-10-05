@@ -6,7 +6,7 @@ import {
   type Operation,
   type OperationInput,
 } from "./connections.ts";
-import { pathTarget, type EntityField, type EntityType } from "./entities.ts";
+import { isEmailField, pathTarget, type EntityType, type Role } from "./entities.ts";
 import { contentRefs, templateProblems, type Template } from "./templates.ts";
 import {
   InvalidWorkflow,
@@ -16,6 +16,7 @@ import {
   conditionRefs,
   isPublicHttpsUrl,
   loneRef,
+  operationsUsed,
   stepRefs,
   subjectType,
   templateRefs,
@@ -35,6 +36,8 @@ import {
 export interface Catalog {
   readonly types: ReadonlyArray<EntityType>;
   readonly templates: ReadonlyArray<Template>;
+  /** Who can approve the operations a workflow asks first about. */
+  readonly roles: ReadonlyArray<Role>;
 }
 
 const findType = (catalog: Catalog, name: string | undefined) =>
@@ -136,7 +139,6 @@ const recordProblems = (
 };
 
 /** Where a person's address lives, as the connection runner reads it. */
-const isEmailField = (field: EntityField) => field.name === "email" && field.type === "text";
 
 const isPersonRef = (catalog: Catalog, subject: EntityType | undefined, ref: string) => {
   const [root, ...path] = ref.split(".");
@@ -438,12 +440,27 @@ const unreachableProblems = (steps: ReadonlyArray<Step>): ReadonlyArray<string> 
       : [`Step ${next.id} comes after stop step ${list[stop]?.id}, so it never runs`];
   });
 
-const permissionProblems = (workflow: Workflow): ReadonlyArray<string> =>
-  Object.keys(workflow.permissions ?? {}).flatMap((operation) =>
-    findOperation(operation) === undefined
-      ? [`permissions names unknown operation ${operation}`]
-      : [],
-  );
+const permissionProblems = (catalog: Catalog, workflow: Workflow): ReadonlyArray<string> => {
+  const permissions = workflow.permissions ?? {};
+  const roles = catalog.roles.map((role) => role.name).join(", ") || "none yet";
+  return [
+    ...Object.keys(permissions).flatMap((operation) =>
+      findOperation(operation) === undefined
+        ? [`permissions names unknown operation ${operation}`]
+        : [],
+    ),
+    ...operationsUsed(workflow.steps).flatMap((operation) =>
+      permissions[operation] === undefined && findOperation(operation) !== undefined
+        ? [`permissions needs one for ${operation}: "auto", or {"ask":"<role>"}`]
+        : [],
+    ),
+    ...Object.entries(permissions).flatMap(([operation, permission]) =>
+      permission === "auto" || catalog.roles.some((role) => role.name === permission.ask)
+        ? []
+        : [`permissions for ${operation} ask unknown role ${permission.ask} (roles: ${roles})`],
+    ),
+  ];
+};
 
 /** Everything wrong with a workflow given the catalog, or nothing. */
 export const workflowProblems = (catalog: Catalog, workflow: Workflow): ReadonlyArray<string> => {
@@ -452,7 +469,7 @@ export const workflowProblems = (catalog: Catalog, workflow: Workflow): Readonly
     ...triggerProblems(catalog, workflow),
     ...checkSequence(catalog, subject, workflow.steps, new Map()).problems,
     ...unreachableProblems(workflow.steps),
-    ...permissionProblems(workflow),
+    ...permissionProblems(catalog, workflow),
   ];
 };
 
@@ -508,4 +525,12 @@ export const describeCatalog = (catalog: Catalog) =>
     "",
     "Templates (approved wording for action inputs; a slot marked → takes an entity of that type):",
     ...(catalog.templates.length === 0 ? ["- none yet"] : catalog.templates.map(describeTemplate)),
+    "",
+    "Roles (their members approve the operations a workflow asks first about):",
+    ...(catalog.roles.length === 0
+      ? ["- none yet"]
+      : catalog.roles.map(
+          (role) =>
+            `- ${role.name} (${role.label}): ${role.members.length === 1 ? "1 member" : `${role.members.length} members`}`,
+        )),
   ].join("\n");

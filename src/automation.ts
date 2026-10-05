@@ -15,7 +15,7 @@ import { agentOutput, agentPrompt, decidePrompt, decision } from "./agent-step.t
 import { openAutomationIndex } from "./automation-index.ts";
 import { checkWorkflow } from "./catalog.ts";
 import { runAction } from "./connection-runner.ts";
-import { findOperation, permissionsOf } from "./connections.ts";
+import { findOperation } from "./connections.ts";
 import {
   designDraft,
   fixedProgress,
@@ -41,6 +41,7 @@ import { EntityStore } from "./entity-store.ts";
 import { EntityStoreD1 } from "./entity-store-d1.ts";
 import {
   changedFields,
+  isEmailField,
   readRef,
   type EntityData,
   type EntityType,
@@ -221,7 +222,34 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
           }),
         );
 
-      const catalog = Effect.all({ types: entities.listTypes, templates: entities.listTemplates });
+      const catalog = Effect.all({
+        types: entities.listTypes,
+        templates: entities.listTemplates,
+        roles: entities.listRoles,
+      });
+
+      /** A role's members as approvers: their names and email addresses, as stored now. */
+      const approversOf = Effect.fn("Automation.approversOf")(function* (roleName: string) {
+        const { types, roles } = yield* catalog;
+        const role = roles.find((candidate) => candidate.name === roleName);
+        if (role === undefined) {
+          return yield* new AutomationError({ message: `No role ${roleName}` });
+        }
+        const members = yield* Effect.forEach(role.members, (member) =>
+          entities.getEntity(member.type, member.id).pipe(
+            Effect.map((found) => {
+              const type = types.find((candidate) => candidate.name === member.type);
+              const email = type?.fields.find(isEmailField);
+              const address = email === undefined ? undefined : found?.data[email.name];
+              const name = type === undefined ? undefined : found?.data[type.title];
+              return typeof address === "string"
+                ? [{ name: typeof name === "string" ? name : member.id, email: address }]
+                : [];
+            }),
+          ),
+        );
+        return { role: role.name, label: role.label, members: members.flat() };
+      });
 
       const loadEntity = (type: string, id: string) =>
         entities
@@ -281,24 +309,27 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         });
 
       const requestPermission = (request: PermissionRequest) =>
-        updateRun(request.runId, (run) => {
-          if (run.tasks.some((task) => task.step === request.step.id)) {
-            return run;
-          }
-          const operation = findOperation(request.step.use)?.title ?? request.step.use;
-          const task: HumanTask = {
-            step: request.step.id,
-            token: request.token,
-            title: request.title,
-            prompt: `${operation} with the details below? Rejecting skips this step and the steps that need its result.`,
-            assignee: null,
-            response: "approval",
-            defaults: {},
-            action: { use: request.step.use, inputs: request.inputs },
-            status: "open",
-          };
-          return { ...run, tasks: [...run.tasks, task] };
-        });
+        Effect.flatMap(approversOf(request.role), (approvers) =>
+          updateRun(request.runId, (run) => {
+            if (run.tasks.some((task) => task.step === request.step.id)) {
+              return run;
+            }
+            const operation = findOperation(request.step.use)?.title ?? request.step.use;
+            const task: HumanTask = {
+              step: request.step.id,
+              token: request.token,
+              title: request.title,
+              prompt: `${operation} with the details below? Rejecting skips this step and the steps that need its result.`,
+              assignee: null,
+              response: "approval",
+              defaults: {},
+              action: { use: request.step.use, inputs: request.inputs },
+              approvers,
+              status: "open",
+            };
+            return { ...run, tasks: [...run.tasks, task] };
+          }),
+        );
 
       const stepFailed = (step: string) => (error: { readonly message: string }) =>
         new StepFailed({ step, message: error.message });
@@ -332,7 +363,10 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
             }),
           ).pipe(Effect.mapError(stepFailed(step.id))),
         requestHuman: (request) => withRuntime(requestHuman(request)),
-        requestPermission: (request) => withRuntime(requestPermission(request)),
+        requestPermission: (request) =>
+          withRuntime(requestPermission(request)).pipe(
+            Effect.mapError(stepFailed(request.step.id)),
+          ),
         report: (event) => withRuntime(updateRun(event.runId, (run) => applyEvent(run, event))),
       });
 
@@ -572,7 +606,7 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
             return;
           }
           const draft = yield* readWorkflow("draft");
-          const permissions = draft === undefined ? {} : permissionsOf(draft);
+          const permissions = draft?.permissions ?? {};
           const reply = yield* catalog.pipe(
             Effect.flatMap((current) =>
               designDraft(pi, current, permissions, chatId, pending.prompt),
@@ -680,6 +714,15 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
             message: `Unknown operations: ${unknown.join(", ")}`,
           });
         }
+        const roles = yield* entities.listRoles;
+        const unknownRoles = Object.values(permissions).flatMap((permission) =>
+          permission === "auto" || roles.some((role) => role.name === permission.ask)
+            ? []
+            : [permission.ask],
+        );
+        if (unknownRoles.length > 0) {
+          return yield* new AutomationError({ message: `No role ${unknownRoles.join(", ")}` });
+        }
         return yield* state.storage
           .transaction(
             Effect.gen(function* () {
@@ -748,16 +791,35 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
       });
 
       /** Answers a run's open human step. */
+      /**
+       * Answers a run's open human step or permission request. `responder` is the email address of
+       * whoever answers, when the studio knows it; only a role's members may answer for it.
+       */
       const respond = Effect.fn("Automation.respond")(function* (
         runId: string,
         stepId: string,
-        response: HumanResponse,
+        answer: HumanResponse,
+        responder: string | undefined,
       ) {
         const run = yield* readRun(runId);
         const task = run?.tasks.find((candidate) => candidate.step === stepId);
         if (run === undefined || task === undefined || task.status !== "open") {
           return yield* new AutomationError({ message: "That task isn't waiting for an answer" });
         }
+        const approvers = task.approvers;
+        if (
+          approvers !== undefined &&
+          responder !== undefined &&
+          !approvers.members.some(
+            (member) => member.email.toLowerCase() === responder.toLowerCase(),
+          )
+        ) {
+          return yield* new AutomationError({
+            message: `Only members of ${approvers.label} can answer this`,
+          });
+        }
+        const response: HumanResponse =
+          responder === undefined ? answer : { ...answer, respondedBy: responder };
         if (task.response === "approval") {
           if (response.approved === undefined) {
             return yield* new AutomationError({ message: "Approve or reject the request" });

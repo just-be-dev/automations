@@ -128,18 +128,22 @@ When a new hire's start date is set, remind the manager to greet them, propose a
       "response": "approval",
       "timeout": "1 day"
     }
-  ]
+  ],
+  "permissions": {
+    "calendar.createEvent": { "ask": "people_ops" },
+    "calendar.findTimes": "auto"
+  }
 }
 ```
 
 ## Workflow
 
-| Field         | Meaning                                                                                |
-| ------------- | -------------------------------------------------------------------------------------- |
-| `name`        | Non-blank, at most 120 characters.                                                     |
-| `trigger`     | What starts a run. See [Triggers](#triggers).                                          |
-| `steps`       | 1–20 top-level steps. Each list runs in order.                                         |
-| `permissions` | Whether each operation runs on its own or asks first. See [Permissions](#permissions). |
+| Field         | Meaning                                                                                               |
+| ------------- | ----------------------------------------------------------------------------------------------------- |
+| `name`        | Non-blank, at most 120 characters.                                                                    |
+| `trigger`     | What starts a run. See [Triggers](#triggers).                                                         |
+| `steps`       | 1–20 top-level steps. Each list runs in order.                                                        |
+| `permissions` | Whether each operation it uses runs on its own or asks a role first. See [Permissions](#permissions). |
 
 Rules for the whole tree:
 
@@ -205,6 +209,20 @@ An entity type has a `name` and `label`, a `title` field that names an entity wh
 | `GET /api/entities/:type`       | List a type's entities                                                                                       |
 | `GET /api/entities/:type/:id`   | Read one entity                                                                                              |
 | `PUT /api/entities/:type/:id`   | Merge `{ "data": { … } }` over the entity, check it against its type, and start the runs its change triggers |
+
+### Roles
+
+A role is a named group of people who approve the operations a workflow [asks first](#permissions) about. Its members are entities with an `email` field, by type and ID:
+
+```json
+{
+  "name": "people_ops",
+  "label": "People Ops",
+  "members": [{ "type": "employee", "id": "grace" }]
+}
+```
+
+`migrations/0004_roles.sql` creates this role. `GET /api/roles` lists roles, and `PUT /api/roles/:name` creates or replaces one once every member exists and has an email field.
 
 ## Refs
 
@@ -370,11 +388,9 @@ Email, Slack, and Calendar are **simulated**: there are no credentials yet, so t
 
 ### Permissions
 
-`permissions` maps operation IDs to `auto` (the run performs it on its own), `ask` (each run waits for the person's approval first), or `deny` (the run never performs it). The studio shows them as allow, ask first, and deny. The designer suggests them and is told the current ones on every turn. The person can change any of them in the studio, or with `POST /api/automations/:id/permissions` and `{ "permissions": { "email.send": "auto" } }`, which merges into the draft. A designer reply merges into the draft's permissions too, so leaving one out keeps it. `checkWorkflow` rejects permissions for unknown operations. Runs follow the saved copy.
+`permissions` maps each operation the workflow uses to `"auto"` (the run performs it on its own) or `{ "ask": "<role>" }` (each run waits until a member of that [role](#roles) approves it). The studio shows them as allow and ask first, with the role beside it. The designer sets one for every operation and is told the current ones on every turn. The person can change any of them in the studio, or with `POST /api/automations/:id/permissions` and `{ "permissions": { "email.send": { "ask": "people_ops" } } }`, which merges into the draft. A designer reply merges into the draft's permissions too, so leaving one out keeps it. `checkWorkflow` rejects a workflow that leaves an operation it uses without a permission, names an unknown operation, or asks an unknown role. Runs follow the saved copy.
 
-An operation without an entry gets its default. `calendar.findTimes` only looks times up, so it runs on its own. Every other operation sends or changes something, so it asks first.
-
-When an action asks first, the run resolves its inputs, opens an approval task that shows the operation and those inputs, and waits with the step `waiting`. Answer it like a human step's task with `{ "approved": boolean }`. Approving performs the operation with the inputs shown. Declining marks the step `declined`, and it records nothing. Every later step that reads its record is then `skipped`, as are the steps that read theirs; the rest of the run carries on. A `deny` operation is declined the same way, without asking. Use a [`stop`](#stop) step to end the run instead. A human step's `notify` doesn't ask.
+When an action asks first, the run resolves its inputs and opens an approval task that shows the operation, those inputs, and the role with its members at that moment. The step waits as `waiting`. Answer it like a human step's task with `{ "approved": boolean }`. When the studio knows who is answering (Cloudflare Access's authenticated email, on deployed stages), only the role's members may answer, and the answer records them as `respondedBy`. Under `alchemy dev` there's no Access, so anyone can answer. Approving performs the operation with the inputs shown. Declining marks the step `declined`, and it records nothing. Every later step that reads its record is then `skipped`, as are the steps that read theirs; the rest of the run carries on. Use a [`stop`](#stop) step to end the run instead. A human step's `notify` doesn't ask.
 
 `http.post` really sends:
 

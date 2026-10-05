@@ -302,33 +302,68 @@ test("action steps show the template they use and the inputs each match case sup
   );
 });
 
-test("the draft lists the operations it uses, and a changed permission updates the draft", () => {
-  const choice = (name: string) =>
-    within(role("group", { name: "Send a Slack message permission" }), role("button", { name }));
+const roles = [
+  { name: "people_ops", label: "People Ops", members: [{ type: "employee", id: "grace" }] },
+  { name: "finance", label: "Finance", members: [] },
+];
+
+const withRoles = (model: Model, listed: typeof roles = roles) =>
+  update(model, Message.SucceededLoadRoles({ roles: listed })).model;
+
+const permissionButton = (name: string) =>
+  within(role("group", { name: "Send a Slack message permission" }), role("button", { name }));
+
+test("asking first picks a role to approve, and the approver can be changed", () => {
+  const asking = (ask: string): Workflow => ({
+    ...onboarding,
+    permissions: { "slack.sendMessage": { ask } },
+  });
   scene(
     { update, view },
-    given(withDraft({ ...onboarding, permissions: {} })),
+    given(withRoles(withDraft({ ...onboarding, permissions: { "slack.sendMessage": "auto" } }))),
     expect(role("list", { name: "Permissions" })).toContainText("Send a Slack message"),
-    expect(choice("Ask first")).toHaveAttr("aria-pressed", "true"),
-    expect(choice("Allow")).toHaveAttr("aria-pressed", "false"),
-    expect(text("Asks first")).toExist(),
-    click(choice("Ask first")),
-    click(choice("Deny")),
+    expect(permissionButton("Allow")).toHaveAttr("aria-pressed", "true"),
+    expect(role("combobox", { name: "Send a Slack message approver" })).not.toExist(),
+    click(permissionButton("Ask first")),
     Command.expectExact(
-      SetPermission({ ...requestArgs, operation: "slack.sendMessage", permission: "deny" }),
-    ),
-    expect(choice("Allow")).toBeDisabled(),
-    Command.resolve(
-      SetPermission,
-      Message.SucceededSetPermission({
-        revision: 0,
-        draft: { ...onboarding, permissions: { "slack.sendMessage": "deny" } },
+      SetPermission({
+        ...requestArgs,
+        operation: "slack.sendMessage",
+        permission: { ask: "people_ops" },
       }),
     ),
-    expect(choice("Deny")).toHaveAttr("aria-pressed", "true"),
-    expect(text("Asks first")).not.toExist(),
-    expect(text("Denied")).toExist(),
+    Command.resolve(
+      SetPermission,
+      Message.SucceededSetPermission({ revision: 0, draft: asking("people_ops") }),
+    ),
+    expect(permissionButton("Ask first")).toHaveAttr("aria-pressed", "true"),
+    expect(role("combobox", { name: "Send a Slack message approver" })).toHaveValue("people_ops"),
+    expect(text("Asks People Ops")).toExist(),
+    change(role("combobox", { name: "Send a Slack message approver" }), "finance"),
+    Command.expectExact(
+      SetPermission({
+        ...requestArgs,
+        operation: "slack.sendMessage",
+        permission: { ask: "finance" },
+      }),
+    ),
+    Command.resolve(
+      SetPermission,
+      Message.SucceededSetPermission({ revision: 0, draft: asking("finance") }),
+    ),
+    expect(text("Asks Finance")).toExist(),
     expect(text("Permission updated. Save the draft to use it in runs.")).toExist(),
+  );
+});
+
+test("without roles, nothing can ask first", () => {
+  scene(
+    { update, view },
+    given(
+      withRoles(withDraft({ ...onboarding, permissions: { "slack.sendMessage": "auto" } }), []),
+    ),
+    expect(permissionButton("Ask first")).toBeDisabled(),
+    expect(permissionButton("Ask first")).toHaveAttr("title", "Ask first: Add a role to ask first"),
   );
 });
 
@@ -370,7 +405,7 @@ test("a run shows declined and skipped steps, and why a stop step ended it", () 
 
 test("a permission request shows what the action will send and sends the approval", () => {
   const waiting = runOf({
-    workflow: { ...onboarding, permissions: { "slack.sendMessage": "ask" } },
+    workflow: { ...onboarding, permissions: { "slack.sendMessage": { ask: "people_ops" } } },
     steps: {
       approve: { status: "done", record: { approved: true } },
       laptop: { status: "done" },
@@ -391,6 +426,7 @@ test("a permission request shows what the action will send and sends the approva
     { update, view },
     given(withOpenRun(waiting)),
     expect(text(permissionTask.prompt)).toExist(),
+    expect(text("Approved by People Ops (Grace Hopper)")).toExist(),
     expect(role("list", { name: "Send a Slack message details" })).toHaveText(
       "to: Sam Park <sam@example.com>text: Ari Cho starts on 2026-11-02",
     ),

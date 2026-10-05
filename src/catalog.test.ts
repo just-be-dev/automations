@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import { describeCatalog, workflowProblems, type Catalog } from "./catalog.ts";
+import { findOperation } from "./connections.ts";
 import type { EntityType } from "./entities.ts";
 import type { Template } from "./templates.ts";
-import { decodeWorkflow } from "./workflow.ts";
+import { decodeWorkflow, operationsUsed } from "./workflow.ts";
 
 const employee: EntityType = {
   name: "employee",
@@ -34,12 +35,29 @@ const engineering: Template = {
   content: { body: "Hi {{hire.name}}, welcome to {{team}}" },
 };
 
-const catalog: Catalog = { types: [employee], templates: [welcome, engineering] };
+const catalog: Catalog = {
+  types: [employee],
+  templates: [welcome, engineering],
+  roles: [
+    { name: "people_ops", label: "People Ops", members: [{ type: "employee", id: "grace" }] },
+  ],
+};
 
+/** The problems with a workflow of these steps, whose operations all run automatically. */
 const problems = (
   steps: ReadonlyArray<unknown>,
   trigger: unknown = { kind: "entity", entity: "employee" },
-) => workflowProblems(catalog, Effect.runSync(decodeWorkflow({ name: "Test", trigger, steps })));
+) => {
+  const workflow = Effect.runSync(decodeWorkflow({ name: "Test", trigger, steps }));
+  return workflowProblems(catalog, {
+    ...workflow,
+    permissions: Object.fromEntries(
+      operationsUsed(workflow.steps)
+        .filter((operation) => findOperation(operation) !== undefined)
+        .map((operation) => [operation, "auto"]),
+    ),
+  });
+};
 
 const sendEmail = (fields: Record<string, unknown>) => ({
   id: "send",
@@ -341,17 +359,36 @@ describe("workflowProblems", () => {
     ).toEqual(["Step late comes after stop step halt, so it never runs"]);
   });
 
-  test("permissions name known operations", () => {
-    const workflow = Effect.runSync(
-      decodeWorkflow({
-        name: "Test",
-        trigger: { kind: "manual" },
-        steps: [agent("one")],
-        permissions: { "email.send": "auto", "fax.send": "ask" },
-      }),
-    );
-    expect(workflowProblems(catalog, workflow)).toEqual([
+  test("every operation used needs a permission, and asks name roles that exist", () => {
+    const check = (permissions: unknown) =>
+      workflowProblems(
+        catalog,
+        Effect.runSync(
+          decodeWorkflow({
+            name: "Test",
+            trigger: { kind: "manual" },
+            steps: [
+              {
+                id: "mail",
+                title: "Mail",
+                kind: "action",
+                use: "email.send",
+                with: { to: "a@example.com", subject: "Hi", body: "Hello" },
+              },
+            ],
+            permissions,
+          }),
+        ),
+      );
+    expect(check({ "email.send": { ask: "people_ops" } })).toEqual([]);
+    expect(check({ "email.send": "auto", "fax.send": "auto" })).toEqual([
       "permissions names unknown operation fax.send",
+    ]);
+    expect(check({})).toEqual([
+      'permissions needs one for email.send: "auto", or {"ask":"<role>"}',
+    ]);
+    expect(check({ "email.send": { ask: "finance" } })).toEqual([
+      "permissions for email.send ask unknown role finance (roles: people_ops)",
     ]);
   });
 
@@ -380,4 +417,5 @@ test("describes object types and operations for the designer", () => {
   expect(description).toContain(
     "Slots: hire → employee (New hire), team text (Team). Fills body; fits email.send.",
   );
+  expect(description).toContain("- people_ops (People Ops): 1 member");
 });

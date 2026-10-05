@@ -5,13 +5,13 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { AutomationsDatabase } from "./automation-index.ts";
-import { EntityData, EntityType, type EntityRecord } from "./entities.ts";
+import { EntityData, EntityType, Role, type EntityRecord } from "./entities.ts";
 import { EntityStore, EntityStoreError, makeEntityStore } from "./entity-store.ts";
 import { Template } from "./templates.ts";
 
 /**
- * The `EntityStore` on D1, in the `entity_types`, `entities`, `entity_subscriptions`, and
- * `templates` tables (see `migrations/`).
+ * The `EntityStore` on D1, in the `entity_types`, `entities`, `entity_subscriptions`,
+ * `templates`, and `roles` tables (see `migrations/`).
  */
 
 const TypeRow = Schema.Struct({ definition: Schema.fromJsonString(EntityType) });
@@ -23,6 +23,7 @@ const EntityRow = Schema.Struct({
   updated_at: Schema.Finite,
 });
 const SubscriptionRow = Schema.Struct({ automation_id: Schema.String });
+const RoleRow = Schema.Struct({ definition: Schema.fromJsonString(Role) });
 
 const toRecord = (row: typeof EntityRow.Type): EntityRecord => ({
   type: row.type,
@@ -181,6 +182,25 @@ export const EntityStoreD1 = Effect.gen(function* () {
             "deleteTemplate",
             db.prepare("DELETE FROM templates WHERE name = ?").bind(name).run(),
           ).pipe(Effect.asVoid),
+        listRoles: rows(
+          "listRoles",
+          RoleRow,
+          db.prepare("SELECT definition FROM roles ORDER BY name").all(),
+        ).pipe(Effect.map((found) => found.map((row) => row.definition))),
+        putRole: (role) =>
+          query(
+            "putRole",
+            Effect.gen(function* () {
+              const updatedAt = yield* Clock.currentTimeMillis;
+              yield* db
+                .prepare(
+                  `INSERT INTO roles (name, definition, updated_at) VALUES (?, ?, ?)
+                   ON CONFLICT (name) DO UPDATE SET definition = excluded.definition, updated_at = excluded.updated_at`,
+                )
+                .bind(role.name, JSON.stringify(role), updatedAt)
+                .run();
+            }),
+          ),
       });
     }),
   );

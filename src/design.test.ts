@@ -23,6 +23,7 @@ const catalog: Catalog = {
     },
   ],
   templates: [],
+  roles: [],
 };
 
 const draft = (until: string) =>
@@ -66,7 +67,7 @@ describe("designDraft", () => {
     // The instructions, catalog included, are the system prompt, so the message goes as written.
     expect(instructions).toEqual([designInstructions(catalog, { "email.send": "auto" })]);
     expect(instructions[0]).toContain(
-      "Current permissions, which the person may have changed: email.send: auto.",
+      'Current permissions, which the person may have changed: "email.send":"auto".',
     );
     expect(instructions[0]).toContain("- employee (Employee; shown as its name)");
     expect(requests[0]?.text).toBe("Wait for the start date");

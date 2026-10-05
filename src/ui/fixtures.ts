@@ -119,5 +119,10 @@ export const permissionTask: HumanTask = {
       text: "Ari Cho starts on 2026-11-02",
     },
   },
+  approvers: {
+    role: "people_ops",
+    label: "People Ops",
+    members: [{ name: "Grace Hopper", email: "grace@example.com" }],
+  },
   status: "open",
 };

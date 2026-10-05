@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { checkWorkflow } from "./catalog.ts";
-import { EntityType } from "./entities.ts";
+import { EntityType, Role } from "./entities.ts";
 import { checkTemplate, Template } from "./templates.ts";
 import { decodeWorkflow } from "./workflow.ts";
 
@@ -23,7 +23,8 @@ const hasKey = (key: string) => (block: unknown) =>
 const documented = async () => {
   const blocks = jsonBlocks(await read("../docs/workflow-dsl.md"));
   const employee = Schema.decodeUnknownSync(EntityType)(blocks.find(hasKey("title")));
-  return { blocks, employee };
+  const role = Schema.decodeUnknownSync(Role)(blocks.find(hasKey("members")));
+  return { blocks, employee, role };
 };
 
 /** The templates a migration seeds, read back from its SQL string literals. */
@@ -32,15 +33,18 @@ const seededTemplates = (sql: string) =>
     Schema.decodeUnknownSync(Template)(JSON.parse((literal ?? "").replaceAll("''", "'"))),
   );
 
-test("the DSL reference's example checks against its employee type, which the migration seeds", async () => {
-  const { blocks, employee } = await documented();
+test("the DSL reference's example checks against its employee type and role, which the migrations seed", async () => {
+  const { blocks, employee, role } = await documented();
   const workflow = await Effect.runPromise(
     decodeWorkflow(blocks[0]).pipe(
-      Effect.flatMap((decoded) => checkWorkflow({ types: [employee], templates: [] }, decoded)),
+      Effect.flatMap((decoded) =>
+        checkWorkflow({ types: [employee], templates: [], roles: [role] }, decoded),
+      ),
     ),
   );
   expect(workflow.trigger).toMatchObject({ kind: "entity", entity: "employee" });
   expect(await read("../migrations/0002_entities.sql")).toContain(`'${JSON.stringify(employee)}'`);
+  expect(await read("../migrations/0004_roles.sql")).toContain(`'${JSON.stringify(role)}'`);
 });
 
 test("the documented template is seeded, and the match example checks against the seeds", async () => {
@@ -56,7 +60,12 @@ test("the documented template is seeded, and the match example checks against th
       name: "Welcome",
       trigger: { kind: "entity", entity: "employee" },
       steps: [blocks.find(hasKey("match"))],
-    }).pipe(Effect.flatMap((decoded) => checkWorkflow({ types: [employee], templates }, decoded))),
+      permissions: { "email.send": "auto" },
+    }).pipe(
+      Effect.flatMap((decoded) =>
+        checkWorkflow({ types: [employee], templates, roles: [] }, decoded),
+      ),
+    ),
   );
   expect(workflow.steps[0]).toMatchObject({ kind: "action", use: "email.send" });
 });
