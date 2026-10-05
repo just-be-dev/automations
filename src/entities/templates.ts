@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { EntityField, EntityName, pathTarget, type EntityType } from "./entities.ts";
+import { EntityField, EntityName, pathTarget, type EntityType } from "./model.ts";
 import {
   InvalidWorkflow,
   actionTemplates,
@@ -12,7 +12,7 @@ import {
   type Step,
   type TemplateUse,
   type Workflow,
-} from "./workflow.ts";
+} from "../workflow/model.ts";
 
 /**
  * Templates are approved, reusable wording, such as the standard welcome email. Each one names its

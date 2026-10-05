@@ -11,11 +11,12 @@ import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { DurableDeferred, WorkflowEngine } from "effect/workflow";
-import { agentOutput, agentPrompt, decidePrompt, decision } from "./agent-step.ts";
-import { openAutomationIndex } from "./automation-index.ts";
-import { checkWorkflow } from "./catalog.ts";
-import { runAction } from "./connection-runner.ts";
-import { findOperation } from "./connections.ts";
+import { agentOutput, agentPrompt, decidePrompt, decision } from "../workflow/agent-step.ts";
+import { AutomationIndexD1 } from "./index-d1.ts";
+import { AutomationIndex } from "./index.ts";
+import { checkWorkflow } from "../workflow/catalog.ts";
+import { runAction } from "../connections/runner.ts";
+import { findOperation } from "../connections/registry.ts";
 import {
   designDraft,
   fixedProgress,
@@ -24,7 +25,7 @@ import {
   type ClassifyRequest,
   type ProgressPhrase,
 } from "./design.ts";
-import { makeDurableEngine, type DurableEngine } from "./durable-engine.ts";
+import { makeDurableEngine, type DurableEngine } from "../workflow/durable-engine.ts";
 import {
   HumanResponse,
   respondToHuman,
@@ -36,9 +37,9 @@ import {
   type HumanRequest,
   type PermissionRequest,
   type StepEvent,
-} from "./interpreter.ts";
-import { EntityStore } from "./entity-store.ts";
-import { EntityStoreD1 } from "./entity-store-d1.ts";
+} from "../workflow/interpreter.ts";
+import { EntityStore } from "../entities/store.ts";
+import { EntityStoreD1 } from "../entities/d1.ts";
 import {
   changedFields,
   isEmailField,
@@ -46,23 +47,19 @@ import {
   type EntityData,
   type EntityType,
   type Subject,
-} from "./entities.ts";
-import { openPiAgent } from "./pi.ts";
-import { expandTemplates } from "./templates.ts";
+} from "../entities/model.ts";
+import { openPiAgent } from "../ai/pi.ts";
+import { expandTemplates } from "../entities/templates.ts";
 import {
   conditionRefs,
-  Exchange,
   holds,
-  PendingChat,
   type Permissions,
-  Run,
   subjectType,
   valueMatches,
   Workflow,
-  type HumanTask,
-  type RunState,
-  type RunSummary,
-} from "./workflow.ts";
+} from "../workflow/model.ts";
+import { Run, type HumanTask, type RunState, type RunSummary } from "../workflow/run.ts";
+import { Exchange, PendingChat } from "./model.ts";
 
 const MODEL = "@cf/moonshotai/kimi-k2.7-code";
 // The classifier that picks a progress phrase while the designer reasons. Its input names the
@@ -182,7 +179,7 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
   Effect.gen(function* () {
     const state = yield* Cloudflare.DurableObjectState;
     const ai = yield* Cloudflare.Workers.AI();
-    const index = yield* openAutomationIndex;
+    const indexLayer = yield* AutomationIndexD1;
     const entityStore = yield* EntityStoreD1;
 
     // The outer Effect constructs the class; the returned inner Effect constructs each instance.
@@ -190,6 +187,7 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
     return Effect.gen(function* () {
       const runtime = yield* Alchemy.RuntimeContext;
       const entities = yield* EntityStore;
+      const index = yield* AutomationIndex;
       const withRuntime = <A, E>(effect: Effect.Effect<A, E, Alchemy.RuntimeContext>) =>
         Effect.provideService(effect, Alchemy.RuntimeContext, runtime);
 
@@ -868,7 +866,7 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         respond,
         run,
       };
-    }).pipe(Effect.provide(entityStore));
+    }).pipe(Effect.provide(Layer.merge(entityStore, indexLayer)));
   }).pipe(
     Effect.provide(
       Layer.mergeAll(Cloudflare.Workers.AIBinding, Cloudflare.D1.QueryDatabaseBinding),

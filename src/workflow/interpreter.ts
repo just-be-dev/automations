@@ -9,8 +9,8 @@ import {
   Workflow as EffectWorkflow,
   type WorkflowEngine,
 } from "effect/workflow";
-import { permissionOf } from "./connections.ts";
-import { Subject } from "./entities.ts";
+import { permissionOf } from "../connections/registry.ts";
+import { Subject } from "../entities/model.ts";
 import {
   actionTemplates,
   durationMillis,
@@ -18,7 +18,6 @@ import {
   loneRef,
   patternCondition,
   renderTemplate,
-  RunState,
   stepNeeds,
   stepRefs,
   usesNow,
@@ -30,10 +29,10 @@ import {
   type HumanStep,
   type IfStep,
   type Permission,
-  type RunStep,
   type Step,
   type WaitUntilStep,
-} from "./workflow.ts";
+} from "./model.ts";
+import { RunState, type RunStep } from "./run.ts";
 
 /**
  * Runs a saved workflow as one `effect/workflow` execution. The DSL is the payload: this module

@@ -9,19 +9,21 @@ An automation is a JSON `Workflow`: a name, a trigger, and a tree of steps. The 
 
 Values don't have to be declared up front. A step reads what the run knows when it runs: the subject's fields (following references to other entities), and what earlier steps recorded. A value only a person has is collected by a human step at the point it's needed.
 
-| Module                     | Holds                                                                  |
-| -------------------------- | ---------------------------------------------------------------------- |
-| `src/workflow.ts`          | The schema, templates, and conditions                                  |
-| `src/entities.ts`          | Entity types, records, and reading paths through `ref` fields          |
-| `src/entity-store.ts`      | The `EntityStore` service (entities and templates), and a memory layer |
-| `src/entity-store-d1.ts`   | The `EntityStore` layer on D1                                          |
-| `src/connections.ts`       | The connections and their operations                                   |
-| `src/templates.ts`         | Templates, their checks, and expanding them before a run               |
-| `src/catalog.ts`           | Checks a workflow against the entity types and connections             |
-| `src/design.ts`            | The designer agent's prompt                                            |
-| `src/interpreter.ts`       | `RunAutomation`, which executes a workflow                             |
-| `src/durable-engine.ts`    | The `effect/workflow` engine journaled in the Durable Object's storage |
-| `src/connection-runner.ts` | How operations execute                                                 |
+| Module                           | Holds                                                                  |
+| -------------------------------- | ---------------------------------------------------------------------- |
+| `src/workflow/model.ts`          | The DSL schema, template strings, and conditions                       |
+| `src/workflow/run.ts`            | Run state, step results, and human tasks                               |
+| `src/entities/model.ts`          | Entity types, records, and reading paths through `ref` fields          |
+| `src/entities/store.ts`          | The `EntityStore` service (entities and templates), and a memory layer |
+| `src/entities/d1.ts`             | The `EntityStore` layer on D1                                          |
+| `src/connections/registry.ts`    | The connections and their operations                                   |
+| `src/entities/templates.ts`      | Templates, their checks, and expanding them before a run               |
+| `src/workflow/catalog.ts`        | Checks a workflow against the entity types and connections             |
+| `src/automation/design.ts`       | The designer agent's prompt                                            |
+| `src/automation/draft.ts`        | Designer replies and their decoding                                    |
+| `src/workflow/interpreter.ts`    | `RunAutomation`, which executes a workflow                             |
+| `src/workflow/durable-engine.ts` | The `effect/workflow` engine journaled in the Durable Object's storage |
+| `src/connections/runner.ts`      | How operations execute                                                 |
 
 ## Example
 
@@ -493,7 +495,7 @@ A run executes the saved workflow with its templates expanded. It starts with `{
 | `human`                     | A `DurableDeferred`, raced against a `DurableClock` when it has a timeout.                                                     |
 | `parallel`, `if`, `match`   | Plain control flow, evaluated again on every replay.                                                                           |
 
-The engine in `src/durable-engine.ts` journals payloads, Activity results, deferred completions, and clock times in the Automation object's storage under `wf:<executionId>:…`. It never keeps a run in memory between events: each `advance` callback replays the run from the start, reusing everything journaled, until it completes or reaches a clock or a person. A `clock` callback fires each durable clock at its time, and answering a task completes its deferred. Both schedule another replay.
+The engine in `src/workflow/durable-engine.ts` journals payloads, Activity results, deferred completions, and clock times in the Automation object's storage under `wf:<executionId>:…`. It never keeps a run in memory between events: each `advance` callback replays the run from the start, reusing everything journaled, until it completes or reaches a clock or a person. A `clock` callback fires each durable clock at its time, and answering a task completes its deferred. Both schedule another replay.
 
 Before a step runs, the interpreter checks the steps it needs a value from: those its refs read, except through `exists` checks. If one of them didn't run, because it was declined or skipped, the step is `skipped` without resolving anything. The checker guarantees every step a ref names finishes on every path before the reader, so a missing record always means a step that didn't run.
 

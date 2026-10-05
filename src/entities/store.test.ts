@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
-import type { EntityType } from "./entities.ts";
-import { EntityStore, layerMemory } from "./entity-store.ts";
+import type { EntityType } from "./model.ts";
+import { EntityStore, layerMemory } from "./store.ts";
 
 const employee: EntityType = {
   name: "employee",

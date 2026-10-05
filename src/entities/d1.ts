@@ -4,9 +4,9 @@ import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { AutomationsDatabase } from "./automation-index.ts";
-import { EntityData, EntityType, Role, type EntityRecord } from "./entities.ts";
-import { EntityStore, EntityStoreError, makeEntityStore } from "./entity-store.ts";
+import { AutomationsDatabase } from "../database.ts";
+import { EntityData, EntityType, Role, type EntityRecord } from "./model.ts";
+import { EntityStore, EntityStoreError, makeEntityStore } from "./store.ts";
 import { Template } from "./templates.ts";
 
 /**

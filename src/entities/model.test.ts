@@ -7,7 +7,7 @@ import {
   readRef,
   type EntityType,
   type Subject,
-} from "./entities.ts";
+} from "./model.ts";
 
 const employee: EntityType = {
   name: "employee",

@@ -13,8 +13,14 @@ mise run dev    # alchemy dev: local Workers, Durable Object, and Vite with hot 
 Infrastructure and server code share one [Alchemy 2](https://alchemy.run) Effect program:
 
 - `alchemy.run.ts` declares the Stack and the `Studio` Foldkit website.
-- `src/api.ts` is the Effect-native `Api` Worker.
-- `src/automation.ts` is the Durable Object that designs automations with pi and runs them with `src/interpreter.ts`.
+- `src/http/api.ts` composes the private `Api` Worker from domain routes and request-scoped services.
+- `src/automation/` owns designing, saving, and hosting an automation in its Durable Object, plus the `AutomationIndex` service and its D1 layer.
+- `src/workflow/` owns the workflow DSL, run models, catalog checks, interpreter, and durable engine.
+- `src/entities/` owns entity models, approved templates, the `EntityStore` service and its D1 and memory layers, and subscriber notifications shared by HTTP and MCP writes.
+- `src/connections/` separates the pure operation registry from its executor; `src/ai/` hosts pi and its SQLite storage.
+- `src/database.ts` declares the D1 database shared by both storage adapters. Resource bindings are resolved at plan time; services capture runtime dependencies per request or Durable Object instance.
+
+`src/workflow.ts`, `src/entities.ts`, and `src/connections.ts` retain the UI's domain imports. Backend code imports the owning modules directly; `src/ui/` is organized independently.
 
 `mise run dev` runs everything locally on stage `dev_$USER` and prints the Studio URL. Dev mode skips Cloudflare Access, but it needs Cloudflare credentials for Workers AI. Run `bun alchemy profile edit --add Cloudflare` once, or set `ALCHEMY_PROFILE` to a profile that already has them.
 

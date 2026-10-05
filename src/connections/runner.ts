@@ -4,14 +4,14 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import type * as Schema from "effect/Schema";
-import { StepFailed } from "./interpreter.ts";
+import { StepFailed } from "../workflow/interpreter.ts";
 import {
   durationMillis,
   isDuration,
   isPublicHttpsUrl,
   type ActionStep,
-  type RunState,
-} from "./workflow.ts";
+} from "../workflow/model.ts";
+import type { RunState } from "../workflow/run.ts";
 
 /**
  * Executes connection operations for action steps. `http.post` really sends; the other

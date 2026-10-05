@@ -23,21 +23,21 @@
               "src/ui/api.ts",
               "src/ui/command.ts",
               "src/ui/page/entities/command.ts",
-              "src/api.ts",
-              "src/connection-runner.ts"
+              "src/http/**/*.ts",
+              "src/connections/runner.ts"
             ],
             "options": { "allowedUnstableApis": ["effect/http"] }
           },
           {
-            "include": ["src/entity-mcp.ts", "src/entity-mcp.test.ts"],
+            "include": ["src/http/entity-mcp.ts", "src/http/entity-mcp.test.ts"],
             "options": { "allowedUnstableApis": ["effect/ai"] }
           },
           {
             "include": [
-              "src/interpreter.ts",
-              "src/interpreter.test.ts",
-              "src/durable-engine.ts",
-              "src/automation.ts"
+              "src/workflow/interpreter.ts",
+              "src/workflow/interpreter.test.ts",
+              "src/workflow/durable-engine.ts",
+              "src/automation/durable-object.ts"
             ],
             "options": { "allowedUnstableApis": ["effect/workflow"] }
           }

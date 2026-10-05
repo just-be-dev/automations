@@ -2,9 +2,9 @@ import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { checkWorkflow } from "./catalog.ts";
-import { EntityType, Role } from "./entities.ts";
-import { checkTemplate, Template } from "./templates.ts";
-import { decodeWorkflow } from "./workflow.ts";
+import { EntityType, Role } from "../entities/model.ts";
+import { checkTemplate, Template } from "../entities/templates.ts";
+import { decodeWorkflow } from "./model.ts";
 
 const read = (path: string) => Bun.file(new URL(path, import.meta.url)).text();
 
@@ -21,7 +21,7 @@ const hasKey = (key: string) => (block: unknown) =>
   typeof block === "object" && block !== null && key in block;
 
 const documented = async () => {
-  const blocks = jsonBlocks(await read("../docs/workflow-dsl.md"));
+  const blocks = jsonBlocks(await read("../../docs/workflow-dsl.md"));
   const employee = Schema.decodeUnknownSync(EntityType)(blocks.find(hasKey("title")));
   const role = Schema.decodeUnknownSync(Role)(blocks.find(hasKey("members")));
   return { blocks, employee, role };
@@ -43,13 +43,15 @@ test("the DSL reference's example checks against its employee type and role, whi
     ),
   );
   expect(workflow.trigger).toMatchObject({ kind: "entity", entity: "employee" });
-  expect(await read("../migrations/0002_entities.sql")).toContain(`'${JSON.stringify(employee)}'`);
-  expect(await read("../migrations/0004_roles.sql")).toContain(`'${JSON.stringify(role)}'`);
+  expect(await read("../../migrations/0002_entities.sql")).toContain(
+    `'${JSON.stringify(employee)}'`,
+  );
+  expect(await read("../../migrations/0004_roles.sql")).toContain(`'${JSON.stringify(role)}'`);
 });
 
 test("the documented template is seeded, and the match example checks against the seeds", async () => {
   const { blocks, employee } = await documented();
-  const templates = seededTemplates(await read("../migrations/0003_templates.sql"));
+  const templates = seededTemplates(await read("../../migrations/0003_templates.sql"));
   for (const template of templates) {
     await Effect.runPromise(checkTemplate([employee], template));
   }

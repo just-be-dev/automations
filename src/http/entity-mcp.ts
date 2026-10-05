@@ -14,11 +14,12 @@ import {
   InvalidEntity,
   Role,
   Subject,
-} from "./entities.ts";
-import { EntityStore, EntityStoreError, type EntityChange } from "./entity-store.ts";
+} from "../entities/model.ts";
+import { EntityStore, EntityStoreError } from "../entities/store.ts";
+import { EntitySubscribers, Triggered } from "../entities/subscribers.ts";
 
 /**
- * The entity store as an MCP server, served at `/api/mcp` by `src/api.ts`. The tools are an Effect
+ * The entity store as an MCP server, served at `/api/mcp` by `src/http/mcp.ts`. The tools are an Effect
  * `Toolkit`; this module also answers the JSON-RPC messages of MCP's Streamable HTTP transport.
  *
  * It is stateless on purpose: Workers keep nothing between requests, so `initialize` assigns no
@@ -31,24 +32,6 @@ export class EntityNotFound extends Schema.TaggedError<EntityNotFound>()("Entity
 }) {}
 
 const EntityFailure = Schema.Union([EntityStoreError, InvalidEntity, EntityNotFound]);
-
-/** A run an entity write started, or why an automation watching the type couldn't start one. */
-export const Triggered = Schema.Struct({
-  automation: Schema.String,
-  runId: Schema.NullOr(Schema.String),
-  error: Schema.NullOr(Schema.String),
-});
-export type Triggered = typeof Triggered.Type;
-
-/** Tells the automations watching an entity's type that it changed. Provided by the Api Worker. */
-export class EntitySubscribers extends Context.Service<
-  EntitySubscribers,
-  {
-    readonly notify: (
-      change: EntityChange,
-    ) => Effect.Effect<ReadonlyArray<Triggered>, EntityStoreError, EntityStore>;
-  }
->()("automations/EntitySubscribers") {}
 
 const TypeParams = Schema.Struct({ type: EntityName });
 const EntityParams = Schema.Struct({ type: EntityName, id: EntityId });
@@ -173,9 +156,7 @@ export const EntityToolHandlers = EntityTools.toLayer(
       put_entity: ({ type, id, data }) =>
         Effect.gen(function* () {
           const change = yield* store.putEntity(type, id, data);
-          const triggered = yield* subscribers
-            .notify(change)
-            .pipe(Effect.provideService(EntityStore, store));
+          const triggered = yield* subscribers.notify(change);
           return { entity: change.after, triggered };
         }),
       delete_entity: ({ type, id }) =>

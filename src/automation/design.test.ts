@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
-import type { Catalog } from "./catalog.ts";
+import type { Catalog } from "../workflow/catalog.ts";
 import {
   designDraft,
   designInstructions,
@@ -8,7 +8,7 @@ import {
   pickProgress,
   type ClassifyRequest,
 } from "./design.ts";
-import { PiError, type PromptOptions } from "./pi.ts";
+import { PiError, type PromptOptions } from "../ai/pi.ts";
 
 const catalog: Catalog = {
   types: [

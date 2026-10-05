@@ -2,7 +2,7 @@ import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import Api from "./src/api.ts";
+import Api from "./src/http/api.ts";
 
 /** Machine access for smoke tests: send `CF-Access-Client-Id` / `CF-Access-Client-Secret`. */
 export const TestClient = Cloudflare.Access.ServiceToken("TestClient", { duration: "720h" });

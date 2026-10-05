@@ -1,8 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { checkWorkflow, describeCatalog, type Catalog } from "./catalog.ts";
-import type { LiveAnswer, PiAgent } from "./pi.ts";
-import { decodeDraft, type InvalidWorkflow, type Permissions } from "./workflow.ts";
+import { checkWorkflow, describeCatalog, type Catalog } from "../workflow/catalog.ts";
+import type { LiveAnswer, PiAgent } from "../ai/pi.ts";
+import type { InvalidWorkflow, Permissions } from "../workflow/model.ts";
+import { decodeDraft } from "./draft.ts";
 
 /**
  * The designer agent: its system prompt instructions, how its reply becomes a draft, and the

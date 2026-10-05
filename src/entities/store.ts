@@ -13,13 +13,13 @@ import {
   type EntityType,
   type Role,
   type Subject,
-} from "./entities.ts";
+} from "./model.ts";
 import { checkTemplate, type InvalidTemplate, type Template } from "./templates.ts";
 
 /**
  * Where entity types, entities, templates, roles, and subscriptions to entity changes live. Templates sit
  * beside the types because each one is checked against them. `EntityStore` is the service steps,
- * triggers, and the API use; `src/entity-store-d1.ts` implements it on D1, and `layerMemory` below
+ * triggers, and the API use; `src/entities/d1.ts` implements it on D1, and `layerMemory` below
  * implements it in memory for tests.
  */
 

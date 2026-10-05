@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import { describeCatalog, workflowProblems, type Catalog } from "./catalog.ts";
-import { findOperation } from "./connections.ts";
-import type { EntityType } from "./entities.ts";
-import type { Template } from "./templates.ts";
-import { decodeWorkflow, operationsUsed } from "./workflow.ts";
+import { findOperation } from "../connections/registry.ts";
+import type { EntityType } from "../entities/model.ts";
+import type { Template } from "../entities/templates.ts";
+import { decodeWorkflow, operationsUsed } from "./model.ts";
 
 const employee: EntityType = {
   name: "employee",

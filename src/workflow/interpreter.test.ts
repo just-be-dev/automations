@@ -20,8 +20,9 @@ import {
   type PermissionRequest,
   type StepEvent,
 } from "./interpreter.ts";
-import { readJsonPath, type Subject } from "./entities.ts";
-import type { ActionStep, RunState, Step, Workflow } from "./workflow.ts";
+import { readJsonPath, type Subject } from "../entities/model.ts";
+import type { ActionStep, Step, Workflow } from "./model.ts";
+import type { RunState } from "./run.ts";
 
 const agent = (id: string, instruction = `Do ${id}`): Step => ({
   id,

@@ -1,10 +1,11 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { valueMatches, type AgentStep, type DecideStep, type RunState } from "./workflow.ts";
+import { valueMatches, type AgentStep, type DecideStep } from "./model.ts";
+import type { RunState } from "./run.ts";
 
 /**
  * How agent and decide steps talk to the model: the prompts the Automation object sends, and how
- * the answers become step records. The model call itself lives in `src/pi.ts`.
+ * the answers become step records. The model call itself lives in `src/ai/pi.ts`.
  */
 
 export class AgentAnswerError extends Schema.TaggedError<AgentAnswerError>()("AgentAnswerError", {

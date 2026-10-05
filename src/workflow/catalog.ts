@@ -5,9 +5,9 @@ import {
   operations,
   type Operation,
   type OperationInput,
-} from "./connections.ts";
-import { isEmailField, pathTarget, type EntityType, type Role } from "./entities.ts";
-import { contentRefs, templateProblems, type Template } from "./templates.ts";
+} from "../connections/registry.ts";
+import { isEmailField, pathTarget, type EntityType, type Role } from "../entities/model.ts";
+import { contentRefs, templateProblems, type Template } from "../entities/templates.ts";
 import {
   InvalidWorkflow,
   actionPaths,
@@ -25,7 +25,7 @@ import {
   type Step,
   type TemplateUse,
   type Workflow,
-} from "./workflow.ts";
+} from "./model.ts";
 
 /**
  * What a workflow can draw on beyond its own steps: the entity types and templates in the store.

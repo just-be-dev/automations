@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { EntityType } from "./entities.ts";
-import { answerMcp, EntitySubscribers, EntityToolHandlers } from "./entity-mcp.ts";
-import { layerMemory } from "./entity-store.ts";
+import type { EntityType } from "../entities/model.ts";
+import { answerMcp, EntityToolHandlers } from "./entity-mcp.ts";
+import { EntitySubscribers } from "../entities/subscribers.ts";
+import { layerMemory } from "../entities/store.ts";
 
 const employee: EntityType = {
   name: "employee",

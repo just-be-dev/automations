@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import { agentOutput, agentPrompt, decision } from "./agent-step.ts";
-import type { AgentStep } from "./workflow.ts";
+import type { AgentStep } from "./model.ts";
 
 const propose: AgentStep = {
   id: "propose",

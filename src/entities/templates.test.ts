@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
-import type { EntityType } from "./entities.ts";
+import type { EntityType } from "./model.ts";
 import { expandTemplates, fillTemplate, templateProblems, type Template } from "./templates.ts";
-import type { Workflow } from "./workflow.ts";
+import type { Workflow } from "../workflow/model.ts";
 
 const employee: EntityType = {
   name: "employee",
