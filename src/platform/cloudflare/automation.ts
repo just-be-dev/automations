@@ -7,6 +7,7 @@ import { PiAgent } from "../../ai/pi.ts";
 import { ClassifierError, ProgressClassifier } from "../../automation/progress-classifier.ts";
 import { makeAutomation } from "../../automation/application.ts";
 import { AutomationHost, AutomationStorageError } from "../../automation/host.ts";
+import { ExecutionId } from "../../workflow/execution.ts";
 import { AutomationIndexD1 } from "./automation-index-d1.ts";
 import { EntityStoreD1 } from "./entity-store-d1.ts";
 import { openPiAgent } from "./pi.ts";
@@ -16,8 +17,8 @@ const PROGRESS_MODEL = "@cf/cloudflare/clef-flash";
 
 // Callback names, payloads, and schedule keys are persisted contracts.
 const DesignReply = Schema.Struct({ automationId: Schema.String, chatId: Schema.String });
-const Advance = Schema.Struct({ executionId: Schema.optionalKey(Schema.String) });
-const ClockFired = Schema.Struct({ executionId: Schema.String, deferredName: Schema.String });
+const Advance = Schema.Struct({ executionId: Schema.optionalKey(ExecutionId) });
+const ClockFired = Schema.Struct({ executionId: ExecutionId, deferredName: Schema.String });
 
 /** Cloudflare hosts the application; business operations don't know about bindings or callbacks. */
 export default class Automation extends Cloudflare.DurableObject<Automation>()(

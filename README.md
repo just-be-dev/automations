@@ -26,6 +26,14 @@ Dependencies point from platform adapters into domains, never back. `src/platfor
 
 Saving is an application operation, not HTTP orchestration: validate the draft, store the saved snapshot, update its entity subscription, then best-effort update the directory. Snapshot storage and subscriptions do not share a transaction. If subscribing fails, the caller gets the error but the snapshot remains saved; retry saving to repair the subscription. A directory failure does not fail a save.
 
+Runs have three distinct representations:
+
+- `Run` (`workflow/run.ts`) is the persisted application record: the executed snapshot, status, step records and human tasks. `automation/run-store.ts` owns its updates and the `execution:<executionId>` lookup to a run ID. It brands stored IDs internally without changing the public schema.
+- `ExecutionValues` (`workflow/execution.ts`) holds the subject and completed step values during the interpreter's walk. Each replay rebuilds these values; it never seeds them from `Run.steps`.
+- The journal (`workflow/durable-engine.ts`, under `wf:<executionId>:`) is authoritative for completed Activities, deferred answers, clocks and the execution outcome. Reports and outcomes update the application record, which is what people see.
+
+`RunId` identifies a run record; `ExecutionId` identifies its engine journal. Their types are distinct, but both still serialize as plain strings. HTTP paths and durable callbacks decode into the appropriate ID, and the native Effect Workflow interface's strings are branded at the engine boundary. Storage keys, callback payloads and workflow results keep their existing formats.
+
 `mise run dev` runs everything locally on stage `dev_$USER` and prints the Studio URL. Dev mode skips Cloudflare Access, but it needs Cloudflare credentials for Workers AI. Run `bun alchemy profile edit --add Cloudflare` once, or set `ALCHEMY_PROFILE` to a profile that already has them.
 
 The workflow format is described in [`docs/workflow-dsl.md`](docs/workflow-dsl.md). Agent instructions are in `AGENTS.md` and `src/ui/AGENTS.md`.

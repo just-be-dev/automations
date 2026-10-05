@@ -2,6 +2,10 @@ import * as Schema from "effect/Schema";
 import { Subject } from "../entities/model.ts";
 import { HumanResponseSpec, Workflow } from "./model.ts";
 
+/** Identifies the application run record, never a replay execution. Encodes as a string. */
+export const RunId = Schema.String.pipe(Schema.brand("RunId"));
+export type RunId = typeof RunId.Type;
+
 /** `declined` and `skipped` steps record nothing; `waiting` parks on a clock or a person. */
 export const RunStep = Schema.Struct({
   status: Schema.Literals(["running", "waiting", "done", "declined", "skipped"]),
@@ -41,7 +45,11 @@ export interface HumanTask extends Schema.Schema.Type<typeof HumanTask> {}
 export const RunStatus = Schema.Literals(["running", "waiting", "completed", "failed", "stopped"]);
 export type RunStatus = typeof RunStatus.Type;
 
-/** A run as persisted in the automation's Durable Object storage. */
+/**
+ * The persisted application record and its public wire shape: snapshot, status, steps and tasks.
+ * It is not interpreter working values or a replay checkpoint; the journal owns completed work.
+ * Public IDs stay strings; the run store brands them when reading records into the application.
+ */
 export const Run = Schema.Struct({
   id: Schema.String,
   workflow: Workflow,
@@ -74,11 +82,3 @@ export const RunSummary = Schema.Struct({
   openTasks: Schema.Int,
 });
 export interface RunSummary extends Schema.Schema.Type<typeof RunSummary> {}
-
-/** What a run knows so far: its subject, and what each finished step recorded under its ID. */
-export const RunState = Schema.Struct({
-  runId: Schema.String,
-  subject: Schema.NullOr(Subject),
-  steps: Schema.Record(Schema.String, Schema.Json),
-});
-export interface RunState extends Schema.Schema.Type<typeof RunState> {}

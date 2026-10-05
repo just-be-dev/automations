@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { valueMatches, type AgentStep, type DecideStep } from "./model.ts";
-import type { RunState } from "./run.ts";
+import type { ExecutionValues } from "./execution.ts";
 
 /**
  * How agent and decide steps talk to the model: the prompts the Automation object sends, and how
@@ -12,13 +12,13 @@ export class AgentAnswerError extends Schema.TaggedError<AgentAnswerError>()("Ag
   message: Schema.String,
 }) {}
 
-const context = (state: RunState) =>
+const context = (state: ExecutionValues) =>
   [
     `The run is about: ${state.subject === null ? "nothing in particular" : JSON.stringify(state.subject)}`,
     `Earlier steps recorded: ${JSON.stringify(state.steps)}`,
   ].join("\n");
 
-export const agentPrompt = (step: AgentStep, instruction: string, state: RunState) =>
+export const agentPrompt = (step: AgentStep, instruction: string, state: ExecutionValues) =>
   [
     "You are carrying out one step of an automation. Do the work the instruction describes and answer with the result itself, not a description of what you would do. You can't contact anyone or call any service; later steps act on your answer.",
     `Step: ${step.title}`,
@@ -75,7 +75,7 @@ export const agentOutput = (step: AgentStep, answer: string) => {
   );
 };
 
-export const decidePrompt = (step: DecideStep, question: string, state: RunState) =>
+export const decidePrompt = (step: DecideStep, question: string, state: ExecutionValues) =>
   [
     "You make one decision in an automation. Pick the option that fits best.",
     `Question: ${question}`,

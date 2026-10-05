@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import { agentOutput, agentPrompt, decision } from "./agent-step.ts";
 import type { AgentStep } from "./model.ts";
+import { RunId } from "./run.ts";
 
 const propose: AgentStep = {
   id: "propose",
@@ -19,7 +20,7 @@ const propose: AgentStep = {
 describe("agent steps", () => {
   test("asks for the output fields and decodes a fenced answer", () => {
     const prompt = agentPrompt(propose, "Pick the best weekly slot", {
-      runId: "r",
+      runId: RunId.make("r"),
       subject: null,
       steps: {},
     });

@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { Workflow, WorkflowEngine } from "effect/workflow";
+import { ExecutionId } from "./execution.ts";
 
 /**
  * A replaying `effect/workflow` engine whose journal lives in a key-value store, such as a Durable
@@ -18,15 +19,16 @@ import { Workflow, WorkflowEngine } from "effect/workflow";
  * Journal keys, all prefixed with `wf:<executionId>:`, are persisted contracts:
  * `payload`, `result`, `interrupted`, `activity:<name>:<attempt>`, `deferred:<name>`, and
  * `clock:<name>`.
+ * This journal is authoritative for replay; application run records are never read here.
  */
 export interface EngineStore {
   readonly get: (key: string) => Effect.Effect<unknown>;
   readonly put: (key: string, value: unknown) => Effect.Effect<void>;
   /** Asks the host to replay the execution soon. */
-  readonly wake: (executionId: string) => Effect.Effect<void>;
+  readonly wake: (executionId: ExecutionId) => Effect.Effect<void>;
   /** Asks the host to call `fireClock` for this deferred at `at`, in epoch milliseconds. */
   readonly wakeAt: (options: {
-    readonly executionId: string;
+    readonly executionId: ExecutionId;
     readonly deferredName: string;
     readonly at: number;
   }) => Effect.Effect<void>;
@@ -40,12 +42,12 @@ export interface DurableEngine {
    */
   readonly replay: (
     workflow: Workflow.Any,
-    executionId: string,
+    executionId: ExecutionId,
   ) => Effect.Effect<Workflow.Result<unknown, unknown> | undefined>;
   /** Completes a durable clock's deferred, which wakes its execution. */
   readonly fireClock: (
     workflow: Workflow.Any,
-    executionId: string,
+    executionId: ExecutionId,
     deferredName: string,
   ) => Effect.Effect<void>;
 }
@@ -133,7 +135,7 @@ export const makeDurableEngine = (store: EngineStore): DurableEngine => {
         return;
       }
       yield* store.put(key, yield* encodeExit(options.exit));
-      yield* store.wake(options.executionId);
+      yield* store.wake(ExecutionId.make(options.executionId));
     });
 
   const engine = WorkflowEngine.makeUnsafe({
@@ -143,7 +145,9 @@ export const makeDurableEngine = (store: EngineStore): DurableEngine => {
       }),
     execute: (workflow, options) =>
       Effect.gen(function* () {
-        const key = keys.payload(options.executionId);
+        // Effect Workflow's interface uses plain strings. Brand its IDs at this boundary.
+        const executionId = ExecutionId.make(options.executionId);
+        const key = keys.payload(executionId);
         if ((yield* store.get(key)) === undefined) {
           const payload = yield* withoutServices(
             Schema.encodeUnknownEffect(payloadCodec(workflow))(options.payload),
@@ -151,19 +155,23 @@ export const makeDurableEngine = (store: EngineStore): DurableEngine => {
           yield* store.put(key, payload);
         }
         if (options.discard) {
-          yield* store.wake(options.executionId);
+          yield* store.wake(executionId);
           return;
         }
-        const result = yield* replay(workflow, options.executionId);
+        const result = yield* replay(workflow, executionId);
         return result ?? new Workflow.Suspended({});
       }) as never,
     poll: (workflow, executionId) =>
       readResult(workflow, executionId).pipe(Effect.map(Option.fromNullishOr)),
     interrupt: (_workflow, executionId) =>
-      store.put(keys.interrupted(executionId), true).pipe(Effect.andThen(store.wake(executionId))),
+      store
+        .put(keys.interrupted(executionId), true)
+        .pipe(Effect.andThen(store.wake(ExecutionId.make(executionId)))),
     interruptUnsafe: (_workflow, executionId) =>
-      store.put(keys.interrupted(executionId), true).pipe(Effect.andThen(store.wake(executionId))),
-    resume: (_workflow, executionId) => store.wake(executionId),
+      store
+        .put(keys.interrupted(executionId), true)
+        .pipe(Effect.andThen(store.wake(ExecutionId.make(executionId)))),
+    resume: (_workflow, executionId) => store.wake(ExecutionId.make(executionId)),
     activityExecute: (activity, attempt) =>
       Effect.gen(function* () {
         const instance = yield* WorkflowEngine.WorkflowInstance;
@@ -207,14 +215,14 @@ export const makeDurableEngine = (store: EngineStore): DurableEngine => {
         const at = (yield* Clock.currentTimeMillis) + Duration.toMillis(options.clock.duration);
         yield* store.put(key, at);
         yield* store.wakeAt({
-          executionId: options.executionId,
+          executionId: ExecutionId.make(options.executionId),
           deferredName: options.clock.deferred.name,
           at,
         });
       }),
   });
 
-  const replay = (workflow: Workflow.Any, executionId: string) =>
+  const replay = (workflow: Workflow.Any, executionId: ExecutionId) =>
     lockFor(executionId).withPermit(
       Effect.gen(function* () {
         const finished = yield* readResult(workflow, executionId);
@@ -250,7 +258,7 @@ export const makeDurableEngine = (store: EngineStore): DurableEngine => {
       }),
     );
 
-  const fireClock = (_workflow: Workflow.Any, executionId: string, deferredName: string) =>
+  const fireClock = (_workflow: Workflow.Any, executionId: ExecutionId, deferredName: string) =>
     deferredDone({ executionId, deferredName, exit: Exit.void });
 
   return { engine, replay, fireClock };

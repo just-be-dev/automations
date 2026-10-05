@@ -1,6 +1,18 @@
 import * as Context from "effect/Context";
-import type * as Effect from "effect/Effect";
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import type { ExecutionId } from "../workflow/execution.ts";
+
+// Workflows and runs from before entity-based triggers were discarded on purpose.
+export const decodeOrDrop =
+  <A, I>(schema: Schema.Codec<A, I>) =>
+  (value: unknown) =>
+    value === undefined
+      ? Effect.succeed(undefined)
+      : Schema.decodeUnknownEffect(schema)(value).pipe(
+          Effect.map((decoded): A | undefined => decoded),
+          Effect.orElseSucceed(() => undefined),
+        );
 
 export class AutomationStorageError extends Schema.TaggedError<AutomationStorageError>()(
   "AutomationStorageError",
@@ -25,9 +37,9 @@ export class AutomationHost extends Context.Service<
     };
     readonly jobs: {
       readonly designReply: (automationId: string, chatId: string) => Effect.Effect<void>;
-      readonly advance: (executionId: string) => Effect.Effect<void>;
+      readonly advance: (executionId: ExecutionId) => Effect.Effect<void>;
       readonly clock: (
-        executionId: string,
+        executionId: ExecutionId,
         deferredName: string,
         at: number,
       ) => Effect.Effect<void>;

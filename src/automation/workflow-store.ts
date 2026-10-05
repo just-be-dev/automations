@@ -1,22 +1,10 @@
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 import { EntityStore } from "../entities/store.ts";
 import { checkWorkflow } from "../workflow/catalog.ts";
 import { Workflow } from "../workflow/model.ts";
-import { AutomationHost } from "./host.ts";
+import { AutomationHost, decodeOrDrop } from "./host.ts";
 import { AutomationIndex } from "./index.ts";
 import { AutomationError } from "./model.ts";
-
-// Workflows and runs from before entity-based triggers were discarded on purpose.
-export const decodeOrDrop =
-  <A, I>(schema: Schema.Codec<A, I>) =>
-  (value: unknown) =>
-    value === undefined
-      ? Effect.succeed(undefined)
-      : Schema.decodeUnknownEffect(schema)(value).pipe(
-          Effect.map((decoded): A | undefined => decoded),
-          Effect.orElseSucceed(() => undefined),
-        );
 
 /** Draft and saved snapshots share the same storage and current catalog. */
 export const makeWorkflowStore = Effect.fn("Automation.makeWorkflowStore")(function* () {

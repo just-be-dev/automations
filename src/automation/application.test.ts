@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, expectTypeOf, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
@@ -9,9 +9,12 @@ import { PiAgent, type PromptOptions } from "../ai/pi.ts";
 import { ProgressClassifier } from "./progress-classifier.ts";
 import { EntityStore, EntityStoreError, layerMemory } from "../entities/store.ts";
 import type { Workflow } from "../workflow/model.ts";
+import { ExecutionId, ExecutionValues } from "../workflow/execution.ts";
+import { RunId } from "../workflow/run.ts";
 import { makeAutomation } from "./application.ts";
 import { AutomationHost } from "./host.ts";
 import { AutomationIndex, AutomationIndexError } from "./index.ts";
+import { makeRunStore, StoredRun } from "./run-store.ts";
 
 const workflow: Workflow = {
   name: "Saved workflow",
@@ -283,7 +286,7 @@ describe("Automation application without a platform", () => {
         yield* app.save("a1");
         yield* h.host.storage.put("draft", { ...workflow, name: "Unsaved", steps: [] });
         const started = yield* app.start(undefined);
-        const executionId = yield* Schema.decodeUnknownEffect(Schema.String)(h.advances[0]);
+        const executionId = yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances[0]);
         expect(yield* h.host.storage.get(`execution:${executionId}`)).toBe(started.id);
         expect(yield* h.host.storage.get(`wf:${executionId}:payload`)).toBeDefined();
         const reopened = yield* makeAutomation();
@@ -311,7 +314,7 @@ describe("Automation application without a platform", () => {
         yield* h.host.storage.put("saved", saved);
         const app = yield* makeAutomation();
         const started = yield* app.start(undefined);
-        const executionId = yield* Schema.decodeUnknownEffect(Schema.String)(h.advances[0]);
+        const executionId = yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances[0]);
         yield* app.callbacks.advance({ executionId });
         const waiting = yield* app.run(started.id);
         const reopened = yield* makeAutomation();
@@ -336,6 +339,122 @@ describe("Automation application without a platform", () => {
     expect(h.advances).toHaveLength(2);
   });
 
+  test("replay takes execution values from the journal, not the displayed run records", async () => {
+    const h = harness();
+    const saved: Workflow = {
+      name: "Journal authority",
+      trigger: { kind: "manual" },
+      permissions: { "slack.sendMessage": "auto" },
+      steps: [
+        {
+          id: "first",
+          title: "First",
+          kind: "action",
+          use: "slack.sendMessage",
+          with: { to: "#original", text: "First" },
+        },
+        { id: "pause", title: "Pause", kind: "wait", duration: "3 minutes" },
+        {
+          id: "last",
+          title: "Last",
+          kind: "action",
+          use: "slack.sendMessage",
+          with: { to: "#ops", text: "{{steps.first.channel}}" },
+        },
+      ],
+    };
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* h.host.storage.put("saved", saved);
+        const app = yield* makeAutomation();
+        const started = yield* app.start(undefined);
+        expect(started.status).toBe("running");
+        const executionId = yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances[0]);
+        expect(executionId).not.toBe(started.id);
+        yield* app.callbacks.advance({ executionId });
+        const waiting = yield* Schema.decodeUnknownEffect(StoredRun)(yield* app.run(started.id));
+        yield* h.host.storage.put(`run:${started.id}`, {
+          ...waiting,
+          steps: { ...waiting.steps, first: { status: "done", record: { channel: "#forged" } } },
+        });
+        const reopened = yield* makeAutomation();
+        yield* TestClock.setTime(180_000);
+        const deferredName = yield* Schema.decodeUnknownEffect(Schema.String)(
+          h.clocks[0]?.deferredName,
+        );
+        yield* reopened.callbacks.clock({ executionId, deferredName });
+        yield* reopened.callbacks.advance({ executionId });
+        const finished = yield* reopened.run(started.id);
+        expect(finished?.status).toBe("completed");
+        expect(finished?.steps.last?.record).toMatchObject({ text: "#original", simulated: true });
+        expect(finished?.steps.first?.record).toMatchObject({ channel: "#original" });
+      }).pipe(Effect.provide(Layer.merge(h.layer, TestClock.layer()))),
+    );
+  });
+
+  test("run records merge parallel reports and keep execution lookup separate from run IDs", async () => {
+    const h = harness();
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const records = yield* makeRunStore().pipe(
+          Effect.provideService(AutomationHost, {
+            ...h.host,
+            storage: {
+              ...h.host.storage,
+              // Yield after the read so parallel reports race unless updates hold the lock.
+              get: (key) =>
+                h.host.storage.get(key).pipe(Effect.tap(() => Effect.sleep("1 millis"))),
+            },
+          }),
+        );
+        const id = RunId.make("run-alpha");
+        const executionId = ExecutionId.make("execution-beta");
+        yield* records.write({
+          id,
+          workflow,
+          subject: null,
+          status: "running",
+          steps: {},
+          tasks: [],
+          startedAt: 17,
+        });
+        yield* records.linkExecution(executionId, id);
+        expect(yield* records.runForExecution(executionId)).toBe(id);
+        expect(yield* records.runForExecution(ExecutionId.make("run-alpha"))).toBeUndefined();
+        expect(yield* records.read(RunId.make("execution-beta"))).toBeUndefined();
+        yield* Effect.all(
+          [
+            records.report({ runId: id, step: "left", status: "done", record: { value: 3 } }),
+            records.report({ runId: id, step: "right", status: "done", record: { value: 11 } }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        // A replay's earlier progress cannot erase a completed record.
+        yield* records.report({ runId: id, step: "left", status: "running" });
+        const found = yield* records.read(id);
+        expect(found?.steps).toEqual({
+          left: { status: "done", record: { value: 3 } },
+          right: { status: "done", record: { value: 11 } },
+        });
+        expect(found?.status).toBe("running"); // Step reports don't settle overall status.
+        expectTypeOf<RunId>().not.toMatchTypeOf<ExecutionId>();
+        expectTypeOf<ExecutionId>().not.toMatchTypeOf<RunId>();
+        expectTypeOf<Parameters<typeof records.read>[0]>().toEqualTypeOf<RunId>();
+        expectTypeOf<Parameters<typeof records.runForExecution>[0]>().toEqualTypeOf<ExecutionId>();
+        const values = yield* Schema.decodeUnknownEffect(ExecutionValues)({
+          runId: "run-alpha",
+          subject: null,
+          steps: { left: { value: 3 } },
+        });
+        expect(yield* Schema.encodeEffect(ExecutionValues)(values)).toEqual({
+          runId: "run-alpha",
+          subject: null,
+          steps: { left: { value: 3 } },
+        });
+      }).pipe(Effect.provide(h.layer)),
+    );
+  });
+
   test("records and authorizes approval tasks, then resumes on the same durable journal", async () => {
     const h = harness();
     const saved: Workflow = {
@@ -357,7 +476,7 @@ describe("Automation application without a platform", () => {
         yield* h.host.storage.put("saved", saved);
         const app = yield* makeAutomation();
         const started = yield* app.start(undefined);
-        const executionId = yield* Schema.decodeUnknownEffect(Schema.String)(h.advances[0]);
+        const executionId = yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances[0]);
         yield* app.callbacks.advance({ executionId });
         const waiting = yield* app.run(started.id);
         const rejected = yield* app

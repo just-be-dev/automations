@@ -9,13 +9,14 @@ import type { AutomationOverview } from "../automation/model.ts";
 import { EntityId } from "../entities/model.ts";
 import { HumanResponse } from "../workflow/interpreter.ts";
 import { Permissions } from "../workflow/model.ts";
+import { RunId } from "../workflow/run.ts";
 import { RequestIdentity } from "./identity.ts";
 import { limitedBody, messageOf, NotFound, pathParams, respond } from "./response.ts";
 
 const AutomationParams = Schema.Struct({
   id: Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]{1,80}$/)),
 });
-const RunParams = Schema.Struct({ ...AutomationParams.fields, runId: Schema.String });
+const RunParams = Schema.Struct({ ...AutomationParams.fields, runId: RunId });
 const TaskParams = Schema.Struct({ ...RunParams.fields, stepId: Schema.String });
 const ChatBody = Schema.Struct({ message: Schema.optionalKey(Schema.String) });
 const StartBody = Schema.Struct({ subject: Schema.optionalKey(EntityId) });

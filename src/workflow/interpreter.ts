@@ -32,7 +32,8 @@ import {
   type Step,
   type WaitUntilStep,
 } from "./model.ts";
-import { RunState, type RunStep } from "./run.ts";
+import { RunId, type RunStep } from "./run.ts";
+import { ExecutionValues } from "./execution.ts";
 
 /**
  * Runs a saved workflow as one `effect/workflow` execution. The DSL is the payload: this module
@@ -90,7 +91,7 @@ export type Values = Readonly<Record<string, Schema.Json>>;
 
 /** What a human step asks for, handed to whatever delivers it (the studio inbox, Slack). */
 export interface HumanRequest {
-  readonly runId: string;
+  readonly runId: RunId;
   readonly token: DurableDeferred.Token;
   readonly step: HumanStep;
   readonly prompt: string;
@@ -101,7 +102,7 @@ export interface HumanRequest {
 
 /** Asks a role's members whether an action step may perform its operation with these inputs. */
 export interface PermissionRequest {
-  readonly runId: string;
+  readonly runId: RunId;
   readonly token: DurableDeferred.Token;
   readonly step: ActionStep;
   /** The role whose members approve it. */
@@ -113,7 +114,7 @@ export interface PermissionRequest {
 
 /** Progress the interpreter reports as it goes. A replay reports finished steps again. */
 export interface StepEvent {
-  readonly runId: string;
+  readonly runId: RunId;
   readonly step: string;
   readonly status: RunStep["status"];
   readonly record?: Schema.Json;
@@ -123,14 +124,18 @@ export interface StepEvent {
 export class StepRunner extends Context.Service<
   StepRunner,
   {
-    /** Reads refs against the run state, loading entities that `ref` fields point to. */
+    /** Reads refs against execution values, loading entities that `ref` fields point to. */
     readonly resolve: (
       refs: ReadonlyArray<string>,
-      state: RunState,
+      state: ExecutionValues,
     ) => Effect.Effect<Record<string, Schema.Json>, StepFailed>;
     /** `idempotencyKey` is stable across replays of the same attempt of the step. */
     readonly agent: (
-      request: { readonly step: AgentStep; readonly instruction: string; readonly state: RunState },
+      request: {
+        readonly step: AgentStep;
+        readonly instruction: string;
+        readonly state: ExecutionValues;
+      },
       idempotencyKey: string,
     ) => Effect.Effect<Schema.Json, StepFailed>;
     /** `idempotencyKey` is stable across retries and replays of the same step in the same run. */
@@ -138,14 +143,14 @@ export class StepRunner extends Context.Service<
       request: {
         readonly step: ActionStep;
         readonly inputs: Record<string, Schema.Json>;
-        readonly state: RunState;
+        readonly state: ExecutionValues;
       },
       idempotencyKey: string,
     ) => Effect.Effect<Schema.Json, StepFailed>;
     readonly decide: (request: {
       readonly step: DecideStep;
       readonly question: string;
-      readonly state: RunState;
+      readonly state: ExecutionValues;
     }) => Effect.Effect<Decision, StepFailed>;
     readonly requestHuman: (request: HumanRequest) => Effect.Effect<void, StepFailed>;
     readonly requestPermission: (request: PermissionRequest) => Effect.Effect<void, StepFailed>;
@@ -154,9 +159,9 @@ export class StepRunner extends Context.Service<
 >()("automations/StepRunner") {}
 
 export const RunAutomation = EffectWorkflow.make("RunAutomation", {
-  payload: { runId: Schema.String, workflow: Workflow, subject: Schema.NullOr(Subject) },
+  payload: { runId: RunId, workflow: Workflow, subject: Schema.NullOr(Subject) },
   idempotencyKey: ({ runId }) => runId,
-  success: RunState,
+  success: ExecutionValues,
   error: Schema.Union([StepFailed, RunStopped]),
 });
 
@@ -178,15 +183,15 @@ const failed = (step: Step, message: string) => new StepFailed({ step: step.id, 
 
 const report = (event: StepEvent) => StepRunner.use((runner) => runner.report(event));
 
-const record = (state: RunState, step: Step, result: Schema.Json) =>
+const record = (state: ExecutionValues, step: Step, result: Schema.Json) =>
   report({ runId: state.runId, step: step.id, status: "done", record: result }).pipe(
-    Effect.as<RunState>({ ...state, steps: { ...state.steps, [step.id]: result } }),
+    Effect.as<ExecutionValues>({ ...state, steps: { ...state.steps, [step.id]: result } }),
   );
 
 const ResolvedValues = Schema.Record(Schema.String, Schema.Json);
 
 /** Resolves the refs a step reads once, in an Activity, so replays reuse the values. */
-const resolveRefs = (step: Step, state: RunState) => {
+const resolveRefs = (step: Step, state: ExecutionValues) => {
   const refs = stepRefs(step);
   if (refs.length === 0) {
     return Effect.succeed<Values>({});
@@ -220,15 +225,18 @@ export const renderInput = (value: ActionInput, values: Values): Schema.Json => 
 
 const runSteps = (
   steps: ReadonlyArray<Step>,
-  state: RunState,
-): Effect.Effect<RunState, RunError, Requirements> =>
+  state: ExecutionValues,
+): Effect.Effect<ExecutionValues, RunError, Requirements> =>
   Effect.reduce(
     steps,
     () => state,
     (current, step) => runStep(step, current),
   );
 
-const runStep = (step: Step, state: RunState): Effect.Effect<RunState, RunError, Requirements> =>
+const runStep = (
+  step: Step,
+  state: ExecutionValues,
+): Effect.Effect<ExecutionValues, RunError, Requirements> =>
   stepNeeds(step).some((id) => !Object.hasOwn(state.steps, id))
     ? report({ runId: state.runId, step: step.id, status: "skipped" }).pipe(Effect.as(state))
     : Effect.andThen(
@@ -238,9 +246,9 @@ const runStep = (step: Step, state: RunState): Effect.Effect<RunState, RunError,
 
 const runResolved = (
   step: Step,
-  state: RunState,
+  state: ExecutionValues,
   values: Values,
-): Effect.Effect<RunState, RunError, Requirements> => {
+): Effect.Effect<ExecutionValues, RunError, Requirements> => {
   switch (step.kind) {
     case "agent":
       return Effect.gen(function* () {
@@ -315,7 +323,7 @@ const runResolved = (
         concurrency: "unbounded",
       }).pipe(
         Effect.map((finished) =>
-          finished.reduce<RunState>(
+          finished.reduce<ExecutionValues>(
             (merged, branch) => ({ ...merged, steps: { ...merged.steps, ...branch.steps } }),
             state,
           ),
@@ -351,7 +359,7 @@ const matchedSource = Effect.fnUntraced(function* (step: ActionStep, values: Val
   return match.cases[matched] ?? match.otherwise;
 });
 
-const runIf = Effect.fnUntraced(function* (step: IfStep, state: RunState, values: Values) {
+const runIf = Effect.fnUntraced(function* (step: IfStep, state: ExecutionValues, values: Values) {
   const time = step.cases.some((branch) => usesNow(branch.when)) ? yield* now(step) : Number.NaN;
   const matched = step.cases.findIndex((branch) => holds(branch.when, (ref) => values[ref], time));
   const steps = step.cases[matched]?.steps ?? step.otherwise ?? [];
@@ -361,7 +369,11 @@ const runIf = Effect.fnUntraced(function* (step: IfStep, state: RunState, values
   );
 });
 
-const decide = Effect.fnUntraced(function* (step: DecideStep, state: RunState, values: Values) {
+const decide = Effect.fnUntraced(function* (
+  step: DecideStep,
+  state: ExecutionValues,
+  values: Values,
+) {
   const runner = yield* StepRunner;
   const decision = yield* Activity.make({
     name: step.id,
@@ -378,7 +390,7 @@ const decide = Effect.fnUntraced(function* (step: DecideStep, state: RunState, v
 
 const waitUntil = Effect.fnUntraced(function* (
   step: WaitUntilStep,
-  state: RunState,
+  state: ExecutionValues,
   values: Values,
 ) {
   const value = values[step.until];
@@ -406,7 +418,11 @@ const fieldDefaults = (step: HumanStep, values: Values): Record<string, string> 
         ),
       );
 
-const askHuman = Effect.fnUntraced(function* (step: HumanStep, state: RunState, values: Values) {
+const askHuman = Effect.fnUntraced(function* (
+  step: HumanStep,
+  state: ExecutionValues,
+  values: Values,
+) {
   const runner = yield* StepRunner;
   const deferred = humanDeferred(step.id);
   const token = yield* DurableDeferred.token(deferred);
@@ -455,7 +471,7 @@ const askHuman = Effect.fnUntraced(function* (step: HumanStep, state: RunState, 
 /** Waits for the person to approve or decline an action, and says whether they approved it. */
 const askPermission = Effect.fnUntraced(function* (
   step: ActionStep,
-  state: RunState,
+  state: ExecutionValues,
   role: string,
   title: string,
   inputs: Record<string, Schema.Json>,

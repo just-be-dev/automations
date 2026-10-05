@@ -1,7 +1,5 @@
-import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -18,13 +16,11 @@ import {
   HumanResponse,
   respondToHuman,
   RunAutomation,
-  RunStopped,
   RunAutomationLive,
   StepFailed,
   StepRunner,
   type HumanRequest,
   type PermissionRequest,
-  type StepEvent,
 } from "../workflow/interpreter.ts";
 import { EntityStore } from "../entities/store.ts";
 import {
@@ -43,38 +39,25 @@ import {
   valueMatches,
   type Workflow,
 } from "../workflow/model.ts";
-import { Run, type HumanTask, type RunState, type RunSummary } from "../workflow/run.ts";
+import { RunId, type Run, type HumanTask, type RunSummary } from "../workflow/run.ts";
+import { ExecutionId, type ExecutionValues } from "../workflow/execution.ts";
 import { AutomationError } from "./model.ts";
-import { decodeOrDrop, type WorkflowStore } from "./workflow-store.ts";
+import type { WorkflowStore } from "./workflow-store.ts";
+import { makeRunStore, type StoredRun } from "./run-store.ts";
 
-// Storage holds only values this object wrote, so a decoding failure is a defect.
-const StoredRunId = Schema.UndefinedOr(Schema.String);
-const decodeStoredRunId = (value: unknown) =>
-  Schema.decodeUnknownEffect(StoredRunId)(value).pipe(Effect.orDie);
 const decodeToken = Schema.decodeUnknownEffect(DurableDeferred.Token);
-
-const runPrefix = "run:";
-const runKey = (id: string) => `${runPrefix}${id}`;
-const executionKey = (executionId: string) => `execution:${executionId}`;
-
-const causeMessage = (cause: Cause.Cause<unknown>) => {
-  const failure = Cause.squash(cause);
-  return failure instanceof StepFailed
-    ? `Step ${failure.step} failed: ${failure.message}`
-    : Cause.pretty(cause);
-};
 
 /**
  * Payload of the `advance` callback, which replays a run's execution: a persisted contract. Jobs
  * from before entity-based triggers carried only a `runId`; their runs were discarded.
  */
 interface Advance {
-  readonly executionId?: string;
+  readonly executionId?: ExecutionId;
 }
 
 /** Payload of the `clock` callback, which fires a durable clock: a persisted contract. */
 interface ClockFired {
-  readonly executionId: string;
+  readonly executionId: ExecutionId;
   readonly deferredName: string;
 }
 
@@ -90,28 +73,6 @@ const summary = (types: ReadonlyArray<EntityType>, run: Run): RunSummary => {
   };
 };
 
-const applyEvent = (run: Run, event: StepEvent): Run => {
-  const current = run.steps[event.step];
-  // A replay reports finished steps again on its way through them.
-  if (current?.status === "done" && event.status !== "done") {
-    return run;
-  }
-  const steps = {
-    ...run.steps,
-    [event.step]:
-      event.record === undefined
-        ? { status: event.status }
-        : { status: event.status, record: event.record },
-  };
-  const tasks =
-    event.status === "done"
-      ? run.tasks.map((task): HumanTask =>
-          task.step === event.step ? { ...task, status: "closed" } : task,
-        )
-      : run.tasks;
-  return { ...run, steps, tasks };
-};
-
 /** Coordinates saved runs, their human tasks, and durable replay for one automation. */
 export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: WorkflowStore) {
   const host = yield* AutomationHost;
@@ -119,25 +80,8 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
   const entities = yield* EntityStore;
   const pi = yield* PiAgent;
   const { read: readWorkflow, catalog } = workflows;
-
-  const readRun = (id: string) => storage.get(runKey(id)).pipe(Effect.flatMap(decodeOrDrop(Run)));
-  const writeRun = (run: Run) => storage.put(runKey(run.id), run);
-
-  // Steps in parallel branches report at the same time, so updates to a run take turns.
-  const runLock = Semaphore.makeUnsafe(1);
-  const updateRun = (id: string, update: (run: Run) => Run) =>
-    runLock.withPermit(
-      Effect.gen(function* () {
-        const run = yield* readRun(id);
-        if (run === undefined) {
-          return;
-        }
-        const next = update(run);
-        if (next !== run) {
-          yield* writeRun(next);
-        }
-      }),
-    );
+  const records = yield* makeRunStore();
+  const { read: readRun, write: writeRun, update: updateRun } = records;
 
   /** A role's members as approvers: their names and email addresses, as stored now. */
   const approversOf = Effect.fn("Automation.approversOf")(function* (roleName: string) {
@@ -171,7 +115,10 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
         ),
       );
 
-  const resolve = (refs: ReadonlyArray<string>, known: Pick<RunState, "subject" | "steps">) =>
+  const resolve = (
+    refs: ReadonlyArray<string>,
+    known: Pick<ExecutionValues, "subject" | "steps">,
+  ) =>
     Effect.gen(function* () {
       const types = yield* entities.listTypes;
       const values = yield* Effect.forEach(refs, (ref) =>
@@ -182,7 +129,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
 
   // Agent steps in a run share one conversation, so later steps can build on earlier answers.
   const conversationLock = Semaphore.makeUnsafe(1);
-  const conversationFor = (runId: string) =>
+  const conversationFor = (runId: RunId) =>
     conversationLock.withPermit(
       Effect.gen(function* () {
         const existing = (yield* readRun(runId))?.conversation;
@@ -267,7 +214,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     requestHuman,
     requestPermission: (request) =>
       requestPermission(request).pipe(Effect.mapError(stepFailed(request.step.id))),
-    report: (event) => updateRun(event.runId, (run) => applyEvent(run, event)),
+    report: records.report,
   });
 
   const durable: DurableEngine = makeDurableEngine({
@@ -284,28 +231,6 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     ),
   ).pipe(Effect.scoped);
 
-  const settle = (runId: string, result: Effect.Success<ReturnType<DurableEngine["replay"]>>) =>
-    updateRun(runId, (run): Run => {
-      if (result === undefined) {
-        return run;
-      }
-      if (result._tag === "Suspended") {
-        return { ...run, status: "waiting" };
-      }
-      // A run that ended answers no more tasks, such as those in branches a stop step cut off.
-      const ended = {
-        ...run,
-        tasks: run.tasks.map((task): HumanTask => ({ ...task, status: "closed" })),
-      };
-      if (Exit.isSuccess(result.exit)) {
-        return { ...ended, status: "completed" };
-      }
-      const failure = Cause.squash(result.exit.cause);
-      return failure instanceof RunStopped
-        ? { ...ended, status: "stopped", stopReason: failure.reason }
-        : { ...ended, status: "failed", error: causeMessage(result.exit.cause) };
-    });
-
   // Delivery is at least once, and a replay only reruns what the journal lacks: Activities
   // that finished keep their results. An action interrupted by eviction runs again with the
   // same idempotency key.
@@ -313,9 +238,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     if (executionId === undefined) {
       return;
     }
-    const runId = yield* storage
-      .get(executionKey(executionId))
-      .pipe(Effect.flatMap(decodeStoredRunId));
+    const runId = yield* records.runForExecution(executionId);
     // A run that was discarded leaves its journal behind; there's nothing to resume.
     if (runId === undefined || (yield* readRun(runId)) === undefined) {
       return;
@@ -324,7 +247,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
       run.status === "waiting" ? { ...run, status: "running" } : run,
     );
     const result = yield* durable.replay(RunAutomation, executionId);
-    yield* settle(runId, result);
+    yield* records.settle(runId, result);
   });
 
   const clock = Effect.fn("Automation.clock")(function* ({
@@ -344,7 +267,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     saved: Workflow,
     subject: Subject | null,
   ) {
-    const id = crypto.randomUUID();
+    const id = RunId.make(crypto.randomUUID());
     const startedAt = yield* Clock.currentTimeMillis;
     const current = yield* catalog;
     const prepared = yield* checkWorkflow(current, saved).pipe(
@@ -352,7 +275,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
       Effect.result,
     );
     if (Result.isFailure(prepared)) {
-      const run: Run = {
+      const run: StoredRun = {
         id,
         workflow: saved,
         subject,
@@ -367,8 +290,8 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     }
     const workflow = prepared.success;
     const payload = { runId: id, workflow, subject };
-    const executionId = yield* RunAutomation.executionId(payload);
-    const run: Run = {
+    const executionId = ExecutionId.make(yield* RunAutomation.executionId(payload));
+    const run: StoredRun = {
       id,
       workflow,
       subject,
@@ -381,7 +304,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
       .transaction(
         Effect.gen(function* () {
           yield* writeRun(run);
-          yield* storage.put(executionKey(executionId), id);
+          yield* records.linkExecution(executionId, id);
           yield* RunAutomation.execute(payload, { discard: true }).pipe(provideEngine);
         }),
       )
@@ -391,14 +314,10 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
 
   /** Every run, newest first. */
   const runSummaries = Effect.gen(function* () {
-    const entries = yield* storage.list({ prefix: runPrefix });
-    const runs = yield* Effect.forEach([...entries.values()], decodeOrDrop(Run));
+    const runs = yield* records.all;
     // The titles only label the list, so a D1 failure shows IDs instead.
     const types = yield* entities.listTypes.pipe(Effect.orElseSucceed(() => []));
-    return runs
-      .filter((run): run is Run => run !== undefined)
-      .toSorted((left, right) => right.startedAt - left.startedAt)
-      .map((run) => summary(types, run));
+    return runs.map((run) => summary(types, run));
   });
 
   /** Starts the saved workflow by hand, for the entity `subjectId` names when it has a subject. */
@@ -456,7 +375,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
    * whoever answers, when the studio knows it; only a role's members may answer for it.
    */
   const respond = Effect.fn("Automation.respond")(function* (
-    runId: string,
+    runId: RunId,
     stepId: string,
     answer: HumanResponse,
     responder: string | undefined,
@@ -505,7 +424,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
   });
 
   /** A run, with its subject's title as the run list shows it. */
-  const run = Effect.fn("Automation.run")(function* (id: string) {
+  const run = Effect.fn("Automation.run")(function* (id: RunId) {
     const found = yield* readRun(id);
     if (found === undefined) {
       return undefined;

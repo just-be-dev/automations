@@ -22,7 +22,8 @@ import {
 } from "./interpreter.ts";
 import { readJsonPath, type Subject } from "../entities/model.ts";
 import type { ActionStep, Step, Workflow } from "./model.ts";
-import type { RunState } from "./run.ts";
+import { RunId } from "./run.ts";
+import type { ExecutionId, ExecutionValues } from "./execution.ts";
 
 const agent = (id: string, instruction = `Do ${id}`): Step => ({
   id,
@@ -50,7 +51,7 @@ const ada: Subject = {
 };
 
 /** Resolves refs the simple way: the subject's own fields and step records, no `ref` fields. */
-const readRef = (state: RunState, ref: string): Schema.Json => {
+const readRef = (state: ExecutionValues, ref: string): Schema.Json => {
   const [root, ...path] = ref.split(".");
   return root === "steps"
     ? readJsonPath(state.steps, path)
@@ -68,8 +69,8 @@ const makeHarness = (decision: Decision = { choice: "a", confidence: 1, probabil
   const permissionRequests: Array<PermissionRequest> = [];
   const events: Array<StepEvent> = [];
   const data = new Map<string, unknown>();
-  const woken = new Set<string>();
-  const clocks: Array<{ executionId: string; deferredName: string; at: number }> = [];
+  const woken = new Set<ExecutionId>();
+  const clocks: Array<{ executionId: ExecutionId; deferredName: string; at: number }> = [];
   const store: EngineStore = {
     get: (key) => Effect.sync(() => structuredClone(data.get(key))),
     put: (key, value) => Effect.sync(() => void data.set(key, structuredClone(value))),
@@ -120,7 +121,7 @@ type Harness = ReturnType<typeof makeHarness>;
 const start = (harness: Harness, steps: Workflow, subject: Subject | null = ada) =>
   Effect.gen(function* () {
     const executionId = yield* RunAutomation.execute(
-      { runId: "run-1", workflow: steps, subject },
+      { runId: RunId.make("run-1"), workflow: steps, subject },
       { discard: true },
     );
     yield* harness.drain;
@@ -396,7 +397,11 @@ describe("RunAutomation", () => {
         expect(harness.calls).toEqual(["after"]);
       }),
     );
-    expect(harness.events).toContainEqual({ runId: "run-1", step: "pause", status: "waiting" });
+    expect(harness.events).toContainEqual({
+      runId: RunId.make("run-1"),
+      step: "pause",
+      status: "waiting",
+    });
   });
 
   test("a wait-until step waits for a date on the subject, shifted by its offset", async () => {
@@ -582,7 +587,11 @@ describe("RunAutomation", () => {
     expect(steps["welcome"]).toEqual({
       sent: { to: "grace", subject: "Hi", body: "Ada starts soon" },
     });
-    expect(harness.events).toContainEqual({ runId: "run-1", step: "welcome", status: "waiting" });
+    expect(harness.events).toContainEqual({
+      runId: RunId.make("run-1"),
+      step: "welcome",
+      status: "waiting",
+    });
   });
 
   test("declining an action skips it and the steps that need its record; the rest goes on", async () => {
@@ -617,11 +626,11 @@ describe("RunAutomation", () => {
     expect(harness.calls).toEqual(["other", "follow-up"]);
     expect(Object.keys(steps)).toEqual(["other", "unsent", "follow-up"]);
     expect(harness.events.filter((event) => event.status === "declined")).toEqual([
-      { runId: "run-1", step: "welcome", status: "declined" },
+      { runId: RunId.make("run-1"), step: "welcome", status: "declined" },
     ]);
     expect(harness.events.filter((event) => event.status === "skipped")).toEqual([
-      { runId: "run-1", step: "log", status: "skipped" },
-      { runId: "run-1", step: "chain", status: "skipped" },
+      { runId: RunId.make("run-1"), step: "log", status: "skipped" },
+      { runId: RunId.make("run-1"), step: "chain", status: "skipped" },
     ]);
   });
 

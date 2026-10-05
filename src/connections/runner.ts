@@ -11,7 +11,7 @@ import {
   isPublicHttpsUrl,
   type ActionStep,
 } from "../workflow/model.ts";
-import type { RunState } from "../workflow/run.ts";
+import type { ExecutionValues } from "../workflow/execution.ts";
 
 /**
  * Executes connection operations for action steps. `http.post` really sends; the other
@@ -118,7 +118,7 @@ const postJson = Effect.fn("Connections.httpPost")(
 export const runAction = Effect.fn("Connections.runAction")(function* (
   step: ActionStep,
   inputs: Inputs,
-  state: RunState,
+  state: ExecutionValues,
   idempotencyKey: string,
 ) {
   const simulatedId = `sim_${idempotencyKey.slice(0, 16)}`;
