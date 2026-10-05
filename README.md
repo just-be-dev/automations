@@ -18,7 +18,7 @@ Infrastructure and server code share one [Alchemy 2](https://alchemy.run) Effect
 
 `mise run dev` runs everything locally on stage `dev_$USER` and prints the Studio URL. Dev mode skips Cloudflare Access, but it needs Cloudflare credentials for Workers AI. Run `bun alchemy profile edit --add Cloudflare` once, or set `ALCHEMY_PROFILE` to a profile that already has them.
 
-Agent instructions are in `AGENTS.md` and `src/ui/AGENTS.md`.
+The workflow format is described in [`docs/workflow-dsl.md`](docs/workflow-dsl.md). Agent instructions are in `AGENTS.md` and `src/ui/AGENTS.md`.
 
 ## Deploy
 
