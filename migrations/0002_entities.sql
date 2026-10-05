@@ -27,7 +27,7 @@ CREATE INDEX entity_subscriptions_by_type ON entity_subscriptions (entity_type);
 -- A starting type and two people, so onboarding-style automations have something to act on.
 INSERT INTO entity_types (name, definition, updated_at) VALUES (
   'employee',
-  '{"name":"employee","label":"Employee","title":"name","fields":[{"name":"name","label":"Name","type":"text"},{"name":"email","label":"Email","type":"email"},{"name":"role","label":"Role","type":"text"},{"name":"start_date","label":"Start date","type":"date"},{"name":"manager","label":"Manager","type":"ref","to":"employee"}]}',
+  '{"name":"employee","label":"Employee","title":"name","fields":[{"name":"name","label":"Name","type":"text"},{"name":"email","label":"Email","type":"text"},{"name":"role","label":"Role","type":"text"},{"name":"start_date","label":"Start date","type":"date"},{"name":"manager","label":"Manager","type":"ref","to":"employee"}]}',
   0
 );
 

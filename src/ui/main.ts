@@ -35,6 +35,7 @@ import {
   UserRound,
   CircleAlert,
   CornerDownLeft,
+  Database,
   LoaderCircle,
   Play,
   Plus,
@@ -82,9 +83,18 @@ import {
   runStatusLabel,
   withArticle,
 } from "./format.ts";
+import { localDateTimeText } from "./datetime.ts";
+import * as Entities from "./entities/main.ts";
 import * as Overview from "./overview.ts";
 import { recordView } from "./record.ts";
-import { AppRoute, automationHref, overviewHref, routeFromUrl, runHref } from "./route.ts";
+import {
+  AppRoute,
+  automationHref,
+  entitiesHref,
+  overviewHref,
+  routeFromUrl,
+  runHref,
+} from "./route.ts";
 import { applyTheme, nextTheme, Theme, type Flags } from "./theme.ts";
 
 // MODEL
@@ -167,9 +177,11 @@ type OpenRun = typeof OpenRun.Type;
  */
 const Page = defineTaggedUnion({
   Overview: { overview: Overview.Model },
+  Entities: { entities: Entities.Model },
   Studio: {},
   Run: { openRun: OpenRun },
 });
+type Page = typeof Page.Type;
 
 export const Model = Schema.Struct({
   page: Page,
@@ -261,6 +273,7 @@ export const Message = defineMessageUnion({
   FailedAnswerTask: { revision: Schema.Int, runId: Schema.String, error: Schema.String },
   FailedRequest: { revision: Schema.Int, error: Schema.String },
   GotOverviewMessage: { message: Overview.Message },
+  GotEntitiesMessage: { message: Entities.Message },
 });
 export type Message = typeof Message.Type;
 
@@ -272,10 +285,13 @@ const validId = (value: string) => /^[a-zA-Z0-9_-]{1,80}$/.test(value.trim());
 
 const toOverviewMessage = (message: Overview.Message) => Message.GotOverviewMessage({ message });
 
+const toEntitiesMessage = (message: Entities.Message) => Message.GotEntitiesMessage({ message });
+
 export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flags, url) => {
   const route = routeFromUrl(url);
   const automationId = AppRoute.match(route, {
     Overview: () => "",
+    Entities: () => "",
     Studio: (studio) => studio.automationId,
     Run: (run) => run.automationId,
   });
@@ -345,6 +361,15 @@ const showPage = (model: Model, route: AppRoute): Update.Return<Model, Message> 
           }),
         toParentMessage: toOverviewMessage,
       }),
+    Entities: ({ maybeTypeName }) =>
+      Update.foldChildInit(Entities.init(maybeTypeName), {
+        toParentModel: (entities) =>
+          modifyFields(model, {
+            page: () => Page.Entities({ entities }),
+            activity: () => Activity.Ready({ notice: "" }),
+          }),
+        toParentMessage: toEntitiesMessage,
+      }),
     Studio: ({ automationId }) => {
       const studio = modifyFields(model, { page: () => Page.Studio() });
       if (!validId(automationId)) {
@@ -375,6 +400,7 @@ const showPage = (model: Model, route: AppRoute): Update.Return<Model, Message> 
 const routeAutomationId = (route: AppRoute) =>
   AppRoute.match(route, {
     Overview: () => "",
+    Entities: () => "",
     Studio: ({ automationId }) => automationId,
     Run: ({ automationId }) => automationId,
   });
@@ -383,6 +409,7 @@ const isShowing = (model: Model, route: AppRoute) =>
   routeAutomationId(route) === model.automationId &&
   AppRoute.match(route, {
     Overview: () => false,
+    Entities: () => false,
     Studio: () => Page.guards.Studio(model.page),
     Run: ({ runId }) => Page.guards.Run(model.page) && model.page.openRun.runId === runId,
   });
@@ -392,6 +419,13 @@ const isShowing = (model: Model, route: AppRoute) =>
  * there. Following a link to the run already open reloads it.
  */
 const followRoute = (model: Model, route: AppRoute): Update.Return<Model, Message> => {
+  if (AppRoute.guards.Entities(route) && Page.guards.Entities(model.page)) {
+    return Update.foldChildInit(Entities.reflectUrl(model.page.entities, route.maybeTypeName), {
+      toParentModel: (entities): Model =>
+        modifyFields(model, { page: (): Page => Page.Entities({ entities }) }),
+      toParentMessage: toEntitiesMessage,
+    });
+  }
   if (!isShowing(model, route)) {
     return showPage(leaveAutomation(model, routeAutomationId(route)), route);
   }
@@ -404,6 +438,7 @@ const opensInPanel = (model: Model, route: AppRoute) =>
     ? Option.none<{ readonly automationId: string; readonly runId: string }>()
     : AppRoute.match(route, {
         Overview: () => Option.none(),
+        Entities: () => Option.none(),
         Studio: () => Option.none(),
         Run: ({ automationId, runId }) =>
           validId(automationId) ? Option.some({ automationId, runId }) : Option.none(),
@@ -420,6 +455,15 @@ const openRunPanel = (model: Model, automationId: string, runId: string) =>
           maybeRunPanel: () => Option.some(openingRun(automationId, runId)),
         }),
       );
+
+const foldEntities = Update.foldChild({
+  update: Entities.update,
+  read: (model: Model) =>
+    Page.guards.Entities(model.page) ? Option.some(model.page.entities) : Option.none(),
+  write: (model: Model, nextEntities: Entities.Model): Model =>
+    modifyFields(model, { page: (): Page => Page.Entities({ entities: nextEntities }) }),
+  toParentMessage: toEntitiesMessage,
+});
 
 const foldOverview = Update.foldChild({
   update: Overview.update,
@@ -985,6 +1029,7 @@ export const update = (model: Model, message: Message) =>
     FailedRequest: ({ revision, error }) =>
       revision !== model.revision ? { model } : fail(model, error),
     GotOverviewMessage: ({ message }) => foldOverview(model, message),
+    GotEntitiesMessage: ({ message }) => foldEntities(model, message),
   });
 
 // COMMAND
@@ -1246,6 +1291,18 @@ const pageView = (model: Model, h: HtmlBuilder<Message>) =>
           }),
         ],
       ),
+    Entities: ({ entities }) =>
+      h.main(
+        [h.Class("flex min-w-0 flex-1 flex-col lg:min-h-0")],
+        [
+          h.submodel({
+            slotId: "entities",
+            model: entities,
+            view: Entities.view,
+            toParentMessage: toEntitiesMessage,
+          }),
+        ],
+      ),
     Studio: () =>
       h.main(
         [
@@ -1413,6 +1470,33 @@ const sidebarView = (model: Model, h: HtmlBuilder<Message>) =>
                   ),
               }),
           }),
+        ],
+      ),
+      h.div(
+        [h.Class("mt-2 border-t pt-2")],
+        [
+          h.h2(
+            [
+              h.Class(
+                "mb-px flex h-[22px] items-center pl-1.5 text-[11px] font-semibold tracking-tight text-sand-10",
+              ),
+            ],
+            ["Debug"],
+          ),
+          h.a(
+            [
+              h.Href(entitiesHref(Option.none())),
+              ...(Page.guards.Entities(model.page) ? [h.AriaCurrent("page")] : []),
+              h.Class(
+                cn(
+                  navItemClass,
+                  "items-center text-[13px] font-medium tracking-tight",
+                  Page.guards.Entities(model.page) && "bg-hover text-foreground",
+                ),
+              ),
+            ],
+            [icon(h, Database, "size-4"), "Entity store"],
+          ),
         ],
       ),
     ],
@@ -2833,17 +2917,6 @@ const fieldInputType: Record<Exclude<ValueType, "boolean">, string> = {
   number: "number",
   date: "date",
   datetime: "datetime-local",
-};
-
-const pad = (value: number) => String(value).padStart(2, "0");
-
-const localDateTimeText = (text: string) => {
-  const millis = Date.parse(text);
-  if (Number.isNaN(millis) || /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(text)) {
-    return text;
-  }
-  const date = new Date(millis);
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 };
 
 const taskFieldView = (

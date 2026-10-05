@@ -15,7 +15,7 @@ const employee: EntityType = {
   title: "name",
   fields: [
     { name: "name", label: "Name", type: "text" },
-    { name: "email", label: "Email", type: "email" },
+    { name: "email", label: "Email", type: "text" },
     { name: "start_date", label: "Start date", type: "date" },
     { name: "manager", label: "Manager", type: "ref", to: "employee" },
   ],
@@ -64,7 +64,7 @@ describe("entities", () => {
     });
     expect(pathTarget([employee], employee, ["email", "domain"])).toEqual({
       kind: "error",
-      message: "employee.email is a email, not an entity",
+      message: "employee.email is a text, not an entity",
     });
   });
 

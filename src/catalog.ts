@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import { connections, findOperation, type OperationInput } from "./connections.ts";
-import { pathTarget, type EntityType } from "./entities.ts";
+import { pathTarget, type EntityField, type EntityType } from "./entities.ts";
 import {
   InvalidWorkflow,
   conditionRefs,
@@ -119,6 +119,9 @@ const recordProblems = (
   ];
 };
 
+/** Where a person's address lives, as the connection runner reads it. */
+const isEmailField = (field: EntityField) => field.name === "email" && field.type === "text";
+
 const isPersonRef = (catalog: Catalog, subject: EntityType | undefined, ref: string) => {
   const [root, ...path] = ref.split(".");
   if (root === "steps" || subject === undefined) {
@@ -127,8 +130,8 @@ const isPersonRef = (catalog: Catalog, subject: EntityType | undefined, ref: str
   const target = pathTarget(catalog.types, subject, path);
   return (
     target.kind === "error" ||
-    (target.kind === "entity" && target.type.fields.some((field) => field.type === "email")) ||
-    (target.kind === "field" && target.field.type === "email")
+    (target.kind === "entity" && target.type.fields.some(isEmailField)) ||
+    (target.kind === "field" && isEmailField(target.field))
   );
 };
 
@@ -323,7 +326,7 @@ const describeInput = (input: OperationInput) =>
 /** The catalog as the designer agent reads it. */
 export const describeCatalog = (catalog: Catalog) =>
   [
-    "Entity types (stored records; a field marked → points to another entity):",
+    "Entity types (stored records; a field marked → points to another entity, and an entity with a text field named email is a person who can be contacted or assigned):",
     ...(catalog.types.length === 0 ? ["- none yet"] : catalog.types.map(describeType)),
     "",
     "Connection operations (use them in action steps):",

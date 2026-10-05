@@ -19,8 +19,18 @@
         "allowedDuplicatedPackages": ["effect-oxlint"],
         "overrides": [
           {
-            "include": ["src/ui/main.ts", "src/api.ts", "src/connection-runner.ts"],
+            "include": [
+              "src/ui/main.ts",
+              "src/ui/api.ts",
+              "src/ui/entities/main.ts",
+              "src/api.ts",
+              "src/connection-runner.ts"
+            ],
             "options": { "allowedUnstableApis": ["effect/http"] }
+          },
+          {
+            "include": ["src/entity-mcp.ts", "src/entity-mcp.test.ts"],
+            "options": { "allowedUnstableApis": ["effect/ai"] }
           },
           {
             "include": [

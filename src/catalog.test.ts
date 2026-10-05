@@ -10,7 +10,7 @@ const employee: EntityType = {
   title: "name",
   fields: [
     { name: "name", label: "Name", type: "text" },
-    { name: "email", label: "Email", type: "email" },
+    { name: "email", label: "Email", type: "text" },
     { name: "start_date", label: "Start date", type: "date" },
     { name: "manager", label: "Manager", type: "ref", to: "employee" },
   ],
@@ -159,7 +159,7 @@ describe("workflowProblems", () => {
     ]);
   });
 
-  test("requires people to be entities with an email or email addresses", () => {
+  test("requires people to be entities with an email field, that field, or email addresses", () => {
     expect(
       problems([
         {
@@ -175,6 +175,14 @@ describe("workflowProblems", () => {
           kind: "human",
           prompt: "Confirm",
           assignee: "employee.name",
+          response: "approval",
+        },
+        {
+          id: "confirm",
+          title: "Confirm",
+          kind: "human",
+          prompt: "Confirm",
+          assignee: "employee.email",
           response: "approval",
         },
       ]),
@@ -200,7 +208,7 @@ describe("workflowProblems", () => {
 test("describes object types and operations for the designer", () => {
   const description = describeCatalog(catalog);
   expect(description).toContain(
-    "- employee (Employee; shown as its name): name text, email email, start_date date, manager → employee, id",
+    "- employee (Employee; shown as its name): name text, email text, start_date date, manager → employee, id",
   );
   expect(description).toContain("- slack.sendMessage:");
 });

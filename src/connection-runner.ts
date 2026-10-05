@@ -40,7 +40,7 @@ const fieldOf = (value: Schema.Json, name: string) =>
     ? Object.getOwnPropertyDescriptor(value, name)?.value
     : undefined;
 
-/** A person input as a recipient: an entity with an email field, or an email address. */
+/** A person input as a recipient: an entity with an `email` field, or an email address. */
 const recipient = (step: ActionStep, name: string, value: Schema.Json | undefined) => {
   const email = typeof value === "string" ? value : fieldOf(value ?? null, "email");
   const title = fieldOf(value ?? null, "$title");

@@ -30,6 +30,7 @@ import {
   type Model,
   type Workflow,
 } from "./main.ts";
+import * as Entities from "./entities/main.ts";
 import { approvalTask, laptopTask, onboarding, runOf, studioUrl, summaryOf } from "./fixtures.ts";
 
 const automationLoaded = (
@@ -578,5 +579,21 @@ test("a step's result reads as labelled fields, not JSON", () => {
     expect(label("Book the kickoff result")).not.toContainText("{"),
     expect(label("Book the kickoff result")).not.toContainText('"'),
     expect(label("Book the kickoff result")).not.toContainText("start_date"),
+  );
+});
+
+test("the sidebar's entity store link opens the entity store page", () => {
+  scene(
+    { update, view },
+    given(
+      applied(loaded, [
+        Message.ChangedUrl({ url: { ...studioUrl(), pathname: "/entities" } }),
+        Message.GotEntitiesMessage({ message: Entities.Message.SucceededLoadTypes({ types: [] }) }),
+      ]),
+    ),
+    expect(role("link", { name: "Entity store" })).toHaveAttr("aria-current", "page"),
+    expect(role("link", { name: "Entity store" })).toHaveAttr("href", "/entities"),
+    expect(role("heading", { name: "Entity types" })).toExist(),
+    expect(text("No entity types yet.")).toExist(),
   );
 });

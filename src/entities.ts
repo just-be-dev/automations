@@ -19,15 +19,14 @@ export const EntityName = Schema.String.check(
   Schema.isPattern(snakeCase, { message: "Entity and field names are snake_case identifiers" }),
 );
 
-export const FieldType = Schema.Literals([
-  "text",
-  "number",
-  "boolean",
-  "date",
-  "datetime",
-  "email",
-  "ref",
-]);
+/** An entity's ID: `ada`, `ada@example.com`. */
+export const EntityId = Schema.String.check(
+  Schema.isPattern(/^[a-zA-Z0-9_.@-]{1,120}$/, {
+    message: "Entity IDs use letters, numbers, _ . @ and - (up to 120 characters)",
+  }),
+);
+
+export const FieldType = Schema.Literals(["text", "number", "boolean", "date", "datetime", "ref"]);
 export type FieldType = typeof FieldType.Type;
 
 export const EntityField = Schema.Struct({
@@ -86,8 +85,6 @@ const fieldAccepts = (field: EntityField, value: Schema.Json): boolean => {
     case "text":
     case "ref":
       return typeof value === "string";
-    case "email":
-      return typeof value === "string" && /^[^@\s]+@[^@\s]+$/.test(value);
     case "number":
       return typeof value === "number";
     case "boolean":
@@ -110,6 +107,31 @@ export const checkEntityData = (type: EntityType, data: EntityData) => {
   });
   return problems.length === 0
     ? Effect.succeed(data)
+    : Effect.fail(new InvalidEntity({ message: problems.join("; ") }));
+};
+
+/**
+ * Checks a type against the others it will be stored beside. `id` is every entity's ID in a path,
+ * so no field may take the name, and `types` would collide with `/api/entities/types`.
+ */
+export const checkEntityType = (types: ReadonlyArray<EntityType>, type: EntityType) => {
+  const names = type.fields.map((field) => field.name);
+  const problems = [
+    ...(type.name === "types" ? ["types is reserved; choose another type name"] : []),
+    ...(names.includes("id") ? [`${type.name}.id is every entity's ID; rename the field`] : []),
+    ...[...new Set(names.filter((name, index) => names.indexOf(name) !== index))].map(
+      (name) => `${type.name} has more than one field named ${name}`,
+    ),
+    ...type.fields.flatMap((field) =>
+      field.to === undefined ||
+      field.to === type.name ||
+      types.some((candidate) => candidate.name === field.to)
+        ? []
+        : [`${type.name}.${field.name} points to unknown type ${field.to}`],
+    ),
+  ];
+  return problems.length === 0
+    ? Effect.succeed(type)
     : Effect.fail(new InvalidEntity({ message: problems.join("; ") }));
 };
 

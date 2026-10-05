@@ -148,7 +148,7 @@ Decoding checks the shape. Before a draft is accepted and again on save, `checkW
 
 - Every ref starts at the subject's type or at `steps`, and every field on its path exists.
 - A step only reads steps that finish before it on every path. Steps inside a `parallel` step's branches are readable after the `parallel` step. Steps inside an `if` or `decide` branch are readable only later in that same branch, because the branch may not run.
-- Action steps name a known operation, give every required input, and give no unknown ones. `people` inputs are lists, `person` inputs point at an entity with an email field or are an email address, and `url` inputs are literal public HTTPS URLs.
+- Action steps name a known operation, give every required input, and give no unknown ones. `people` inputs are lists, `person` inputs point at an entity with a text field named `email` (or at that field) or are an email address, and `url` inputs are literal public HTTPS URLs.
 - A human step's `assignee` is a person.
 
 The designer gets every problem back and retries once.
@@ -184,7 +184,7 @@ An entity type has a `name` and `label`, a `title` field that names an entity wh
   "title": "name",
   "fields": [
     { "name": "name", "label": "Name", "type": "text" },
-    { "name": "email", "label": "Email", "type": "email" },
+    { "name": "email", "label": "Email", "type": "text" },
     { "name": "role", "label": "Role", "type": "text" },
     { "name": "start_date", "label": "Start date", "type": "date" },
     { "name": "manager", "label": "Manager", "type": "ref", "to": "employee" }
@@ -283,7 +283,7 @@ It records `{ "choice": optionId, "confidence": number, "probabilities": { optio
 Pauses the run until a person responds.
 
 - `prompt` is up to 4000 characters.
-- `assignee` is a ref to a person: an entity with an email field. The schema allows leaving it out, but the designer is told to always set it.
+- `assignee` is a ref to a person: an entity with a text field named `email`. The schema allows leaving it out, but the designer is told to always set it.
 - `notify` (`slack` or `email`) also sends the request through that connection. Both are simulated today, so the task records the channel and sends nothing.
 - `response` is `"approval"` (approve or reject), or a form of at least one field. Field types are `text`, `number`, `boolean`, `date`, and `datetime`, and a field's `default` is a template that prefills the answer.
 - `timeout` is an optional duration. When it passes first, the step finishes with `timedOut: true`, and a form keeps its defaults, so a proposal nobody objects to goes ahead.

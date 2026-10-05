@@ -1,3 +1,4 @@
+import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
@@ -9,7 +10,14 @@ import * as Schema from "effect/Schema";
 import { openAutomationIndex } from "./automation-index.ts";
 import Automation from "./automation.ts";
 import { HumanResponse } from "./interpreter.ts";
-import { EntityData, EntityName, EntityType } from "./entities.ts";
+import { EntityData, EntityId, EntityName, EntityType } from "./entities.ts";
+import {
+  answerMcp,
+  EntitySubscribers,
+  EntityToolHandlers,
+  jsonRpcError,
+  jsonRpcErrors,
+} from "./entity-mcp.ts";
 import { EntityStore, type EntityChange } from "./entity-store.ts";
 import { EntityStoreD1 } from "./entity-store-d1.ts";
 import type { AutomationOverview } from "./workflow.ts";
@@ -21,7 +29,6 @@ const AutomationParams = Schema.Struct({
 });
 const RunParams = Schema.Struct({ ...AutomationParams.fields, runId: Schema.String });
 const TaskParams = Schema.Struct({ ...RunParams.fields, stepId: Schema.String });
-const EntityId = Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_.@-]{1,120}$/));
 const TypeParams = Schema.Struct({ type: EntityName });
 const EntityParams = Schema.Struct({ type: EntityName, entityId: EntityId });
 const ChatBody = Schema.Struct({ message: Schema.optionalKey(Schema.String) });
@@ -60,14 +67,15 @@ const pathParams = <A, I extends Readonly<Record<string, string | undefined>>>(
 
 const automationParams = pathParams(AutomationParams);
 
+const checkBodySize = Effect.gen(function* () {
+  const request = yield* HttpServerRequest.HttpServerRequest;
+  if (Number(request.headers["content-length"] ?? 0) > MAX_BODY_BYTES) {
+    return yield* new PayloadTooLarge({ message: "Payload too large" });
+  }
+});
+
 const limitedBody = <A, I, RD>(schema: Schema.Codec<A, I, RD>) =>
-  Effect.gen(function* () {
-    const request = yield* HttpServerRequest.HttpServerRequest;
-    if (Number(request.headers["content-length"] ?? 0) > MAX_BODY_BYTES) {
-      return yield* new PayloadTooLarge({ message: "Payload too large" });
-    }
-    return yield* HttpServerRequest.schemaBodyJson(schema);
-  });
+  Effect.andThen(checkBodySize, HttpServerRequest.schemaBodyJson(schema));
 
 const respond = <A, E, R>(effect: Effect.Effect<A, E, R>, status = 200) =>
   effect.pipe(
@@ -228,6 +236,18 @@ export default class Api extends Cloudflare.Worker<Api>()(
           ),
         ),
         HttpRouter.route(
+          "DELETE",
+          "/types/:type",
+          withEntities(
+            Effect.gen(function* () {
+              const { type } = yield* pathParams(TypeParams);
+              const entities = yield* EntityStore;
+              yield* entities.deleteType(type);
+              return { deleted: type };
+            }),
+          ),
+        ),
+        HttpRouter.route(
           "GET",
           "/:type",
           withEntities(
@@ -268,6 +288,22 @@ export default class Api extends Cloudflare.Worker<Api>()(
             }),
           ),
         ),
+        // Deleting starts no runs.
+        HttpRouter.route(
+          "DELETE",
+          "/:type/:entityId",
+          withEntities(
+            Effect.gen(function* () {
+              const { type, entityId } = yield* pathParams(EntityParams);
+              const entities = yield* EntityStore;
+              const deleted = yield* entities.deleteEntity(type, entityId);
+              if (deleted === undefined) {
+                return yield* new NotFound({ message: "Entity not found" });
+              }
+              return { deleted };
+            }),
+          ),
+        ),
       ],
       { prefix: "/api/entities" },
     );
@@ -303,11 +339,54 @@ export default class Api extends Cloudflare.Worker<Api>()(
       ),
     );
 
+    /**
+     * The entity store over MCP's Streamable HTTP transport (see `src/entity-mcp.ts`). Answers
+     * are always JSON; the transport's optional GET stream isn't offered.
+     */
+    const mcp = Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      // NOTE: MCP servers must refuse browser origins other than their own (DNS rebinding).
+      const origin = request.headers["origin"];
+      if (origin !== undefined && origin !== new URL(request.url, "http://studio").origin) {
+        return json(jsonRpcError(null, jsonRpcErrors.invalidRequest, "Origin not allowed"), 403);
+      }
+      const message = yield* checkBodySize.pipe(Effect.andThen(request.json), Effect.option);
+      if (message._tag === "None") {
+        return json(
+          jsonRpcError(null, jsonRpcErrors.parse, "Expected a JSON body under 32 KB"),
+          400,
+        );
+      }
+      const runtime = yield* Alchemy.RuntimeContext;
+      const subscribers = Layer.succeed(EntitySubscribers, {
+        notify: (change) =>
+          notifySubscribers(change).pipe(Effect.provideService(Alchemy.RuntimeContext, runtime)),
+      });
+      const answer = yield* answerMcp(message.value).pipe(
+        Effect.provide(
+          EntityToolHandlers.pipe(Layer.provide(Layer.merge(entityStore, subscribers))),
+        ),
+      );
+      return answer === undefined ? HttpServerResponse.empty({ status: 202 }) : json(answer);
+    });
+
+    // NOTE: a "*" route would claim POST too, and the router rejects a second POST handler.
+    const mcpRoutes = HttpRouter.addAll([
+      HttpRouter.route("POST", "/api/mcp", mcp),
+      ...(["GET", "PUT", "PATCH", "DELETE"] as const).map((method) =>
+        HttpRouter.route(
+          method,
+          "/api/mcp",
+          HttpServerResponse.empty({ status: 405, headers: { allow: "POST" } }),
+        ),
+      ),
+    ]);
+
     const fallback = HttpRouter.add("*", "*", json({ error: "Not found" }, 404));
 
     return {
       fetch: yield* HttpRouter.toHttpEffect(
-        Layer.mergeAll(automationRoutes, entityRoutes, overviewRoute, fallback),
+        Layer.mergeAll(automationRoutes, entityRoutes, overviewRoute, mcpRoutes, fallback),
       ),
     };
   }).pipe(Effect.provide(Cloudflare.D1.QueryDatabaseBinding)),

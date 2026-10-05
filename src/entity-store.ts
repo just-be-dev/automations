@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import {
   checkEntityData,
+  checkEntityType,
   InvalidEntity,
   type EntityData,
   type EntityRecord,
@@ -32,8 +33,19 @@ export class EntityStore extends Context.Service<
   EntityStore,
   {
     readonly listTypes: Effect.Effect<ReadonlyArray<EntityType>, EntityStoreError>;
-    /** Creates or replaces an entity type. */
-    readonly putType: (type: EntityType) => Effect.Effect<EntityType, EntityStoreError>;
+    /**
+     * Creates or replaces an entity type. Stored entities aren't rewritten: the next write to one
+     * drops the values of fields the type no longer has, and must fix any value a changed field no
+     * longer accepts.
+     */
+    readonly putType: (
+      type: EntityType,
+    ) => Effect.Effect<EntityType, EntityStoreError | InvalidEntity>;
+    /**
+     * Deletes an entity type that nothing depends on: it has no entities, no other type's `ref`
+     * field points to it, and no saved automation watches it.
+     */
+    readonly deleteType: (name: string) => Effect.Effect<void, EntityStoreError | InvalidEntity>;
     readonly listEntities: (
       type: string,
     ) => Effect.Effect<ReadonlyArray<EntityRecord>, EntityStoreError>;
@@ -50,6 +62,14 @@ export class EntityStore extends Context.Service<
       id: string,
       data: EntityData,
     ) => Effect.Effect<EntityChange, EntityStoreError | InvalidEntity>;
+    /**
+     * Deletes an entity and returns what it held, or `undefined` when there was none. Deleting
+     * starts no runs, and `ref` fields that pointed to it read as `null`.
+     */
+    readonly deleteEntity: (
+      type: string,
+      id: string,
+    ) => Effect.Effect<EntityRecord | undefined, EntityStoreError>;
     /** Records which entity type an automation's saved workflow watches, or that it watches none. */
     readonly subscribe: (
       automationId: string,
@@ -64,6 +84,7 @@ export class EntityStore extends Context.Service<
 export interface EntityStorage {
   readonly listTypes: Effect.Effect<ReadonlyArray<EntityType>, EntityStoreError>;
   readonly putType: (type: EntityType) => Effect.Effect<void, EntityStoreError>;
+  readonly deleteType: (name: string) => Effect.Effect<void, EntityStoreError>;
   readonly listEntities: (
     type: string,
   ) => Effect.Effect<ReadonlyArray<EntityRecord>, EntityStoreError>;
@@ -72,6 +93,7 @@ export interface EntityStorage {
     id: string,
   ) => Effect.Effect<EntityRecord | undefined, EntityStoreError>;
   readonly writeEntity: (record: EntityRecord) => Effect.Effect<void, EntityStoreError>;
+  readonly deleteEntity: (type: string, id: string) => Effect.Effect<void, EntityStoreError>;
   readonly subscribe: (
     automationId: string,
     type: string | undefined,
@@ -83,7 +105,40 @@ export interface EntityStorage {
 export const makeEntityStore = (storage: EntityStorage) =>
   EntityStore.of({
     listTypes: storage.listTypes,
-    putType: (type) => storage.putType(type).pipe(Effect.as(type)),
+    putType: Effect.fn("EntityStore.putType")(function* (type: EntityType) {
+      const others = (yield* storage.listTypes).filter((other) => other.name !== type.name);
+      yield* checkEntityType(others, type);
+      yield* storage.putType(type);
+      return type;
+    }),
+    deleteType: Effect.fn("EntityStore.deleteType")(function* (name: string) {
+      const types = yield* storage.listTypes;
+      if (!types.some((type) => type.name === name)) {
+        return;
+      }
+      const referrers = types.flatMap((type) =>
+        type.name === name
+          ? []
+          : type.fields.flatMap((field) =>
+              field.to === name ? [`${type.name}.${field.name}`] : [],
+            ),
+      );
+      const entities = yield* storage.listEntities(name);
+      const watchers = yield* storage.subscribers(name);
+      const problems = [
+        ...(entities.length === 0
+          ? []
+          : [`it still has ${entities.length} ${entities.length === 1 ? "entity" : "entities"}`]),
+        ...(referrers.length === 0 ? [] : [`${referrers.join(", ")} points to it`]),
+        ...(watchers.length === 0 ? [] : [`automations watch it: ${watchers.join(", ")}`]),
+      ];
+      if (problems.length > 0) {
+        return yield* new InvalidEntity({
+          message: `Can't delete ${name}: ${problems.join("; ")}`,
+        });
+      }
+      yield* storage.deleteType(name);
+    }),
     listEntities: storage.listEntities,
     getEntity: storage.getEntity,
     putEntity: Effect.fn("EntityStore.putEntity")(function* (
@@ -96,10 +151,23 @@ export const makeEntityStore = (storage: EntityStorage) =>
         return yield* new InvalidEntity({ message: `Unknown entity type ${typeName}` });
       }
       const before = yield* storage.getEntity(typeName, id);
-      const merged = yield* checkEntityData(type, { ...before?.data, ...data });
+      // Fields the type no longer has are dropped rather than failing every later write.
+      const kept = Object.fromEntries(
+        Object.entries(before?.data ?? {}).filter(([name]) =>
+          type.fields.some((field) => field.name === name),
+        ),
+      );
+      const merged = yield* checkEntityData(type, { ...kept, ...data });
       const updatedAt = yield* Clock.currentTimeMillis;
       yield* storage.writeEntity({ type: typeName, id, data: merged, updatedAt });
       return { before: before?.data, after: { type: typeName, id, data: merged } };
+    }),
+    deleteEntity: Effect.fn("EntityStore.deleteEntity")(function* (type: string, id: string) {
+      const found = yield* storage.getEntity(type, id);
+      if (found !== undefined) {
+        yield* storage.deleteEntity(type, id);
+      }
+      return found;
     }),
     subscribe: storage.subscribe,
     subscribers: storage.subscribers,
@@ -120,11 +188,13 @@ export const layerMemory = (seed: {
     return makeEntityStore({
       listTypes: Effect.sync(() => [...types.values()]),
       putType: (type) => Effect.sync(() => void types.set(type.name, type)),
+      deleteType: (name) => Effect.sync(() => void types.delete(name)),
       listEntities: (type) =>
         Effect.sync(() => [...entities.values()].filter((entity) => entity.type === type)),
       getEntity: (type, id) => Effect.sync(() => entities.get(key(type, id))),
       writeEntity: (record) =>
         Effect.sync(() => void entities.set(key(record.type, record.id), record)),
+      deleteEntity: (type, id) => Effect.sync(() => void entities.delete(key(type, id))),
       subscribe: (automationId, type) =>
         Effect.sync(() =>
           type === undefined

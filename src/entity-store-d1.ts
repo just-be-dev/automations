@@ -91,6 +91,11 @@ export const EntityStoreD1 = Effect.gen(function* () {
                 .run();
             }),
           ),
+        deleteType: (name) =>
+          query(
+            "deleteType",
+            db.prepare("DELETE FROM entity_types WHERE name = ?").bind(name).run(),
+          ).pipe(Effect.asVoid),
         listEntities: (type) =>
           rows(
             "listEntities",
@@ -119,6 +124,11 @@ export const EntityStoreD1 = Effect.gen(function* () {
               )
               .bind(record.type, record.id, JSON.stringify(record.data), record.updatedAt)
               .run(),
+          ).pipe(Effect.asVoid),
+        deleteEntity: (type, id) =>
+          query(
+            "deleteEntity",
+            db.prepare("DELETE FROM entities WHERE type = ? AND id = ?").bind(type, id).run(),
           ).pipe(Effect.asVoid),
         subscribe: (automationId, type) =>
           query(

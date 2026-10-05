@@ -12,17 +12,18 @@ export class ApiError extends Schema.TaggedError<ApiError>()("ApiError", {
   message: Schema.String,
 }) {}
 
-/** GETs `url`, or POSTs `body` as JSON, and decodes the reply. `/api` failures carry `{ error }`. */
-export const requestJson = Effect.fn("studio.requestJson")(function* <T, E>(
+export type RequestMethod = "GET" | "POST" | "PUT" | "DELETE";
+
+/** Sends `body` as JSON with `method` and decodes the reply. `/api` failures carry `{ error }`. */
+export const sendJson = Effect.fn("studio.sendJson")(function* <T, E>(
+  method: RequestMethod,
   url: string,
   schema: Schema.Codec<T, E>,
   body?: unknown,
 ) {
   const client = yield* HttpClient.HttpClient;
-  const httpRequest =
-    body === undefined
-      ? HttpClientRequest.get(url)
-      : yield* HttpClientRequest.bodyJson(HttpClientRequest.post(url), body);
+  const bare = HttpClientRequest.make(method)(url);
+  const httpRequest = body === undefined ? bare : yield* HttpClientRequest.bodyJson(bare, body);
   const response = yield* client.execute(httpRequest);
   const data = yield* response.json;
   if (response.status < 200 || response.status >= 300) {
@@ -31,6 +32,10 @@ export const requestJson = Effect.fn("studio.requestJson")(function* <T, E>(
   }
   return yield* Schema.decodeUnknownEffect(schema)(data);
 });
+
+/** GETs `url`, or POSTs `body` as JSON, and decodes the reply. */
+export const requestJson = <T, E>(url: string, schema: Schema.Codec<T, E>, body?: unknown) =>
+  sendJson(body === undefined ? "GET" : "POST", url, schema, body);
 
 export const errorText = (error: unknown) =>
   error instanceof Error ? error.message : "Unexpected error";

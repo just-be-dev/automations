@@ -12,7 +12,7 @@
  * - `text`: any text; templates render to a string.
  * - `datetime`: an ISO 8601 date and time.
  * - `duration`: `"30 minutes"`, `"1 hour"`, and so on.
- * - `person`: one `{{ref}}` to an entity with an email field, or an email address.
+ * - `person`: one `{{ref}}` to an entity with a text field named `email`, or an email address.
  * - `people`: a list of `person` values.
  * - `url`: a literal public HTTPS URL. Templates aren't allowed.
  * - `json`: any JSON; a single `{{ref}}` passes its value through unchanged.

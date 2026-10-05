@@ -71,3 +71,87 @@ describe("EntityStore", () => {
     expect(subscribers).toEqual(["onboarding"]);
   });
 });
+
+describe("EntityStore types", () => {
+  const team: EntityType = {
+    name: "team",
+    label: "Team",
+    title: "name",
+    fields: [
+      { name: "name", label: "Name", type: "text" },
+      { name: "lead", label: "Lead", type: "ref", to: "employee" },
+    ],
+  };
+
+  test("rejects a type whose refs, field names, or name can't work", async () => {
+    const problem = (type: EntityType) =>
+      run(EntityStore.use((entities) => entities.putType(type)).pipe(Effect.flip)).then(
+        (error) => error.message,
+      );
+    expect(
+      await problem({
+        ...team,
+        fields: [...team.fields, { name: "office", label: "Office", type: "ref", to: "office" }],
+      }),
+    ).toBe("team.office points to unknown type office");
+    expect(
+      await problem({
+        ...team,
+        fields: [...team.fields, { name: "id", label: "ID", type: "text" }],
+      }),
+    ).toBe("team.id is every entity's ID; rename the field");
+    expect(
+      await problem({
+        ...team,
+        fields: [...team.fields, { name: "name", label: "Again", type: "text" }],
+      }),
+    ).toBe("team has more than one field named name");
+    expect(await problem({ ...team, name: "types" })).toBe(
+      "types is reserved; choose another type name",
+    );
+  });
+
+  test("deletes a type only once nothing depends on it", async () => {
+    const result = await run(
+      Effect.gen(function* () {
+        const entities = yield* EntityStore;
+        yield* entities.putType(team);
+        yield* entities.subscribe("onboarding", "employee");
+        const blocked = yield* Effect.flip(entities.deleteType("employee"));
+        const deletedTeam = yield* entities.deleteType("team");
+        return { blocked, deletedTeam, types: yield* entities.listTypes };
+      }),
+    );
+    expect(result.blocked.message).toBe(
+      "Can't delete employee: it still has 1 entity; team.lead points to it; automations watch it: onboarding",
+    );
+    expect(result.types.map((type) => type.name)).toEqual(["employee"]);
+  });
+
+  test("drops the values of removed fields on the next write", async () => {
+    const stored = await run(
+      Effect.gen(function* () {
+        const entities = yield* EntityStore;
+        yield* entities.putEntity("employee", "ada", { start_date: "2026-11-02" });
+        yield* entities.putType({ ...employee, fields: employee.fields.slice(0, 1) });
+        const change = yield* entities.putEntity("employee", "ada", { name: "Ada Lovelace" });
+        return change.after.data;
+      }),
+    );
+    expect(stored).toEqual({ name: "Ada Lovelace" });
+  });
+
+  test("deletes an entity and reports what it held", async () => {
+    const result = await run(
+      Effect.gen(function* () {
+        const entities = yield* EntityStore;
+        const deleted = yield* entities.deleteEntity("employee", "ada");
+        const missing = yield* entities.deleteEntity("employee", "ada");
+        return { deleted, missing, left: yield* entities.listEntities("employee") };
+      }),
+    );
+    expect(result.deleted?.data).toEqual({ name: "Ada" });
+    expect(result.missing).toBeUndefined();
+    expect(result.left).toEqual([]);
+  });
+});
