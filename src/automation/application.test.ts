@@ -7,11 +7,11 @@ import * as Semaphore from "effect/Semaphore";
 import { TestClock } from "effect/testing";
 import { PiAgent, type PromptOptions } from "../ai/pi.ts";
 import { ProgressClassifier } from "./progress-classifier.ts";
-import { layerMemory } from "../entities/store.ts";
+import { EntityStore, EntityStoreError, layerMemory } from "../entities/store.ts";
 import type { Workflow } from "../workflow/model.ts";
 import { makeAutomation } from "./application.ts";
 import { AutomationHost } from "./host.ts";
-import { AutomationIndex } from "./index.ts";
+import { AutomationIndex, AutomationIndexError } from "./index.ts";
 
 const workflow: Workflow = {
   name: "Saved workflow",
@@ -185,13 +185,102 @@ describe("Automation application without a platform", () => {
     expect(h.replies).toEqual([]);
   });
 
+  test("saving directly subscribes the trigger, replaces it, and removes it for a manual workflow", async () => {
+    const h = harness();
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const entities = yield* EntityStore;
+        yield* entities.putType({
+          name: "ticket",
+          label: "Ticket",
+          title: "title",
+          fields: [{ name: "title", label: "Title", type: "text" }],
+        });
+        const app = yield* makeAutomation();
+        for (const type of ["person", "ticket", undefined]) {
+          const draft: Workflow = {
+            ...workflow,
+            trigger: type === undefined ? { kind: "manual" } : { kind: "entity", entity: type },
+          };
+          yield* h.host.storage.put("draft", draft);
+          expect((yield* app.save("a1")).saved).toEqual(draft);
+          // Repeat to check subscription replacement is idempotent, not an append.
+          yield* app.save("a1");
+          expect(yield* h.host.storage.get("saved")).toEqual(draft);
+          expect(yield* entities.subscribers("person")).toEqual(type === "person" ? ["a1"] : []);
+          expect(yield* entities.subscribers("ticket")).toEqual(type === "ticket" ? ["a1"] : []);
+        }
+      }).pipe(Effect.provide(h.layer)),
+    );
+    expect(h.recorded).toHaveLength(6);
+    expect(h.recorded.every((record) => record.id === "a1" && record.name === workflow.name)).toBe(
+      true,
+    );
+  });
+
+  test("a rejected save leaves the previous snapshot, subscription and directory alone", async () => {
+    const h = harness();
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const entities = yield* EntityStore;
+        yield* h.host.storage.put("saved", workflow);
+        yield* entities.subscribe("a1", "person");
+        const invalid: Workflow = {
+          ...workflow,
+          trigger: { kind: "entity", entity: "missing" },
+        };
+        yield* h.host.storage.put("draft", invalid);
+        const app = yield* makeAutomation();
+        const failure = yield* app.save("a1").pipe(Effect.flip);
+        expect(failure.message).toContain("missing");
+        expect(yield* h.host.storage.get("saved")).toEqual(workflow);
+        expect(yield* entities.subscribers("person")).toEqual(["a1"]);
+        expect(yield* entities.subscribers("missing")).toEqual([]);
+      }).pipe(Effect.provide(h.layer)),
+    );
+    expect(h.recorded).toEqual([]);
+  });
+
+  test("subscription failure leaves the snapshot saved; retry repairs it even if the directory fails", async () => {
+    const h = harness();
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const entities = yield* EntityStore;
+        const index = yield* AutomationIndex;
+        yield* h.host.storage.put("draft", workflow);
+        yield* entities.subscribe("a1", "person");
+        const app = yield* makeAutomation().pipe(
+          Effect.provideService(EntityStore, {
+            ...entities,
+            subscribe: () =>
+              Effect.fail(new EntityStoreError({ message: "Subscription unavailable" })),
+          }),
+        );
+        const failure = yield* app.save("a1").pipe(Effect.flip);
+        expect(failure.message).toBe("Subscription unavailable");
+        expect(yield* h.host.storage.get("saved")).toEqual(workflow);
+        expect(yield* entities.subscribers("person")).toEqual(["a1"]);
+        expect(h.recorded).toEqual([]);
+        const reopened = yield* makeAutomation().pipe(
+          Effect.provideService(AutomationIndex, {
+            ...index,
+            record: () =>
+              Effect.fail(new AutomationIndexError({ message: "Directory unavailable" })),
+          }),
+        );
+        expect(yield* reopened.save("a1")).toEqual({ saved: workflow });
+        expect(yield* entities.subscribers("person")).toEqual([]);
+      }).pipe(Effect.provide(h.layer)),
+    );
+  });
+
   test("reopens a saved run from the journal, without executing a newer draft", async () => {
     const h = harness();
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         yield* h.host.storage.put("draft", workflow);
         const app = yield* makeAutomation();
-        yield* app.save();
+        yield* app.save("a1");
         yield* h.host.storage.put("draft", { ...workflow, name: "Unsaved", steps: [] });
         const started = yield* app.start(undefined);
         const executionId = yield* Schema.decodeUnknownEffect(Schema.String)(h.advances[0]);

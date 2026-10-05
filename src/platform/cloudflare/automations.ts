@@ -19,7 +19,7 @@ export const automationsLayer = (namespace: Effect.Success<typeof Automation>) =
             inspectWorkflow: () => remote(stub.inspectWorkflow()),
             overview: () => remote(stub.overview()),
             chat: (...args) => remote(stub.chat(...args)),
-            save: () => remote(stub.save()),
+            save: (...args) => remote(stub.save(...args)),
             setPermissions: (...args) => remote(stub.setPermissions(...args)),
             start: (...args) => remote(stub.start(...args)),
             entityChanged: (...args) => remote(stub.entityChanged(...args)),

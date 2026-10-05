@@ -6,7 +6,6 @@ import * as Schema from "effect/Schema";
 import { PiAgent } from "../ai/pi.ts";
 import { findOperation } from "../connections/registry.ts";
 import { EntityStore } from "../entities/store.ts";
-import { checkWorkflow } from "../workflow/catalog.ts";
 import type { Permissions, Workflow } from "../workflow/model.ts";
 import {
   designDraft,
@@ -200,17 +199,6 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
     return { pendingChat: pending };
   });
 
-  /** Saves the draft once it checks against the current entity types and templates. */
-  const save = Effect.fn("Automation.save")(function* () {
-    const draft = yield* readWorkflow("draft");
-    if (draft === undefined) {
-      return yield* new AutomationError({ message: "No draft to save" });
-    }
-    yield* checkWorkflow(yield* catalog, draft);
-    yield* storage.put("saved", draft);
-    return { saved: draft };
-  });
-
   /** Sets permissions over the designer's suggestions. Saving applies them. */
   const setPermissions = Effect.fn("Automation.setPermissions")(function* (
     permissions: Permissions,
@@ -248,5 +236,5 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
       .pipe(Effect.catchTag("AutomationStorageError", Effect.die));
   });
 
-  return { inspect, chat, save, setPermissions, designReply };
+  return { inspect, chat, setPermissions, designReply };
 });

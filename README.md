@@ -24,6 +24,8 @@ Infrastructure and server code share one [Alchemy 2](https://alchemy.run) Effect
 
 Dependencies point from platform adapters into domains, never back. `src/platform/boundary.test.ts` checks that boundary. Application tests use an in-memory host and scripted agent; native Worker and Durable Object behavior still needs local end-to-end checks.
 
+Saving is an application operation, not HTTP orchestration: validate the draft, store the saved snapshot, update its entity subscription, then best-effort update the directory. Snapshot storage and subscriptions do not share a transaction. If subscribing fails, the caller gets the error but the snapshot remains saved; retry saving to repair the subscription. A directory failure does not fail a save.
+
 `mise run dev` runs everything locally on stage `dev_$USER` and prints the Studio URL. Dev mode skips Cloudflare Access, but it needs Cloudflare credentials for Workers AI. Run `bun alchemy profile edit --add Cloudflare` once, or set `ALCHEMY_PROFILE` to a profile that already has them.
 
 The workflow format is described in [`docs/workflow-dsl.md`](docs/workflow-dsl.md). Agent instructions are in `AGENTS.md` and `src/ui/AGENTS.md`.

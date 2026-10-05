@@ -7,7 +7,6 @@ import { Automations } from "../automation/service.ts";
 import { AutomationIndex } from "../automation/index.ts";
 import type { AutomationOverview } from "../automation/model.ts";
 import { EntityId } from "../entities/model.ts";
-import { EntityStore } from "../entities/store.ts";
 import { HumanResponse } from "../workflow/interpreter.ts";
 import { Permissions } from "../workflow/model.ts";
 import { RequestIdentity } from "./identity.ts";
@@ -93,13 +92,7 @@ export const automationRoutes = Layer.merge(
           Effect.gen(function* () {
             const { id } = yield* automationParams;
             const automations = yield* Automations;
-            const saved = yield* automations.get(id).save();
-            const trigger = saved.saved.trigger;
-            const entities = yield* EntityStore;
-            yield* entities.subscribe(id, trigger.kind === "entity" ? trigger.entity : undefined);
-            const index = yield* AutomationIndex;
-            yield* index.record(id, saved.saved.name).pipe(Effect.ignore);
-            return saved;
+            return yield* automations.get(id).save(id);
           }),
         ),
       ),

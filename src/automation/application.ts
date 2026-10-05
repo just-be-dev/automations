@@ -31,7 +31,7 @@ export const makeAutomation = Effect.fn("Automation.make")(function* () {
     inspectWorkflow,
     overview,
     chat: design.chat,
-    save: design.save,
+    save: workflows.save,
     setPermissions: design.setPermissions,
     start: runs.start,
     entityChanged: runs.entityChanged,
