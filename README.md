@@ -53,6 +53,7 @@ curl -X POST "$STUDIO_URL/api/automations/orders/events/order.created" \
 | ----------------------------------------- | ---------------------- |
 | `GET /api/automations`                    | List automations       |
 | `GET /api/automations/:id`                | Inspect an automation  |
+| `POST /api/automations/:id/chat`          | Send a design message  |
 | `POST /api/automations/:id/start`         | Start a run manually   |
 | `POST /api/automations/:id/events/:event` | Trigger a run by event |
 | `GET /api/automations/:id/runs/:runId`    | Inspect a run          |
@@ -61,5 +62,6 @@ curl -X POST "$STUDIO_URL/api/automations/orders/events/order.created" \
 
 - Webhook steps are delivered **at least once**, so receiving endpoints must be idempotent.
 - Webhook steps POST the input and earlier results to a public HTTPS URL. Don't put secrets in step definitions.
+- Chat is asynchronous: `POST /chat` returns `202` with a `pendingChat`, and the reply and new draft appear on `GET /api/automations/:id` once `pendingChat` is gone. If the agent fails, `pendingChat` stays with `status: "failed"` and an `error` until the next message.
 - Runs advance through Alchemy durable callbacks. If the object is evicted mid-step, the step runs again; agent steps reuse their pi request ID instead of prompting twice.
 - pi-ai, pi-durable, and Alchemy 2 are beta. Pin versions before production use.

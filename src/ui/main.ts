@@ -40,6 +40,7 @@ import { textarea } from "@/components/ui/textarea";
 import { icon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import {
+  PendingChat,
   templateParts,
   workflowVariables,
   Workflow,
@@ -89,6 +90,7 @@ export const Model = Schema.Struct({
   messageInput: Schema.String,
   conversation: Schema.Array(Exchange),
   maybeDraft: Schema.Option(Workflow),
+  maybePendingChat: Schema.Option(PendingChat),
   maybeRun: Schema.Option(Run),
   expandedStepIds: Schema.Array(Schema.String),
   workflowDisplay: WorkflowDisplay,
@@ -118,14 +120,14 @@ export const Message = defineMessageUnion({
     maybeDraft: Schema.Option(Workflow),
     hasSaved: Schema.Boolean,
     conversation: Schema.Array(Exchange),
+    maybePendingChat: Schema.Option(PendingChat),
   },
   SucceededLoadAutomations: { automations: Schema.Array(AutomationSummary) },
   FailedLoadAutomations: { error: Schema.String },
   SucceededSendMessage: {
     revision: Schema.Int,
     sentMessage: Schema.String,
-    reply: Schema.String,
-    workflow: Workflow,
+    pendingChat: PendingChat,
   },
   SucceededSaveDraft: { revision: Schema.Int },
   SucceededStartRun: { revision: Schema.Int, run: Run },
@@ -162,6 +164,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message> = (url) => {
     messageInput: "",
     conversation: [],
     maybeDraft: Option.none(),
+    maybePendingChat: Option.none(),
     maybeRun: Option.none(),
     expandedStepIds: [],
     workflowDisplay: "Steps",
@@ -191,6 +194,7 @@ const openAutomation = (model: Model, automationId: string): Update.Return<Model
     automationIdInput: () => automationId,
     revision: (revision) => revision + 1,
     maybeDraft: () => Option.none(),
+    maybePendingChat: () => Option.none(),
     maybeRun: () => Option.none(),
     expandedStepIds: () => [],
     conversation: () => [],
@@ -204,6 +208,48 @@ const openAutomation = (model: Model, automationId: string): Update.Return<Model
     commands: [LoadAutomation({ automationId, revision: opened.revision })],
   };
 };
+
+const thinking = Activity.Working({ notice: "The agent is thinking…" });
+
+const isAnswering = (pending: PendingChat) => pending.status === "working";
+
+const loadedAutomation = (
+  model: Model,
+  options: { readonly wasWaiting: boolean; readonly idleNotice: string },
+): Update.Return<Model, Message> =>
+  Option.match(model.maybePendingChat, {
+    onNone: () =>
+      options.wasWaiting
+        ? {
+            model: modifyFields(model, {
+              activity: () =>
+                Activity.Ready({ notice: "Draft updated. Review the graph before saving." }),
+            }),
+            commands: [LoadAutomations()],
+          }
+        : {
+            model: modifyFields(model, {
+              activity: () => Activity.Ready({ notice: options.idleNotice }),
+            }),
+          },
+    onSome: (pending) =>
+      Match.value(pending).pipe(
+        Match.discriminatorsExhaustive("status")({
+          working: () => ({
+            model: modifyFields(model, { activity: () => thinking }),
+            commands: [
+              PollAutomation({ automationId: model.automationId.trim(), revision: model.revision }),
+            ],
+          }),
+          failed: ({ prompt, error }) => ({
+            model: modifyFields(model, {
+              messageInput: (value) => (value === "" ? prompt : value),
+              activity: () => Activity.Failed({ error: `The agent couldn't reply: ${error}` }),
+            }),
+          }),
+        }),
+      ),
+  });
 
 export const update = (model: Model, message: Message) =>
   Message.match<Update.Return<Model, Message>>(message, {
@@ -306,32 +352,36 @@ export const update = (model: Model, message: Message) =>
         commands: [StartRun({ automationId: model.automationId.trim(), revision: model.revision })],
       };
     },
-    SucceededLoadAutomation: ({ revision, maybeDraft, hasSaved, conversation }) =>
+    SucceededLoadAutomation: ({
+      revision,
+      maybeDraft,
+      hasSaved,
+      conversation,
+      maybePendingChat,
+    }) =>
       revision !== model.revision
         ? { model }
-        : {
-            model: modifyFields(model, {
+        : loadedAutomation(
+            modifyFields(model, {
               maybeDraft: () => maybeDraft,
               conversation: () => conversation,
-              activity: () =>
-                Activity.Ready({
-                  notice: hasSaved ? "Saved automation available." : "No saved automation yet.",
-                }),
+              maybePendingChat: () => maybePendingChat,
             }),
-          },
-    SucceededSendMessage: ({ revision, sentMessage, reply, workflow }) =>
+            {
+              wasWaiting: Option.exists(model.maybePendingChat, isAnswering),
+              idleNotice: hasSaved ? "Saved automation available." : "No saved automation yet.",
+            },
+          ),
+    SucceededSendMessage: ({ revision, sentMessage, pendingChat }) =>
       revision !== model.revision
         ? { model }
         : {
             model: modifyFields(model, {
-              conversation: (conversation) =>
-                Array.append(conversation, { id: conversation.length, prompt: sentMessage, reply }),
-              maybeDraft: () => Option.some(workflow),
+              maybePendingChat: () => Option.some(pendingChat),
               messageInput: (value) => (value === sentMessage ? "" : value),
-              activity: () =>
-                Activity.Ready({ notice: "Draft updated. Review the graph before saving." }),
+              activity: () => thinking,
             }),
-            commands: [LoadAutomations()],
+            commands: [PollAutomation({ automationId: model.automationId.trim(), revision })],
           },
     SucceededSaveDraft: ({ revision }) =>
       revision !== model.revision
@@ -435,30 +485,42 @@ const recoverRequest = (revision: number) =>
     Effect.succeed(Message.FailedRequest({ revision, error: errorText(error) })),
   );
 
+const loadAutomation = (automationId: string, revision: number) =>
+  request(
+    automationId,
+    "",
+    Schema.Struct({
+      draft: Schema.OptionFromOptional(Workflow),
+      saved: Schema.OptionFromOptional(Workflow),
+      conversation: Schema.Array(Schema.Struct({ prompt: Schema.String, reply: Schema.String })),
+      pendingChat: Schema.OptionFromOptional(PendingChat),
+    }),
+  ).pipe(
+    Effect.map((state) =>
+      Message.SucceededLoadAutomation({
+        revision,
+        maybeDraft: state.draft,
+        hasSaved: Option.isSome(state.saved),
+        conversation: Array.map(state.conversation, (exchange, id) => ({ id, ...exchange })),
+        maybePendingChat: state.pendingChat,
+      }),
+    ),
+    recoverRequest(revision),
+    Effect.provide(Http.layer),
+  );
+
 export const LoadAutomation = Command.define("LoadAutomation", {
   args: requestArgs,
   messages: [Message.SucceededLoadAutomation, Message.FailedRequest],
+  execute: ({ automationId, revision }) => loadAutomation(automationId, revision),
+});
+
+/** Reloads the automation after a pause, while the agent is still answering a message. */
+export const PollAutomation = Command.define("PollAutomation", {
+  args: requestArgs,
+  messages: [Message.SucceededLoadAutomation, Message.FailedRequest],
   execute: ({ automationId, revision }) =>
-    request(
-      automationId,
-      "",
-      Schema.Struct({
-        draft: Schema.OptionFromOptional(Workflow),
-        saved: Schema.OptionFromOptional(Workflow),
-        conversation: Schema.Array(Schema.Struct({ prompt: Schema.String, reply: Schema.String })),
-      }),
-    ).pipe(
-      Effect.map((state) =>
-        Message.SucceededLoadAutomation({
-          revision,
-          maybeDraft: state.draft,
-          hasSaved: Option.isSome(state.saved),
-          conversation: Array.map(state.conversation, (exchange, id) => ({ id, ...exchange })),
-        }),
-      ),
-      recoverRequest(revision),
-      Effect.provide(Http.layer),
-    ),
+    Effect.sleep("1500 millis").pipe(Effect.andThen(loadAutomation(automationId, revision))),
 });
 
 export const LoadAutomations = Command.define("LoadAutomations", {
@@ -498,15 +560,12 @@ export const SendMessage = Command.define("SendMessage", {
   args: { ...requestArgs, message: Schema.String },
   messages: [Message.SucceededSendMessage, Message.FailedRequest],
   execute: ({ automationId, revision, message }) =>
-    request(automationId, "/chat", Schema.Struct({ reply: Schema.String, workflow: Workflow }), {
-      message,
-    }).pipe(
+    request(automationId, "/chat", Schema.Struct({ pendingChat: PendingChat }), { message }).pipe(
       Effect.map((data) =>
         Message.SucceededSendMessage({
           revision,
           sentMessage: message,
-          reply: data.reply,
-          workflow: data.workflow,
+          pendingChat: data.pendingChat,
         }),
       ),
       recoverRequest(revision),
@@ -724,7 +783,7 @@ const conversationView = (model: Model, h: HtmlBuilder<Message>) =>
           h.Class("flex flex-1 flex-col px-5 py-6 lg:overflow-y-auto"),
         ],
         [
-          Array.match(model.conversation, {
+          Array.match(conversationItems(model, h), {
             onEmpty: () =>
               Option.match(model.maybeDraft, {
                 onNone: () =>
@@ -740,12 +799,7 @@ const conversationView = (model: Model, h: HtmlBuilder<Message>) =>
                     h,
                   ),
               }),
-            onNonEmpty: (exchanges) =>
-              ChatMessage.group(
-                { className: "gap-7" },
-                Array.map(exchanges, (exchange) => exchangeView(exchange, h)),
-                h,
-              ),
+            onNonEmpty: (items) => ChatMessage.group({ className: "gap-7" }, items, h),
           }),
         ],
       ),
@@ -769,44 +823,82 @@ const emptyConversationView = (title: string, description: string, h: HtmlBuilde
     h,
   );
 
-const exchangeView = (exchange: Exchange, h: HtmlBuilder<Message>) =>
-  h.keyed("div")(
-    String(exchange.id),
-    [h.Class("flex flex-col gap-4")],
+const conversationItems = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray<Html> => [
+  ...Array.map(model.conversation, (exchange) => exchangeView(exchange, h)),
+  ...Option.match(model.maybePendingChat, {
+    onNone: () => [],
+    onSome: (pending) => [pendingChatView(pending, h)],
+  }),
+];
+
+const promptView = (prompt: string, h: HtmlBuilder<Message>) =>
+  ChatMessage(
+    { align: "end" },
     [
-      ChatMessage(
-        { align: "end" },
+      ChatMessage.content(
+        {},
         [
-          ChatMessage.content(
-            {},
-            [
-              Bubble(
-                { variant: "secondary", align: "end" },
-                [Bubble.content({ className: "whitespace-pre-wrap" }, [exchange.prompt], h)],
-                h,
-              ),
-            ],
+          Bubble(
+            { variant: "secondary", align: "end" },
+            [Bubble.content({ className: "whitespace-pre-wrap" }, [prompt], h)],
             h,
           ),
         ],
         h,
       ),
-      ChatMessage(
-        {},
+    ],
+    h,
+  );
+
+const replyView = (children: ReadonlyArray<Html | string>, h: HtmlBuilder<Message>) =>
+  ChatMessage(
+    {},
+    [
+      ChatMessage.content(
+        { className: "gap-1.5" },
         [
-          ChatMessage.content(
-            { className: "gap-1.5" },
-            [
-              ChatMessage.header({ className: eyebrowClass }, ["Agent"], h),
-              Bubble(
-                { variant: "ghost" },
-                [Bubble.content({ className: "whitespace-pre-wrap" }, [exchange.reply], h)],
-                h,
+          ChatMessage.header({ className: eyebrowClass }, ["Agent"], h),
+          Bubble({ variant: "ghost" }, [Bubble.content({}, children, h)], h),
+        ],
+        h,
+      ),
+    ],
+    h,
+  );
+
+const exchangeView = (exchange: Exchange, h: HtmlBuilder<Message>) =>
+  h.keyed("div")(
+    String(exchange.id),
+    [h.Class("flex flex-col gap-4")],
+    [
+      promptView(exchange.prompt, h),
+      replyView([h.span([h.Class("whitespace-pre-wrap")], [exchange.reply])], h),
+    ],
+  );
+
+const pendingChatView = (pending: PendingChat, h: HtmlBuilder<Message>) =>
+  h.keyed("div")(
+    pending.id,
+    [h.Class("flex flex-col gap-4")],
+    [
+      promptView(pending.prompt, h),
+      replyView(
+        Match.value(pending).pipe(
+          Match.discriminatorsExhaustive("status")({
+            working: () => [
+              h.span(
+                [h.Class("flex items-center gap-2 text-muted-foreground")],
+                [icon(h, LoaderCircle, "size-3.5 animate-spin text-signal"), "Thinking…"],
               ),
             ],
-            h,
-          ),
-        ],
+            failed: ({ error }) => [
+              h.span(
+                [h.Class("flex items-center gap-2 text-destructive")],
+                [icon(h, CircleAlert, "size-3.5"), `Couldn't reply: ${error}`],
+              ),
+            ],
+          }),
+        ),
         h,
       ),
     ],

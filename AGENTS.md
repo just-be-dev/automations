@@ -6,8 +6,8 @@ A single-tenant prototype on Cloudflare: you design sequential automations in a 
 
 - `alchemy.run.ts`: the Alchemy 2 Stack. It declares the `Studio` Foldkit website, which carries Cloudflare Access and the test service token, and exports `StudioEnv`.
 - `src/api.ts`: the Effect-native `Api` Worker. It holds the `HttpRouter` routes under `/api/automations` and has no public URL (`workersDev: false`).
-- `src/automation.ts`: the `Automation` Durable Object. It stores the draft and saved workflow and the chat transcript, keeps the runs, and drives step execution with `Alchemy.makeCallback`.
-- `src/automation-index.ts`: the `AutomationsDatabase` D1 database and its queries. Cloudflare can't enumerate Durable Object names, so `Api` records each automation in the `automations` table on chat and save, and when an existing automation is opened. It backs `GET /api/automations`. Each automation's data stays in its Durable Object; the table only lists them.
+- `src/automation.ts`: the `Automation` Durable Object. It stores the draft and saved workflow and the chat transcript, keeps the runs, and uses `Alchemy.makeCallback` both to answer chat messages (`designReply`) and to drive step execution (`advance`). `chat` only stores the message as `pendingChat` and schedules the reply, so a reload mid-answer loses nothing; the UI polls `GET /api/automations/:id` until `pendingChat` clears.
+- `src/automation-index.ts`: the `AutomationsDatabase` D1 database and its queries. Cloudflare can't enumerate Durable Object names, so each automation is recorded in the `automations` table when the agent writes a draft (by `Automation`), on save, and when an existing automation is opened (by `Api`). It backs `GET /api/automations`. Each automation's data stays in its Durable Object; the table only lists them.
 - `migrations/`: D1 migrations, applied in numeric order on deploy and under `alchemy dev`.
 - `src/workflow.ts`: the pure domain code. It holds the Schema models (`Workflow`, the recursive `Step` tree, `Run`), the decoders, condition evaluation, and `graph`.
 - `src/interpreter.ts`: `RunAutomation`, an `effect/workflow` Workflow whose payload is a saved workflow. It walks the step tree with Activities, DurableClocks, and DurableDeferreds, and reaches the outside world only through the `StepRunner` service. Code outside an Activity reruns on every replay, so keep it deterministic. The `Automation` object doesn't use it yet; until it does, runs reject anything but flat agent and webhook steps.
@@ -58,8 +58,9 @@ Stick to these `GET` routes unless the user asks for more. `chat` calls Workers 
 - Plan time imports `alchemy.run.ts` and everything it reaches under Bun. Never import a module that loads `cloudflare:*` at top level. This is why `src/pi-storage.ts` replaces `agents/harness/pi`.
 - `Alchemy.makeCallback` delivers at least once. Keep handlers idempotent:
   - Agent steps reuse the pi `requestId` `${runId}:${stepId}`, and their conversation id is saved on the run before submitting.
-  - Callback names (`advance`) and payload shapes are persisted contracts. Keep them compatible.
-- Storage keys are persisted contracts too: `draft`, `saved`, `run:<id>`, `exchange:<000000>`, and `exchangeCount` in `Automation`.
+  - Chat replies reuse the pi `requestId` `chat:${chatId}`, and only the delivery that still finds that message pending writes the exchange.
+  - Callback names (`advance`, `designReply`) and payload shapes are persisted contracts. Keep them compatible.
+- Storage keys are persisted contracts too: `draft`, `saved`, `pendingChat`, `run:<id>`, `exchange:<000000>`, and `exchangeCount` in `Automation`.
 - Never edit an applied D1 migration. Add the next numbered file in `migrations/` instead; Alchemy tracks applied files by hash in `__alchemy_migrations`.
 
 ## Invariants

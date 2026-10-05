@@ -120,10 +120,9 @@ export default class Api extends Cloudflare.Worker<Api>()(
             Effect.gen(function* () {
               const { id } = yield* automationParams;
               const body = yield* limitedBody(ChatBody);
-              const draft = yield* automations.getByName(id).chat(body.message ?? "");
-              yield* index.record(id, draft.workflow.name).pipe(Effect.ignore);
-              return draft;
+              return yield* automations.getByName(id).chat(id, body.message ?? "");
             }),
+            202,
           ),
         ),
         HttpRouter.route(

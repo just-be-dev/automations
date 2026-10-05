@@ -4,14 +4,17 @@ import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import { openAutomationIndex } from "./automation-index.ts";
 import { openPiAgent } from "./pi.ts";
 import {
   decodeDraft,
   Exchange,
   flattenSteps,
   graph,
+  PendingChat,
   Run,
   Workflow,
   type AgentStep,
@@ -58,6 +61,9 @@ const decodeStoredRun = (value: unknown) =>
 const StoredExchangeCount = Schema.UndefinedOr(Schema.Int);
 const decodeStoredExchangeCount = (value: unknown) =>
   Schema.decodeUnknownEffect(StoredExchangeCount)(value).pipe(Effect.orDie);
+const StoredPendingChat = Schema.UndefinedOr(PendingChat);
+const decodeStoredPendingChat = (value: unknown) =>
+  Schema.decodeUnknownEffect(StoredPendingChat)(value).pipe(Effect.orDie);
 const decodeStoredExchanges = (values: ReadonlyArray<unknown>) =>
   Schema.decodeUnknownEffect(Schema.Array(Exchange))(values).pipe(Effect.orDie);
 
@@ -68,6 +74,12 @@ const exchangePrefix = "exchange:";
 const exchangeKey = (index: number) => `${exchangePrefix}${String(index).padStart(6, "0")}`;
 
 const failureMessage = (error: { readonly message: string }) => error.message;
+
+/** Payload of the `designReply` callback: a persisted contract, so keep it compatible. */
+interface DesignReply {
+  readonly automationId: string;
+  readonly chatId: string;
+}
 
 // NOTE: until `RunAutomation` (src/interpreter.ts) replaces this runner, runs only execute flat
 // agent and webhook steps.
@@ -84,6 +96,7 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
   Effect.gen(function* () {
     const state = yield* Cloudflare.DurableObjectState;
     const ai = yield* Cloudflare.Workers.AI();
+    const index = yield* openAutomationIndex;
 
     // The outer Effect constructs the class; the returned inner Effect constructs each instance.
     // @effect-diagnostics-next-line returnEffectInGen:off
@@ -189,36 +202,110 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         .list({ prefix: exchangePrefix })
         .pipe(Effect.flatMap((entries) => decodeStoredExchanges([...entries.values()])));
 
+      const readPendingChat = state.storage
+        .get("pendingChat")
+        .pipe(Effect.flatMap(decodeStoredPendingChat));
+
       const inspectWorkflow = Effect.fn("Automation.inspectWorkflow")(function* () {
         const draft = yield* readWorkflow("draft");
         const saved = yield* readWorkflow("saved");
         const conversation = yield* readConversation;
-        return { draft, saved, graph: draft === undefined ? null : graph(draft), conversation };
+        const pendingChat = yield* readPendingChat;
+        return {
+          draft,
+          saved,
+          graph: draft === undefined ? null : graph(draft),
+          conversation,
+          pendingChat,
+        };
       });
 
-      const chat = Effect.fn("Automation.chat")(function* (message: string) {
+      const isWorking = (pending: PendingChat | undefined, chatId: string) =>
+        pending?.id === chatId && pending.status === "working";
+
+      // Delivery is at least once. A redelivered reply reuses the pi request ID, so the agent answers
+      // each message once, and only the delivery that still finds the message pending writes it.
+      const designReply: Alchemy.Callback<DesignReply> = yield* Alchemy.makeCallback(
+        "designReply",
+        Effect.fn("Automation.designReply")(function* ({ automationId, chatId }: DesignReply) {
+          const pending = yield* readPendingChat;
+          if (pending === undefined || !isWorking(pending, chatId)) {
+            return;
+          }
+          const reply = yield* pi
+            .prompt({
+              requestId: `chat:${chatId}`,
+              text: `${designInstructions}\n\nUser: ${pending.prompt}`,
+            })
+            .pipe(Effect.flatMap(decodeDraft), Effect.result);
+          const wrote = yield* state.storage
+            .transaction(
+              Effect.gen(function* () {
+                if (!isWorking(yield* readPendingChat, chatId)) {
+                  return false;
+                }
+                if (Result.isFailure(reply)) {
+                  const failed: PendingChat = {
+                    id: chatId,
+                    prompt: pending.prompt,
+                    status: "failed",
+                    error: failureMessage(reply.failure),
+                  };
+                  yield* state.storage.put("pendingChat", failed);
+                  return false;
+                }
+                const exchangeCount =
+                  (yield* state.storage
+                    .get("exchangeCount")
+                    .pipe(Effect.flatMap(decodeStoredExchangeCount))) ?? 0;
+                yield* state.storage.put("draft", reply.success.workflow);
+                yield* state.storage.put(exchangeKey(exchangeCount), {
+                  prompt: pending.prompt,
+                  reply: reply.success.reply,
+                });
+                yield* state.storage.put("exchangeCount", exchangeCount + 1);
+                yield* state.storage.delete("pendingChat");
+                return true;
+              }),
+            )
+            .pipe(Effect.orDie);
+          if (wrote && Result.isSuccess(reply)) {
+            // The index only feeds the studio's list, so a failure to update it must not fail the reply.
+            yield* index.record(automationId, reply.success.workflow.name).pipe(Effect.ignore);
+          }
+        }),
+      );
+
+      const chat = Effect.fn("Automation.chat")(function* (automationId: string, message: string) {
         if (!message.trim() || message.length > 10_000) {
           return yield* new AutomationError({ message: "Message must be 1–10,000 characters" });
         }
-        const text = yield* pi.prompt({ text: `${designInstructions}\n\nUser: ${message}` });
-        const draft = yield* decodeDraft(text);
-        yield* state.storage
+        const pending: PendingChat = {
+          id: crypto.randomUUID(),
+          prompt: message,
+          status: "working",
+        };
+        const accepted = yield* state.storage
           .transaction(
             Effect.gen(function* () {
-              const exchangeCount =
-                (yield* state.storage
-                  .get("exchangeCount")
-                  .pipe(Effect.flatMap(decodeStoredExchangeCount))) ?? 0;
-              yield* state.storage.put("draft", draft.workflow);
-              yield* state.storage.put(exchangeKey(exchangeCount), {
-                prompt: message,
-                reply: draft.reply,
+              if ((yield* readPendingChat)?.status === "working") {
+                return false;
+              }
+              yield* state.storage.put("pendingChat", pending);
+              yield* designReply.schedule(pending.id, {
+                after: 0,
+                payload: { automationId, chatId: pending.id },
               });
-              yield* state.storage.put("exchangeCount", exchangeCount + 1);
+              return true;
             }),
           )
           .pipe(Effect.orDie);
-        return { ...draft, graph: graph(draft.workflow) };
+        if (!accepted) {
+          return yield* new AutomationError({
+            message: "The agent is still answering the previous message",
+          });
+        }
+        return { pendingChat: pending };
       });
 
       const save = Effect.fn("Automation.save")(function* () {
@@ -269,5 +356,9 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
 
       return { inspectWorkflow, chat, save, start, run };
     });
-  }).pipe(Effect.provide(Cloudflare.Workers.AIBinding)),
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(Cloudflare.Workers.AIBinding, Cloudflare.D1.QueryDatabaseBinding),
+    ),
+  ),
 ) {}

@@ -6,6 +6,7 @@ import type { Url } from "foldkit/url";
 import {
   LoadAutomations,
   Message,
+  PollAutomation,
   SendMessage,
   init,
   update,
@@ -29,6 +30,7 @@ const loaded = update(
     maybeDraft: Option.none(),
     hasSaved: false,
     conversation: [],
+    maybePendingChat: Option.none(),
   }),
 ).model;
 
@@ -47,8 +49,20 @@ test("the accessible message input drives chat and safely renders the workflow",
       Message.SucceededSendMessage({
         revision: 0,
         sentMessage: "Summarize orders",
-        reply: "Ready to review.",
-        workflow: {
+        pendingChat: { id: "chat-1", prompt: "Summarize orders", status: "working" },
+      }),
+    ),
+    expect(label("Your message")).toHaveValue(""),
+    expect(text("Summarize orders")).toExist(),
+    expect(text("Thinking…")).toExist(),
+    Command.resolve(
+      PollAutomation,
+      Message.SucceededLoadAutomation({
+        revision: 0,
+        hasSaved: false,
+        conversation: [{ id: 0, prompt: "Summarize orders", reply: "Ready to review." }],
+        maybePendingChat: Option.none(),
+        maybeDraft: Option.some({
           name: "Orders",
           event: null,
           steps: [
@@ -59,12 +73,13 @@ test("the accessible message input drives chat and safely renders the workflow",
               instruction: "Summarize",
             },
           ],
-        },
+        }),
       }),
     ),
+    expect(text("Thinking…")).not.toExist(),
+    expect(text("Ready to review.")).toExist(),
     expect(text("Manual start")).toExist(),
     expect(text("<script>alert('unsafe')</script>")).toExist(),
-    expect(label("Your message")).toHaveValue(""),
     Command.resolve(LoadAutomations, Message.SucceededLoadAutomations({ automations: [] })),
   );
 });

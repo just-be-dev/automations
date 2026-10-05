@@ -8,6 +8,7 @@ import {
   LoadAutomations,
   Message,
   NavigateInternal,
+  PollAutomation,
   SendMessage,
   SaveDraft,
   init,
@@ -32,6 +33,7 @@ const loaded = (search?: string) =>
       maybeDraft: Option.none(),
       hasSaved: false,
       conversation: [],
+      maybePendingChat: Option.none(),
     }),
   ).model;
 
@@ -54,7 +56,9 @@ const workflow: Workflow = {
   ],
 };
 
-test("chat reviews the returned draft and saves that automation", () => {
+const working = { id: "chat-1", prompt: "Summarize orders", status: "working" } as const;
+
+test("chat waits for the agent's reply, shows the draft, and saves that automation", () => {
   story(
     update,
     given(modifyFields(loaded("automation=orders"), { messageInput: () => "Summarize orders" })),
@@ -68,8 +72,33 @@ test("chat reviews the returned draft and saves that automation", () => {
       Message.SucceededSendMessage({
         revision: 0,
         sentMessage: "Summarize orders",
-        reply: "Review these steps.",
-        workflow,
+        pendingChat: working,
+      }),
+    ),
+    model((current) => {
+      expect(current.messageInput).toBe("");
+      expect(current.maybePendingChat).toEqual(Option.some(working));
+    }),
+    Command.expectExact(PollAutomation({ automationId: "orders", revision: 0 })),
+    Command.resolve(
+      PollAutomation,
+      Message.SucceededLoadAutomation({
+        revision: 0,
+        maybeDraft: Option.none(),
+        hasSaved: false,
+        conversation: [],
+        maybePendingChat: Option.some(working),
+      }),
+    ),
+    Command.expectExact(PollAutomation({ automationId: "orders", revision: 0 })),
+    Command.resolve(
+      PollAutomation,
+      Message.SucceededLoadAutomation({
+        revision: 0,
+        maybeDraft: Option.some(workflow),
+        hasSaved: false,
+        conversation: [{ id: 0, prompt: "Summarize orders", reply: "Review these steps." }],
+        maybePendingChat: Option.none(),
       }),
     ),
     Command.resolve(LoadAutomations, Message.SucceededLoadAutomations({ automations: [] })),
@@ -78,7 +107,13 @@ test("chat reviews the returned draft and saves that automation", () => {
         { id: 0, prompt: "Summarize orders", reply: "Review these steps." },
       ]);
       expect(current.maybeDraft).toEqual(Option.some(workflow));
-      expect(current.messageInput).toBe("");
+      expect(current.maybePendingChat).toEqual(Option.none());
+      expect(current.activity).toEqual(
+        expect.objectContaining({
+          _tag: "Ready",
+          notice: "Draft updated. Review the graph before saving.",
+        }),
+      );
     }),
     message(Message.ClickedSave()),
     Command.expectExact(SaveDraft({ automationId: "orders", revision: 0 })),
@@ -98,34 +133,66 @@ test("chat reviews the returned draft and saves that automation", () => {
   );
 });
 
-test("a late chat response cannot replace another automation's draft", () => {
+test("reopening an automation while the agent is answering keeps waiting for the reply", () => {
+  const reopened = update(
+    init(studioUrl("automation=orders")).model,
+    Message.SucceededLoadAutomation({
+      revision: 0,
+      maybeDraft: Option.none(),
+      hasSaved: false,
+      conversation: [],
+      maybePendingChat: Option.some(working),
+    }),
+  );
+  expect(reopened.model.activity._tag).toBe("Working");
+  expect(reopened.model.maybePendingChat).toEqual(Option.some(working));
+  expect(reopened.commands?.map((command) => command.name)).toEqual(["PollAutomation"]);
+});
+
+test("a reply the agent couldn't write puts the prompt back in the composer", () => {
+  const failed = { ...working, status: "failed", error: "Agent did not answer" } as const;
+  const reopened = update(
+    init(studioUrl("automation=orders")).model,
+    Message.SucceededLoadAutomation({
+      revision: 0,
+      maybeDraft: Option.none(),
+      hasSaved: false,
+      conversation: [],
+      maybePendingChat: Option.some(failed),
+    }),
+  );
+  expect(reopened.model.messageInput).toBe("Summarize orders");
+  expect(reopened.model.activity).toEqual(
+    expect.objectContaining({
+      _tag: "Failed",
+      error: "The agent couldn't reply: Agent did not answer",
+    }),
+  );
+  expect(reopened.commands).toBeUndefined();
+});
+
+test("a late chat response cannot touch another automation", () => {
   const switched = update(
     loaded(),
     Message.ChangedUrl({ url: studioUrl("automation=other") }),
   ).model;
   const received = update(
     switched,
-    Message.SucceededSendMessage({
-      revision: 0,
-      sentMessage: "Old prompt",
-      reply: "Old reply",
-      workflow,
-    }),
+    Message.SucceededSendMessage({ revision: 0, sentMessage: "Old prompt", pendingChat: working }),
   );
   expect(received.model).toBe(switched);
   expect(received.commands).toBeUndefined();
-  expect(switched.maybeDraft).toEqual(Option.none());
+  expect(switched.maybePendingChat).toEqual(Option.none());
 });
 
-test("chat completion preserves text typed while the request was pending", () => {
+test("sending preserves text typed while the request was in flight", () => {
   const current = modifyFields(loaded(), { messageInput: () => "Next revision" });
   const received = update(
     current,
     Message.SucceededSendMessage({
       revision: 0,
       sentMessage: "First prompt",
-      reply: "Draft ready",
-      workflow,
+      pendingChat: working,
     }),
   );
   expect(received.model.messageInput).toBe("Next revision");
@@ -280,6 +347,7 @@ test("a URL change loads that automation and restores its conversation", () => {
         maybeDraft: Option.some(workflow),
         hasSaved: true,
         conversation: [{ id: 0, prompt: "Summarize orders", reply: "Review these steps." }],
+        maybePendingChat: Option.none(),
       }),
     ),
     model((current) => {

@@ -332,6 +332,21 @@ export interface Draft extends Schema.Schema.Type<typeof Draft> {}
 export const Exchange = Schema.Struct({ prompt: Schema.String, reply: Schema.String });
 export interface Exchange extends Schema.Schema.Type<typeof Exchange> {}
 
+/**
+ * A design message the agent is still answering, or the last one it couldn't answer. It lives in
+ * storage until the reply is written, so a reload can show it and keep waiting.
+ */
+export const PendingChat = Schema.Union([
+  Schema.Struct({ id: Schema.String, prompt: Schema.String, status: Schema.Literal("working") }),
+  Schema.Struct({
+    id: Schema.String,
+    prompt: Schema.String,
+    status: Schema.Literal("failed"),
+    error: Schema.String,
+  }),
+]);
+export type PendingChat = typeof PendingChat.Type;
+
 /** An automation's entry in the index that backs `GET /api/automations`. */
 export const AutomationSummary = Schema.Struct({
   id: Schema.String,
