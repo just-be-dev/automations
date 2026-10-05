@@ -47,5 +47,9 @@
   },
   "overrides": {
     "workerd": "1.20261001.1"
+  },
+  "patchedDependencies": {
+    "@foldkit/vite-plugin@0.26.0": "patches/@foldkit%2Fvite-plugin@0.26.0.patch",
+    "@foldkit/devtools-mcp@0.24.0": "patches/@foldkit%2Fdevtools-mcp@0.24.0.patch"
   }
 }

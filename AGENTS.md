@@ -77,3 +77,4 @@ Stick to these `GET` routes unless the user asks for more. `chat` calls Workers 
 - `alchemy dev` runs locally on stage `dev_$USER`, skips Access, and still needs a Cloudflare profile for Workers AI.
 - Never commit `.alchemy/` or Access service-token secrets.
 - Foldkit, `@foldkit/*`, Vite, and `@effect/platform-*` are pinned exactly on purpose. To upgrade Foldkit, follow `src/ui/AGENTS.md`.
+- Patch dependencies only with `bun patch`. Document every patch in `patches/README.md`: the symptom, the cause, what the patch changes, and the upstream fix that would let you remove it. When you upgrade a patched package, recheck its patch.
