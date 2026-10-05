@@ -19,11 +19,16 @@
         "allowedDuplicatedPackages": ["effect-oxlint"],
         "overrides": [
           {
-            "include": ["src/ui/main.ts", "src/api.ts", "src/automation.ts"],
+            "include": ["src/ui/main.ts", "src/api.ts", "src/connection-runner.ts"],
             "options": { "allowedUnstableApis": ["effect/http"] }
           },
           {
-            "include": ["src/interpreter.ts", "src/interpreter.test.ts"],
+            "include": [
+              "src/interpreter.ts",
+              "src/interpreter.test.ts",
+              "src/durable-engine.ts",
+              "src/automation.ts"
+            ],
             "options": { "allowedUnstableApis": ["effect/workflow"] }
           }
         ]

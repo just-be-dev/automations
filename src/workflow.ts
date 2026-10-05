@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
+import { EntityName, Subject } from "./entities.ts";
 
 export class InvalidWorkflow extends Schema.TaggedError<InvalidWorkflow>()("InvalidWorkflow", {
   message: Schema.String,
@@ -18,7 +19,12 @@ const Identifier = (pattern: RegExp, message: string) =>
 
 const privateHost = /^(localhost|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.)/;
 
-const isPublicHttpsUrl = (value: string) => {
+/**
+ * The SSRF boundary for `http.post`: HTTPS, no credentials, and no private or loopback host. The
+ * workflow checker applies it to the URL a step names, and the runner applies it again before
+ * sending.
+ */
+export const isPublicHttpsUrl = (value: string) => {
   const url = URL.parse(value);
   return (
     url !== null &&
@@ -28,12 +34,6 @@ const isPublicHttpsUrl = (value: string) => {
     !privateHost.test(url.hostname)
   );
 };
-
-const PublicHttpsUrl = Schema.String.check(
-  Schema.makeFilter(isPublicHttpsUrl, {
-    message: "Step must be an agent instruction or a public HTTPS webhook",
-  }),
-);
 
 const StepId = Identifier(/^[a-zA-Z0-9_-]{1,40}$/, "Step IDs must be unique identifiers");
 const StepTitle = NonBlank("A step title is required", 120);
@@ -52,74 +52,103 @@ export const durationMillis = (text: string) => {
   const [, amount = "0", unit = "minute"] = durationSyntax.exec(text) ?? [];
   return Number(amount) * (unitMillis[unit] ?? 0);
 };
+export const isDuration = (text: string) => /^\d{1,4} (minute|hour|day|week)s?$/.test(text);
 /** A wait or timeout, written in Effect's `Duration` syntax. */
 const Duration = Identifier(/^\d{1,4} (minute|hour|day|week)s?$/, durationMessage);
 /** An offset from a date, such as "-7 days" for a week before it. */
 const Offset = Identifier(/^-?\d{1,4} (minute|hour|day|week)s?$/, durationMessage);
 
-const inputFieldShorthand = /^(?:\{\{\s*([a-zA-Z0-9_-]{1,40})\s*\}\}|([a-zA-Z0-9_-]{1,40}))$/;
-
 /**
- * The designer agent sometimes names an input field the way it writes variables in text
- * (`start_date` or `{{start_date}}`). A bare name can only mean a run input field, because step
- * references always need `steps.<id>.<field>`, so decoding qualifies it as `input.<field>`.
+ * A path into what a run knows. Its root is either the trigger's entity type, which reads the
+ * run's subject (`employee.start_date`, or `employee.manager.email` through a `ref` field), or
+ * `steps`, which reads what an earlier step recorded (`steps.approve.approved`).
  */
-const qualifyInputField = (value: string) => {
-  const match = inputFieldShorthand.exec(value.trim());
-  return match === null ? value : `input.${match[1] ?? match[2]}`;
+const refSource = "[a-z][a-z0-9_]{0,39}(?:\\.[a-zA-Z0-9_$-]{1,40}){0,5}";
+const refSyntax = new RegExp(`^${refSource}$`);
+const wrappedRef = /^\{\{\s*(.*?)\s*\}\}$/;
+
+/** The designer sometimes writes a ref the way it writes templates (`{{employee.email}}`). */
+const unwrapRef = (value: string) => {
+  const trimmed = value.trim();
+  return wrappedRef.exec(trimmed)?.[1] ?? trimmed;
 };
 
-/**
- * A path into the run's state: `input.<field>` reads the run input, and `steps.<id>.<field>` reads
- * what an earlier step recorded.
- */
-const Ref = Schema.String.pipe(
+export const Ref = Schema.String.pipe(
   Schema.decodeTo(
     Identifier(
-      /^(input|steps)(\.[a-zA-Z0-9_-]{1,40}){1,4}$/,
-      "References start with input. or steps. followed by a field path",
+      refSyntax,
+      "References are dotted paths that start with the trigger's entity type or steps., such as employee.start_date or steps.approve.approved",
     ),
-    SchemaTransformation.transform({ decode: qualifyInputField, encode: (ref: string) => ref }),
+    SchemaTransformation.transform({ decode: unwrapRef, encode: (ref: string) => ref }),
   ),
 );
 
-export const AgentStep = Schema.Struct({
-  id: StepId,
-  title: StepTitle,
-  kind: Schema.Literal("agent"),
-  instruction: NonBlank("Step must be an agent instruction or a public HTTPS webhook", 4000),
-});
-export interface AgentStep extends Schema.Schema.Type<typeof AgentStep> {}
+/** `{{ref}}` placeholders in text. Splitting on it puts every ref at an odd index. */
+const templateSyntax = new RegExp(`\\{\\{\\s*(${refSource})\\s*\\}\\}`);
 
-export const WebhookStep = Schema.Struct({
-  id: StepId,
-  title: StepTitle,
-  kind: Schema.Literal("webhook"),
-  url: PublicHttpsUrl,
-});
-export interface WebhookStep extends Schema.Schema.Type<typeof WebhookStep> {}
+export type TemplatePart =
+  | { readonly kind: "text"; readonly text: string }
+  | { readonly kind: "ref"; readonly ref: string };
 
-export const WaitForStep = Schema.Struct({
-  id: StepId,
-  title: StepTitle,
-  kind: Schema.Literal("wait"),
-  duration: Duration,
-});
-export interface WaitForStep extends Schema.Schema.Type<typeof WaitForStep> {}
+export const templateParts = (text: string): ReadonlyArray<TemplatePart> =>
+  text
+    .split(templateSyntax)
+    .flatMap((part, index): ReadonlyArray<TemplatePart> =>
+      index % 2 === 1 ? [{ kind: "ref", ref: part }] : part ? [{ kind: "text", text: part }] : [],
+    );
 
-/** Waits until a date read from the run state, shifted by `offset`. */
-export const WaitUntilStep = Schema.Struct({
-  id: StepId,
-  title: StepTitle,
-  kind: Schema.Literal("wait"),
-  until: Ref,
-  offset: Schema.optionalKey(Offset),
-});
-export interface WaitUntilStep extends Schema.Schema.Type<typeof WaitUntilStep> {}
+export const templateRefs = (text: string) =>
+  templateParts(text).flatMap((part) => (part.kind === "ref" ? [part.ref] : []));
 
-export type Comparison = "equals" | "notEquals" | "greaterThan" | "lessThan" | "contains";
+/** The ref a value consists of, when it is exactly one `{{ref}}`. */
+export const loneRef = (text: string): string | undefined => {
+  const parts = templateParts(text.trim());
+  return parts.length === 1 && parts[0]?.kind === "ref" ? parts[0].ref : undefined;
+};
 
-/** A deterministic check against the run state. */
+/** How a resolved value reads inside text: entities by their `$title`, other JSON as JSON. */
+export const displayValue = (value: Schema.Json): string => {
+  if (typeof value === "string") {
+    return value;
+  }
+  const title =
+    typeof value === "object" && value !== null
+      ? Object.getOwnPropertyDescriptor(value, "$title")?.value
+      : undefined;
+  if (typeof title === "string") {
+    return title;
+  }
+  if (Array.isArray(value)) {
+    return value.map(displayValue).join(", ");
+  }
+  return JSON.stringify(value);
+};
+
+/** Fills each `{{ref}}` from resolved values, leaving refs without a value as written. */
+export const renderTemplate = (text: string, values: Readonly<Record<string, Schema.Json>>) =>
+  templateParts(text)
+    .map((part) => {
+      if (part.kind === "text") {
+        return part.text;
+      }
+      const value = values[part.ref];
+      return value === undefined || value === null ? `{{${part.ref}}}` : displayValue(value);
+    })
+    .join("");
+
+export type Comparison =
+  | "equals"
+  | "notEquals"
+  | "greaterThan"
+  | "lessThan"
+  | "contains"
+  | "before"
+  | "after";
+
+/**
+ * A deterministic check against what the run knows. `before` and `after` compare dates; their
+ * value is a date or `"now"`.
+ */
 export type Condition =
   | { readonly ref: string; readonly op: Comparison; readonly value: Schema.Json }
   | { readonly ref: string; readonly op: "exists" }
@@ -132,7 +161,15 @@ const Conditions = Schema.Array(Schema.suspend((): Schema.Codec<Condition> => Co
 export const Condition: Schema.Codec<Condition> = Schema.Union([
   Schema.Struct({
     ref: Ref,
-    op: Schema.Literals(["equals", "notEquals", "greaterThan", "lessThan", "contains"]),
+    op: Schema.Literals([
+      "equals",
+      "notEquals",
+      "greaterThan",
+      "lessThan",
+      "contains",
+      "before",
+      "after",
+    ]),
     value: Schema.Json,
   }),
   Schema.Struct({ ref: Ref, op: Schema.Literal("exists") }),
@@ -140,6 +177,131 @@ export const Condition: Schema.Codec<Condition> = Schema.Union([
   Schema.Struct({ any: Conditions }),
   Schema.Struct({ not: Schema.suspend((): Schema.Codec<Condition> => Condition) }),
 ]);
+
+export const conditionRefs = (condition: Condition): ReadonlyArray<string> =>
+  "ref" in condition
+    ? [condition.ref]
+    : "all" in condition
+      ? condition.all.flatMap(conditionRefs)
+      : "any" in condition
+        ? condition.any.flatMap(conditionRefs)
+        : conditionRefs(condition.not);
+
+/** Whether evaluating the condition needs the current time. */
+export const usesNow = (condition: Condition): boolean =>
+  "ref" in condition
+    ? condition.op !== "exists" && condition.value === "now"
+    : "all" in condition
+      ? condition.all.some(usesNow)
+      : "any" in condition
+        ? condition.any.some(usesNow)
+        : usesNow(condition.not);
+
+/** Starts a run by hand, optionally about one entity of `subject` type that the starter picks. */
+export const ManualTrigger = Schema.Struct({
+  kind: Schema.Literal("manual"),
+  subject: Schema.optionalKey(EntityName),
+});
+
+/**
+ * Starts a run when an entity of type `entity` is created, or when one of `fields` changes (any
+ * field when omitted), and `when` holds for the new version. The entity becomes the run's subject.
+ */
+export const EntityTrigger = Schema.Struct({
+  kind: Schema.Literal("entity"),
+  entity: EntityName,
+  fields: Schema.optionalKey(Schema.Array(EntityName)),
+  when: Schema.optionalKey(Condition),
+});
+
+export const Trigger = Schema.Union([ManualTrigger, EntityTrigger]);
+export type Trigger = typeof Trigger.Type;
+
+/** The entity type a run is about, which is also the root of refs to it. */
+export const subjectType = (trigger: Trigger) =>
+  trigger.kind === "entity" ? trigger.entity : trigger.subject;
+
+export const ValueType = Schema.Literals(["text", "number", "boolean", "date", "datetime"]);
+export type ValueType = typeof ValueType.Type;
+
+/** Whether a value fits a field type. Dates are `YYYY-MM-DD`; datetimes are anything `Date.parse` reads. */
+export const valueMatches = (type: ValueType, value: unknown) => {
+  switch (type) {
+    case "text":
+      return typeof value === "string";
+    case "number":
+      return typeof value === "number" && Number.isFinite(value);
+    case "boolean":
+      return typeof value === "boolean";
+    case "date":
+      return (
+        typeof value === "string" &&
+        /^\d{4}-\d{2}-\d{2}$/.test(value) &&
+        !Number.isNaN(Date.parse(value))
+      );
+    case "datetime":
+      return typeof value === "string" && !Number.isNaN(Date.parse(value));
+  }
+};
+
+const FieldName = Identifier(/^[a-z][a-z0-9_]{0,39}$/, "Field names are snake_case identifiers");
+
+/** A field an agent fills in when its step asks for structured output. */
+export const OutputField = Schema.Struct({
+  name: FieldName,
+  type: ValueType,
+  description: Schema.optionalKey(NonBlank("A field description can't be blank", 300)),
+});
+export interface OutputField extends Schema.Schema.Type<typeof OutputField> {}
+
+/**
+ * An AI agent carries out the instruction. With `output`, it answers with those fields and the
+ * step records `{ output: { field: value } }`; otherwise it records `{ output: text }`.
+ */
+export const AgentStep = Schema.Struct({
+  id: StepId,
+  title: StepTitle,
+  kind: Schema.Literal("agent"),
+  instruction: NonBlank("An agent step needs an instruction", 4000),
+  output: Schema.optionalKey(
+    Schema.Struct({ fields: Schema.Array(OutputField).check(Schema.isMinLength(1)) }),
+  ),
+});
+export interface AgentStep extends Schema.Schema.Type<typeof AgentStep> {}
+
+const ActionInput = Schema.Union([
+  Schema.String.check(Schema.isMaxLength(4000)),
+  Schema.Array(Schema.String.check(Schema.isMaxLength(400))).check(Schema.isMaxLength(20)),
+]);
+export type ActionInput = typeof ActionInput.Type;
+
+/** Performs one operation of a connection, such as `slack.sendMessage`. */
+export const ActionStep = Schema.Struct({
+  id: StepId,
+  title: StepTitle,
+  kind: Schema.Literal("action"),
+  use: Identifier(/^[a-z]+\.[a-zA-Z]+$/, 'An action uses an operation such as "email.send"'),
+  with: Schema.Record(Identifier(/^[a-zA-Z]{1,40}$/, "Input names are identifiers"), ActionInput),
+});
+export interface ActionStep extends Schema.Schema.Type<typeof ActionStep> {}
+
+export const WaitForStep = Schema.Struct({
+  id: StepId,
+  title: StepTitle,
+  kind: Schema.Literal("wait"),
+  duration: Duration,
+});
+export interface WaitForStep extends Schema.Schema.Type<typeof WaitForStep> {}
+
+/** Waits until a date the run knows, shifted by `offset`. */
+export const WaitUntilStep = Schema.Struct({
+  id: StepId,
+  title: StepTitle,
+  kind: Schema.Literal("wait"),
+  until: Ref,
+  offset: Schema.optionalKey(Offset),
+});
+export interface WaitUntilStep extends Schema.Schema.Type<typeof WaitUntilStep> {}
 
 /** Runs every branch at the same time and continues once all of them finish. */
 export interface ParallelStep {
@@ -161,7 +323,7 @@ export interface IfStep {
 export const DecisionModel = Schema.Literals(["clef", "clef-flash", "jev"]);
 export type DecisionModel = typeof DecisionModel.Type;
 
-/** Asks a decision model to pick one option given the run state, then runs that option's steps. */
+/** Asks a decision model to pick one option given the run so far, then runs that option's steps. */
 export interface DecideStep {
   readonly id: string;
   readonly title: string;
@@ -176,30 +338,40 @@ export interface DecideStep {
 }
 
 export const HumanField = Schema.Struct({
-  name: Identifier(/^[a-z][a-z0-9_]{0,39}$/, "Field names are snake_case identifiers"),
+  name: FieldName,
   label: NonBlank("A field label is required", 120),
-  type: Schema.Literals(["text", "number", "boolean", "date"]),
+  type: ValueType,
+  /** A prefilled answer the person can keep or change, often a `{{ref}}` an agent proposed. */
+  default: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(400))),
 });
 export interface HumanField extends Schema.Schema.Type<typeof HumanField> {}
 
-/** Pauses the run until a person approves, rejects, or fills in a form, or `timeout` passes. */
+export const HumanResponseSpec = Schema.Union([
+  Schema.Literal("approval"),
+  Schema.Struct({ fields: Schema.Array(HumanField).check(Schema.isMinLength(1)) }),
+]);
+export type HumanResponseSpec = typeof HumanResponseSpec.Type;
+
+/**
+ * Pauses the run until a person approves, rejects, or fills in a form, or `timeout` passes.
+ * `assignee` is a ref to the person, such as `employee.manager`; `notify` also sends them the
+ * request over a connection.
+ */
 export const HumanStep = Schema.Struct({
   id: StepId,
   title: StepTitle,
   kind: Schema.Literal("human"),
   prompt: NonBlank("A human step needs a prompt", 4000),
-  assignee: Schema.optionalKey(NonBlank("An assignee can't be blank", 200)),
-  response: Schema.Union([
-    Schema.Literal("approval"),
-    Schema.Struct({ fields: Schema.Array(HumanField).check(Schema.isMinLength(1)) }),
-  ]),
+  assignee: Schema.optionalKey(Ref),
+  notify: Schema.optionalKey(Schema.Literals(["email", "slack"])),
+  response: HumanResponseSpec,
   timeout: Schema.optionalKey(Duration),
 });
 export interface HumanStep extends Schema.Schema.Type<typeof HumanStep> {}
 
 export type Step =
   | AgentStep
-  | WebhookStep
+  | ActionStep
   | WaitForStep
   | WaitUntilStep
   | ParallelStep
@@ -258,7 +430,7 @@ export const DecideStep: Schema.Codec<DecideStep> = Schema.Struct({
 
 export const Step: Schema.Codec<Step> = Schema.Union([
   AgentStep,
-  WebhookStep,
+  ActionStep,
   WaitForStep,
   WaitUntilStep,
   ParallelStep,
@@ -288,22 +460,49 @@ export const flattenSteps = (steps: ReadonlyArray<Step>): ReadonlyArray<Step> =>
 const depth = (steps: ReadonlyArray<Step>): number =>
   Math.max(0, ...steps.map((step) => 1 + Math.max(0, ...childSequences(step).map(depth))));
 
-const conditionRefs = (condition: Condition): ReadonlyArray<string> =>
-  "ref" in condition
-    ? [condition.ref]
-    : "all" in condition
-      ? condition.all.flatMap(conditionRefs)
-      : "any" in condition
-        ? condition.any.flatMap(conditionRefs)
-        : conditionRefs(condition.not);
+const actionInputText = (value: ActionInput): ReadonlyArray<string> =>
+  typeof value === "string" ? [value] : value;
 
-/** The state paths a step reads. */
-export const stepRefs = (step: Step): ReadonlyArray<string> =>
-  step.kind === "wait" && "until" in step
-    ? [step.until]
-    : step.kind === "if"
-      ? step.cases.flatMap((branch) => conditionRefs(branch.when))
-      : [];
+const humanFieldDefaults = (step: HumanStep) =>
+  step.response === "approval"
+    ? []
+    : step.response.fields.flatMap((field) => (field.default === undefined ? [] : [field.default]));
+
+/** The text of a step that may hold `{{ref}}` templates, not counting nested steps. */
+export const stepTemplates = (step: Step): ReadonlyArray<string> => {
+  switch (step.kind) {
+    case "agent":
+      return [step.title, step.instruction];
+    case "action":
+      return [step.title, ...Object.values(step.with).flatMap(actionInputText)];
+    case "decide":
+      return [step.title, step.question];
+    case "human":
+      return [step.title, step.prompt, ...humanFieldDefaults(step)];
+    default:
+      return [step.title];
+  }
+};
+
+/** Every ref a step reads itself, in templates and fields, not counting nested steps. */
+export const stepRefs = (step: Step): ReadonlyArray<string> => [
+  ...new Set([
+    ...stepTemplates(step).flatMap(templateRefs),
+    ...(step.kind === "wait" && "until" in step ? [step.until] : []),
+    ...(step.kind === "if" ? step.cases.flatMap((branch) => conditionRefs(branch.when)) : []),
+    ...(step.kind === "human" && step.assignee !== undefined ? [step.assignee] : []),
+  ]),
+];
+
+/** Every ref the workflow reads, in order of first use, the trigger's condition included. */
+export const workflowRefs = (workflow: Pick<Workflow, "trigger" | "steps">) => [
+  ...new Set([
+    ...(workflow.trigger.kind === "entity" && workflow.trigger.when !== undefined
+      ? conditionRefs(workflow.trigger.when)
+      : []),
+    ...flattenSteps(workflow.steps).flatMap(stepRefs),
+  ]),
+];
 
 const MAX_STEPS = 60;
 const MAX_DEPTH = 4;
@@ -313,17 +512,9 @@ const hasUniqueIds = (steps: ReadonlyArray<Step>) => {
   return new Set(all.map((step) => step.id)).size === all.length;
 };
 
-const refersToKnownSteps = (steps: ReadonlyArray<Step>) => {
-  const all = flattenSteps(steps);
-  const ids = new Set(all.map((step) => step.id));
-  return all
-    .flatMap(stepRefs)
-    .every((ref) => !ref.startsWith("steps.") || ids.has(ref.split(".")[1] ?? ""));
-};
-
 export const Workflow = Schema.Struct({
   name: NonBlank("A name is required (maximum 120 characters)", 120),
-  event: Schema.NullOr(Identifier(/^[a-zA-Z0-9_.-]{1,80}$/, "Event must be null or an identifier")),
+  trigger: Trigger,
   steps: Steps.check(
     between(1, 20, "A workflow needs 1–20 steps"),
     Schema.makeFilter((steps: ReadonlyArray<Step>) => flattenSteps(steps).length <= MAX_STEPS, {
@@ -333,9 +524,6 @@ export const Workflow = Schema.Struct({
       message: `Steps can nest at most ${MAX_DEPTH} levels deep`,
     }),
     Schema.makeFilter(hasUniqueIds, { message: "Step IDs must be unique identifiers" }),
-    Schema.makeFilter(refersToKnownSteps, {
-      message: "Every steps.<id> reference must name a step in the workflow",
-    }),
   ),
 });
 export interface Workflow extends Schema.Schema.Type<typeof Workflow> {}
@@ -373,25 +561,56 @@ export const AutomationSummary = Schema.Struct({
 });
 export interface AutomationSummary extends Schema.Schema.Type<typeof AutomationSummary> {}
 
-export const RunResult = Schema.Struct({ step: Schema.String, output: Schema.String });
-export interface RunResult extends Schema.Schema.Type<typeof RunResult> {}
+/** Where one step of a run stands. `waiting` is a step parked on a clock or a person. */
+export const RunStep = Schema.Struct({
+  status: Schema.Literals(["running", "waiting", "done"]),
+  record: Schema.optionalKey(Schema.Json),
+});
+export interface RunStep extends Schema.Schema.Type<typeof RunStep> {}
 
-export const RunStatus = Schema.Literals(["running", "completed", "failed"]);
+/** A human step's request, as the studio shows it to the person who answers. */
+export const HumanTask = Schema.Struct({
+  step: Schema.String,
+  token: Schema.String,
+  title: Schema.String,
+  prompt: Schema.String,
+  assignee: Schema.NullOr(Schema.Json),
+  response: HumanResponseSpec,
+  /** Prefilled answers, by field name, with their templates already filled in. */
+  defaults: Schema.Record(Schema.String, Schema.String),
+  /** The connection that also delivered the request. */
+  notify: Schema.optionalKey(Schema.Literals(["email", "slack"])),
+  status: Schema.Literals(["open", "closed"]),
+});
+export interface HumanTask extends Schema.Schema.Type<typeof HumanTask> {}
+
+export const RunStatus = Schema.Literals(["running", "waiting", "completed", "failed"]);
 export type RunStatus = typeof RunStatus.Type;
 
 /** A run as persisted in the automation's Durable Object storage. */
 export const Run = Schema.Struct({
   id: Schema.String,
   workflow: Workflow,
-  input: Schema.Unknown,
-  index: Schema.Int,
-  results: Schema.Array(RunResult),
+  subject: Schema.NullOr(Subject),
   status: RunStatus,
+  steps: Schema.Record(Schema.String, RunStep),
+  tasks: Schema.Array(HumanTask),
   error: Schema.optionalKey(Schema.String),
-  /** The pi conversation running the current agent step. */
+  startedAt: Schema.Finite,
+  /** The pi conversation the run's agent steps share. */
   conversation: Schema.optionalKey(Schema.Int),
 });
 export interface Run extends Schema.Schema.Type<typeof Run> {}
+
+/** A run as the studio lists it. */
+export const RunSummary = Schema.Struct({
+  id: Schema.String,
+  status: RunStatus,
+  startedAt: Schema.Finite,
+  subject: Schema.NullOr(Schema.String),
+  openTasks: Schema.Int,
+});
+export interface RunSummary extends Schema.Schema.Type<typeof RunSummary> {}
 
 const invalid = (error: Schema.SchemaError) => new InvalidWorkflow({ message: error.message });
 
@@ -406,122 +625,13 @@ export const decodeDraft = (text: string) =>
     Effect.mapError(invalid),
   );
 
-export interface GraphNode {
-  readonly id: string;
-  readonly title: string;
-  readonly kind: "trigger" | Step["kind"];
-}
-
-export interface GraphEdge {
-  readonly from: string;
-  readonly to: string;
-}
-
-export interface Graph {
-  readonly nodes: ReadonlyArray<GraphNode>;
-  readonly edges: ReadonlyArray<GraphEdge>;
-}
-
-export const graph = (workflow: Workflow): Graph => ({
-  nodes: [
-    {
-      id: "trigger",
-      title: workflow.event === null ? "Manual start" : `Event: ${workflow.event}`,
-      kind: "trigger",
-    },
-    ...workflow.steps.map(({ id, title, kind }) => ({ id, title, kind })),
-  ],
-  edges: workflow.steps.map((step, index) => ({
-    from: workflow.steps[index - 1]?.id ?? "trigger",
-    to: step.id,
-  })),
-});
-
-/**
- * Steps refer to values from the run input as `{{snake_case}}` variables. Splitting on a pattern
- * with one capture group puts every variable name at an odd index.
- */
-const variableSyntax = /\{\{\s*([a-z][a-z0-9_]{0,39})\s*\}\}/;
-
-export type TemplatePart =
-  | { readonly kind: "text"; readonly text: string }
-  | { readonly kind: "variable"; readonly name: string };
-
-export const templateParts = (text: string): ReadonlyArray<TemplatePart> =>
-  text
-    .split(variableSyntax)
-    .flatMap((part, index): ReadonlyArray<TemplatePart> =>
-      index % 2 === 1
-        ? [{ kind: "variable", name: part }]
-        : part
-          ? [{ kind: "text", text: part }]
-          : [],
-    );
-
-const stepText = (step: Step): ReadonlyArray<string> => {
-  switch (step.kind) {
-    case "agent":
-      return [step.title, step.instruction];
-    case "decide":
-      return [step.title, step.question];
-    case "human":
-      return [step.title, step.prompt, step.assignee ?? ""];
-    default:
-      return [step.title];
-  }
-};
-
-const inputField = (ref: string) => (ref.startsWith("input.") ? [ref.split(".")[1] ?? ""] : []);
-
-/** Every variable the workflow's steps use, in order of first use. */
-export const workflowVariables = (workflow: Pick<Workflow, "steps">): ReadonlyArray<string> => [
-  ...new Set(
-    flattenSteps(workflow.steps).flatMap((step) => [
-      ...stepText(step)
-        .flatMap(templateParts)
-        .flatMap((part) => (part.kind === "variable" ? [part.name] : [])),
-      ...stepRefs(step).flatMap(inputField),
-    ]),
-  ),
-];
-
-/** Fills each `{{variable}}` from the run input, leaving variables the input lacks as written. */
-export const renderTemplate = (text: string, input: unknown): string =>
-  templateParts(text)
-    .map((part) => {
-      if (part.kind === "text") {
-        return part.text;
-      }
-      const value = readPath(input, [part.name]);
-      return value === undefined || value === null
-        ? `{{${part.name}}}`
-        : typeof value === "string"
-          ? value
-          : JSON.stringify(value);
-    })
-    .join("");
-
-const readPath = (value: unknown, path: ReadonlyArray<string>): unknown =>
-  path.reduce<unknown>(
-    (current, key) =>
-      typeof current === "object" && current !== null
-        ? Object.getOwnPropertyDescriptor(current, key)?.value
-        : undefined,
-    value,
-  );
-
-/** What a run knows so far: its input, and what each finished step recorded under its ID. */
+/** What a run knows so far: its subject, and what each finished step recorded under its ID. */
 export const RunState = Schema.Struct({
-  input: Schema.Json,
+  runId: Schema.String,
+  subject: Schema.NullOr(Subject),
   steps: Schema.Record(Schema.String, Schema.Json),
 });
 export interface RunState extends Schema.Schema.Type<typeof RunState> {}
-
-/** Reads a `Ref` such as `input.start_date` or `steps.check-dates.choice`. */
-export const lookup = (state: RunState, ref: string): unknown => {
-  const [root, ...path] = ref.split(".");
-  return readPath(root === "input" ? state.input : state.steps, path);
-};
 
 const sameValue = (left: unknown, right: unknown) =>
   left === right ||
@@ -539,18 +649,25 @@ const contains = (container: unknown, value: unknown) =>
     ? typeof value === "string" && container.includes(value)
     : Array.isArray(container) && container.some((item) => sameValue(item, value));
 
+const dateMillis = (value: unknown, now: number) =>
+  value === "now" ? now : typeof value === "string" ? Date.parse(value) : Number.NaN;
+
 /** Evaluates a condition. Comparisons between mismatched types are false. */
-export const holds = (condition: Condition, state: RunState): boolean => {
+export const holds = (
+  condition: Condition,
+  read: (ref: string) => unknown,
+  now = Number.NaN,
+): boolean => {
   if ("all" in condition) {
-    return condition.all.every((inner) => holds(inner, state));
+    return condition.all.every((inner) => holds(inner, read, now));
   }
   if ("any" in condition) {
-    return condition.any.some((inner) => holds(inner, state));
+    return condition.any.some((inner) => holds(inner, read, now));
   }
   if ("not" in condition) {
-    return !holds(condition.not, state);
+    return !holds(condition.not, read, now);
   }
-  const actual = lookup(state, condition.ref);
+  const actual = read(condition.ref);
   if (condition.op === "exists") {
     return actual !== undefined && actual !== null;
   }
@@ -565,5 +682,9 @@ export const holds = (condition: Condition, state: RunState): boolean => {
       return compare(actual, condition.value) < 0;
     case "contains":
       return contains(actual, condition.value);
+    case "before":
+      return dateMillis(actual, now) < dateMillis(condition.value, now);
+    case "after":
+      return dateMillis(actual, now) > dateMillis(condition.value, now);
   }
 };

@@ -5,13 +5,20 @@ A single-tenant prototype on Cloudflare: you design sequential automations in a 
 ## Layout
 
 - `alchemy.run.ts`: the Alchemy 2 Stack. It declares the `Studio` Foldkit website, which carries Cloudflare Access and the test service token, and exports `StudioEnv`.
-- `src/api.ts`: the Effect-native `Api` Worker. It holds the `HttpRouter` routes under `/api/automations` and has no public URL (`workersDev: false`).
-- `src/automation.ts`: the `Automation` Durable Object. It stores the draft and saved workflow and the chat transcript, keeps the runs, and uses `Alchemy.makeCallback` both to answer chat messages (`designReply`) and to drive step execution (`advance`). `chat` only stores the message as `pendingChat` and schedules the reply, so a reload mid-answer loses nothing; the UI polls `GET /api/automations/:id` until `pendingChat` clears.
-- `src/design.ts`: the designer agent's instructions and `designDraft`, which turns its answer into a draft. A reply that doesn't decode gets one retry with the decoding error.
-- `src/automation-index.ts`: the `AutomationsDatabase` D1 database and its queries. Cloudflare can't enumerate Durable Object names, so each automation is recorded in the `automations` table when the agent writes a draft (by `Automation`), on save, and when an existing automation is opened (by `Api`). It backs `GET /api/automations`. Each automation's data stays in its Durable Object; the table only lists them.
+- `src/api.ts`: the Effect-native `Api` Worker. It holds the `HttpRouter` routes under `/api/automations` and `/api/entities`, and has no public URL (`workersDev: false`). Writing an entity asks every automation subscribed to its type whether to start a run.
+- `src/automation.ts`: the `Automation` Durable Object. It stores the draft and saved workflow and the chat transcript, and runs saved workflows with `RunAutomation` on the durable engine. It uses `Alchemy.makeCallback` to answer chat messages (`designReply`), replay runs (`advance`), and fire durable clocks (`clock`). `chat` only stores the message as `pendingChat` and schedules the reply, so a reload mid-answer loses nothing; the UI polls `GET /api/automations/:id` until `pendingChat` clears.
+- `src/design.ts`: the designer agent's instructions, generated from the catalog, and `designDraft`, which turns its answer into a draft. A reply that doesn't decode or check against the catalog gets one retry with the problems.
+- `src/workflow.ts`: the pure DSL. It holds the Schema models (`Workflow`, `Trigger`, the recursive `Step` tree, `Run`), templates and refs, and condition evaluation. `docs/workflow-dsl.md` is its reference; keep the two in step.
+- `src/entities.ts`: the pure entity model: entity types, records, checking data against a type, and reading a ref through `ref` fields.
+- `src/connections.ts`: the registry of connections and their operations. It is pure, so the designer, the checker, and the UI all read it. `src/connection-runner.ts` executes the operations.
+- `src/catalog.ts`: checks a workflow against the entity types and connections (refs, step ordering, operation inputs), and describes them to the designer.
+- `src/interpreter.ts`: `RunAutomation`, an `effect/workflow` Workflow whose payload is a saved workflow and its subject. It walks the step tree with Activities, DurableClocks, and DurableDeferreds, and reaches the outside world only through the `StepRunner` service. Code outside an Activity reruns on every replay, so keep it deterministic.
+- `src/durable-engine.ts`: a replaying `WorkflowEngine` that journals into a key-value store, the Automation object's storage. It never keeps a run in memory between events; the host replays on `wake` and fires clocks on `wakeAt`.
+- `src/agent-step.ts`: the prompts for agent and decide steps, and how their answers become records.
+- `src/automation-index.ts`: the `AutomationsDatabase` D1 database and the `automations` list. Cloudflare can't enumerate Durable Object names, so each automation is recorded there when the agent writes a draft (by `Automation`), on save, and when an existing automation is opened (by `Api`). It backs `GET /api/automations`.
+- `src/entity-store.ts`: the `EntityStore` service, which keeps entity types, entities, and which automations subscribe to each type. Saving an automation subscribes it to the type its trigger watches. Its operations are built over a small `EntityStorage` interface, so every implementation merges and validates alike; `layerMemory` is the in-memory one for tests.
+- `src/entity-store-d1.ts`: `EntityStoreD1`, the store's D1 layer, in the same database. Yield it in the outer Effect (it binds D1) and provide the layer it returns per request or per instance (it needs a `RuntimeContext`). Code that reads or writes entities depends on `EntityStore`, never on D1.
 - `migrations/`: D1 migrations, applied in numeric order on deploy and under `alchemy dev`.
-- `src/workflow.ts`: the pure domain code. It holds the Schema models (`Workflow`, the recursive `Step` tree, `Run`), the decoders, condition evaluation, and `graph`.
-- `src/interpreter.ts`: `RunAutomation`, an `effect/workflow` Workflow whose payload is a saved workflow. It walks the step tree with Activities, DurableClocks, and DurableDeferreds, and reaches the outside world only through the `StepRunner` service. Code outside an Activity reruns on every replay, so keep it deterministic. The `Automation` object doesn't use it yet; until it does, runs reject anything but flat agent and webhook steps.
 - `src/pi.ts` and `src/pi-storage.ts`: pi-durable and pi-ai running inside the Durable Object, with pi's tables stored in the object's SQLite.
 - `src/edge.ts`: the Studio Worker's async entry. It only forwards `/api/*` to `Api`. Keep logic out of it.
 - `src/ui/`: the Foldkit browser app. `public/_headers` sets the CSP for static assets.
@@ -31,11 +38,13 @@ The UI keeps the open automation in the URL (`/?automation=<id>`). When a user s
 
 ```sh
 curl -s "$STUDIO_URL/api/automations"                    # every automation with a draft
-curl -s "$STUDIO_URL/api/automations/<id>"               # draft, saved, graph, conversation
-curl -s "$STUDIO_URL/api/automations/<id>/runs/<runId>"  # one run; the UI shows the run ID
+curl -s "$STUDIO_URL/api/automations/<id>"               # draft, saved, conversation, recent runs
+curl -s "$STUDIO_URL/api/automations/<id>/runs/<runId>"  # one run: steps, records, tasks; the UI shows the run ID
+curl -s "$STUDIO_URL/api/entities/types"                 # entity types
+curl -s "$STUDIO_URL/api/entities/<type>"                # a type's entities
 ```
 
-Stick to these `GET` routes unless the user asks for more. `chat` calls Workers AI and replaces the draft, and `save` and `start` change what runs.
+Stick to these `GET` routes unless the user asks for more. `chat` calls Workers AI and replaces the draft, `save` and `start` change what runs, answering a task moves a run on, and `PUT /api/entities/...` can start runs.
 
 ## Effect
 
@@ -58,17 +67,19 @@ Stick to these `GET` routes unless the user asks for more. `chat` calls Workers 
   - The inner Effect or handler runs per instance or per request. Storage, the AI binding's `raw`, and callbacks are only usable there.
 - Plan time imports `alchemy.run.ts` and everything it reaches under Bun. Never import a module that loads `cloudflare:*` at top level. This is why `src/pi-storage.ts` replaces `agents/harness/pi`.
 - `Alchemy.makeCallback` delivers at least once. Keep handlers idempotent:
-  - Agent steps reuse the pi `requestId` `${runId}:${stepId}`, and their conversation id is saved on the run before submitting.
+  - A replay only reruns what the engine's journal lacks. Agent steps use the pi `requestId` `agent:<key>`, where the key is the Activity's idempotency key including the attempt, so a retry asks again but a replay doesn't. Action steps pass a key that stays the same across retries to the operation, and `http.post` sends it as `Idempotency-Key`.
   - Chat replies reuse the pi `requestId` `chat:${chatId}`, and their decode retry `chat:${chatId}:retry`. Only the delivery that still finds that message pending writes the exchange.
-  - Callback names (`advance`, `designReply`) and payload shapes are persisted contracts. Keep them compatible.
-- Storage keys are persisted contracts too: `draft`, `saved`, `pendingChat`, `run:<id>`, `exchange:<000000>`, and `exchangeCount` in `Automation`.
+  - Callback names and payloads are persisted contracts. Keep them compatible: `designReply` `{ automationId, chatId }`, `advance` `{ executionId }` (jobs from before entity-based triggers carried `{ runId }` and are ignored), and `clock` `{ executionId, deferredName }`.
+- Storage keys are persisted contracts too: `draft`, `saved`, `pendingChat`, `run:<id>`, `execution:<executionId>` (its run ID), `exchange:<000000>`, and `exchangeCount` in `Automation`, plus the engine's journal under `wf:<executionId>:` (see `src/durable-engine.ts`). Workflows and runs from before entity-based triggers don't decode; reading one drops it.
+- Activity and deferred names in `src/interpreter.ts` (`<id>`, `<id>/refs`, `<id>/now`, `<id>/request`, `<id>/outcome`, `<id>/timeout`) are journal keys for runs in flight. Renaming one makes a waiting run redo that step.
 - Never edit an applied D1 migration. Add the next numbered file in `migrations/` instead; Alchemy tracks applied files by hash in `__alchemy_migrations`.
 
 ## Invariants
 
-- The Schema filters in `src/workflow.ts` are the SSRF boundary. Webhooks must be HTTPS, carry no credentials, and target no private or loopback host. Don't loosen them without tests.
-- Runs always execute the saved snapshot, never the draft. Workflows must not contain secrets.
-- Webhook POSTs don't forward trace headers.
+- `isPublicHttpsUrl` in `src/workflow.ts` is the SSRF boundary. `http.post` URLs must be literal (no templates), HTTPS, without credentials, and target no private or loopback host. The catalog checks them when a workflow is checked, and the connection runner checks again before sending. Don't loosen either without tests.
+- Runs always execute the saved snapshot, never the draft. Workflows must not contain secrets; connections will hold credentials.
+- `http.post` doesn't forward trace headers.
+- Email, Slack, and Calendar are simulated until they have credentials: they contact nothing and record `simulated: true`. Say so wherever results are shown.
 - `/api` keeps a 32 KB request-body limit and returns `{ "error": string }` on failure. The UI relies on that shape.
 - `Api` stays private. Only the Access-protected Studio Worker can reach it.
 

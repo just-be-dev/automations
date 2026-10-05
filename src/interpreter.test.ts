@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
 import { TestClock } from "effect/testing";
 import { WorkflowEngine } from "effect/workflow";
+import { makeDurableEngine, type EngineStore } from "./durable-engine.ts";
 import {
   RunAutomation,
   RunAutomationLive,
@@ -14,8 +15,10 @@ import {
   type Decision,
   type HumanRequest,
   type HumanResponse,
+  type StepEvent,
 } from "./interpreter.ts";
-import type { Step, Workflow } from "./workflow.ts";
+import { readJsonPath, type Subject } from "./entities.ts";
+import type { RunState, Step, Workflow } from "./workflow.ts";
 
 const agent = (id: string, instruction = `Do ${id}`): Step => ({
   id,
@@ -26,52 +29,98 @@ const agent = (id: string, instruction = `Do ${id}`): Step => ({
 
 const workflow = (...steps: ReadonlyArray<Step>): Workflow => ({
   name: "Test",
-  event: null,
+  trigger: { kind: "entity", entity: "employee" },
   steps,
 });
 
-/** A fake StepRunner that records what ran and lets each test script decisions. */
+const ada: Subject = {
+  type: "employee",
+  id: "ada",
+  data: { name: "Ada", manager: "grace", start_date: "2026-10-12", priority: "high" },
+};
+
+/** Resolves refs the simple way: the subject's own fields and step records, no `ref` fields. */
+const readRef = (state: RunState, ref: string): Schema.Json => {
+  const [root, ...path] = ref.split(".");
+  return root === "steps"
+    ? readJsonPath(state.steps, path)
+    : readJsonPath(state.subject?.data ?? null, path);
+};
+
+/**
+ * A durable engine over an in-memory store, plus a fake StepRunner. Values are structured-cloned
+ * on the way in and out, like Durable Object storage. `drain` plays the host: it fires due clocks
+ * and replays woken executions until nothing is left to do.
+ */
 const makeHarness = (decision: Decision = { choice: "a", confidence: 1, probabilities: {} }) => {
   const calls: Array<string> = [];
   const requests: Array<HumanRequest> = [];
+  const events: Array<StepEvent> = [];
+  const data = new Map<string, unknown>();
+  const woken = new Set<string>();
+  const clocks: Array<{ executionId: string; deferredName: string; at: number }> = [];
+  const store: EngineStore = {
+    get: (key) => Effect.sync(() => structuredClone(data.get(key))),
+    put: (key, value) => Effect.sync(() => void data.set(key, structuredClone(value))),
+    wake: (executionId) => Effect.sync(() => void woken.add(executionId)),
+    wakeAt: (clock) => Effect.sync(() => void clocks.push(clock)),
+  };
+  const durable = makeDurableEngine(store);
   const runner = StepRunner.of({
-    agent: (step, state) =>
+    resolve: (refs, state) =>
+      Effect.succeed(Object.fromEntries(refs.map((ref) => [ref, readRef(state, ref)]))),
+    agent: ({ step, instruction, state }) =>
       Effect.sync(() => {
         calls.push(step.id);
-        return `${step.id} saw ${Object.keys(state.steps).join(",") || "nothing"}`;
+        return `${instruction} after ${Object.keys(state.steps).join(",") || "nothing"}`;
       }),
-    webhook: (step) => Effect.sync(() => (calls.push(step.id), `${step.id} ok`)),
-    decide: (step) => Effect.sync(() => (calls.push(step.id), decision)),
+    action: ({ step, inputs }) => Effect.sync(() => (calls.push(step.id), { sent: inputs })),
+    decide: ({ step }) => Effect.sync(() => (calls.push(step.id), decision)),
     requestHuman: (request) => Effect.sync(() => void requests.push(request)),
+    report: (event) => Effect.sync(() => void events.push(event)),
   });
   const layer = RunAutomationLive.pipe(
     Layer.provide(Layer.succeed(StepRunner, runner)),
-    Layer.provideMerge(WorkflowEngine.layerMemory),
+    Layer.provideMerge(Layer.succeed(WorkflowEngine.WorkflowEngine, durable.engine)),
     Layer.provideMerge(TestClock.layer()),
   );
-  return { calls, requests, layer };
+  const drain = Effect.gen(function* () {
+    for (;;) {
+      const now = yield* Clock.currentTimeMillis;
+      const due = clocks.filter((clock) => clock.at <= now);
+      for (const clock of due) {
+        clocks.splice(clocks.indexOf(clock), 1);
+        yield* durable.fireClock(RunAutomation, clock.executionId, clock.deferredName);
+      }
+      const [next] = woken;
+      if (next === undefined) {
+        return;
+      }
+      woken.delete(next);
+      yield* durable.replay(RunAutomation, next);
+    }
+  });
+  return { calls, requests, events, layer, drain, data };
 };
 
-/** Lets forked workflow fibers run until they finish or park. */
-const settle = Effect.repeat(Effect.yieldNow, { times: 100 });
+type Harness = ReturnType<typeof makeHarness>;
 
-const start = (steps: Workflow, input: Schema.Json = {}) =>
+const start = (harness: Harness, steps: Workflow, subject: Subject | null = ada) =>
   Effect.gen(function* () {
     const executionId = yield* RunAutomation.execute(
-      { runId: "run-1", workflow: steps, input },
+      { runId: "run-1", workflow: steps, subject },
       { discard: true },
     );
-    yield* settle;
+    yield* harness.drain;
     return executionId;
   });
 
 const outcome = (executionId: string) =>
   RunAutomation.poll(executionId).pipe(
-    Effect.map(
-      Option.match({
-        onNone: () => "missing" as const,
-        onSome: (result) => (result._tag === "Complete" ? result.exit : ("suspended" as const)),
-      }),
+    Effect.map((result) =>
+      result._tag === "None" || result.value._tag === "Suspended"
+        ? ("suspended" as const)
+        : result.value.exit,
     ),
   );
 
@@ -85,34 +134,34 @@ const finalSteps = (executionId: string) =>
     }),
   );
 
-const respond = (request: HumanRequest | undefined, response: HumanResponse) =>
+const respond = (harness: Harness, request: HumanRequest | undefined, response: HumanResponse) =>
   Effect.gen(function* () {
     if (request === undefined) {
       throw new Error("No human request was made");
     }
     yield* respondToHuman(request.token, response);
-    yield* settle;
+    yield* harness.drain;
   });
 
 const runTest = <A, E>(
-  harness: ReturnType<typeof makeHarness>,
-  effect: Effect.Effect<A, E, RunAutomationServices>,
+  harness: Harness,
+  effect: Effect.Effect<A, E, WorkflowEngine.WorkflowEngine | TestClock.TestClock>,
 ) => Effect.runPromise(effect.pipe(Effect.provide(harness.layer)));
 
-type RunAutomationServices = WorkflowEngine.WorkflowEngine | TestClock.TestClock;
-
 describe("RunAutomation", () => {
-  test("runs a flat workflow in order, recording each output", async () => {
+  test("runs steps in order, filling templates from the subject", async () => {
     const harness = makeHarness();
     const steps = await runTest(
       harness,
       Effect.flatMap(
         start(
-          workflow(agent("summarize"), {
+          harness,
+          workflow(agent("summarize", "Welcome {{employee.name}}"), {
             id: "notify",
             title: "Notify",
-            kind: "webhook",
-            url: "https://example.com/hook",
+            kind: "action",
+            use: "slack.sendMessage",
+            with: { to: "{{employee.manager}}", text: "{{steps.summarize.output}}" },
           }),
         ),
         finalSteps,
@@ -120,9 +169,32 @@ describe("RunAutomation", () => {
     );
     expect(harness.calls).toEqual(["summarize", "notify"]);
     expect(steps).toEqual({
-      summarize: { output: "summarize saw nothing" },
-      notify: { output: "notify ok" },
+      summarize: { output: "Welcome Ada after nothing" },
+      notify: { sent: { to: "grace", text: "Welcome Ada after nothing" } },
     });
+  });
+
+  test("a replay reuses recorded results instead of running steps again", async () => {
+    const harness = makeHarness();
+    await runTest(
+      harness,
+      Effect.gen(function* () {
+        const executionId = yield* start(
+          harness,
+          workflow(agent("draft"), {
+            id: "pause",
+            title: "Pause",
+            kind: "wait",
+            duration: "1 day",
+          }),
+        );
+        expect(yield* outcome(executionId)).toBe("suspended");
+        yield* TestClock.adjust("1 day");
+        yield* harness.drain;
+        expect(Exit.isExit(yield* outcome(executionId))).toBe(true);
+      }),
+    );
+    expect(harness.calls).toEqual(["draft"]);
   });
 
   test("runs parallel branches and gives later steps every branch's results", async () => {
@@ -131,6 +203,7 @@ describe("RunAutomation", () => {
       harness,
       Effect.flatMap(
         start(
+          harness,
           workflow(
             {
               id: "prep",
@@ -146,7 +219,7 @@ describe("RunAutomation", () => {
     );
     expect(harness.calls.toSorted()).toEqual(["brief-buddy", "buddy", "laptop", "report"]);
     expect(harness.calls.at(-1)).toBe("report");
-    expect(steps["report"]).toEqual({ output: "report saw laptop,buddy,brief-buddy" });
+    expect(steps["report"]).toEqual({ output: "Do report after laptop,buddy,brief-buddy" });
   });
 
   test("an if step runs the first matching case, or otherwise", async () => {
@@ -155,26 +228,50 @@ describe("RunAutomation", () => {
       title: "Triage",
       kind: "if",
       cases: [
-        { when: { ref: "input.priority", op: "equals", value: "high" }, steps: [agent("page")] },
+        {
+          when: { ref: "employee.priority", op: "equals", value: "high" },
+          steps: [agent("page")],
+        },
       ],
       otherwise: [agent("queue")],
     });
 
     const high = makeHarness();
-    const highSteps = await runTest(
-      high,
-      Effect.flatMap(start(triage, { priority: "high" }), finalSteps),
-    );
+    const highSteps = await runTest(high, Effect.flatMap(start(high, triage), finalSteps));
     expect(high.calls).toEqual(["page"]);
     expect(highSteps["triage"]).toEqual({ matched: 0 });
 
     const low = makeHarness();
-    const lowSteps = await runTest(
-      low,
-      Effect.flatMap(start(triage, { priority: "low" }), finalSteps),
-    );
+    const lowSubject = { ...ada, data: { ...ada.data, priority: "low" } };
+    const lowSteps = await runTest(low, Effect.flatMap(start(low, triage, lowSubject), finalSteps));
     expect(low.calls).toEqual(["queue"]);
     expect(lowSteps["triage"]).toEqual({ matched: null });
+  });
+
+  test("an if step compares dates with now", async () => {
+    const harness = makeHarness();
+    await runTest(
+      harness,
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse("2026-10-01T00:00:00Z"));
+        const executionId = yield* start(
+          harness,
+          workflow({
+            id: "upcoming",
+            title: "Upcoming?",
+            kind: "if",
+            cases: [
+              {
+                when: { ref: "employee.start_date", op: "after", value: "now" },
+                steps: [agent("prepare")],
+              },
+            ],
+          }),
+        );
+        yield* finalSteps(executionId);
+      }),
+    );
+    expect(harness.calls).toEqual(["prepare"]);
   });
 
   const routing = workflow({
@@ -192,14 +289,14 @@ describe("RunAutomation", () => {
   test("a decide step records the decision and runs the chosen option", async () => {
     const decision = { choice: "escalate", confidence: 0.9, probabilities: { escalate: 0.9 } };
     const harness = makeHarness(decision);
-    const steps = await runTest(harness, Effect.flatMap(start(routing), finalSteps));
+    const steps = await runTest(harness, Effect.flatMap(start(harness, routing), finalSteps));
     expect(harness.calls).toEqual(["route", "page"]);
     expect(steps["route"]).toEqual(decision);
   });
 
   test("a decision for an unknown option fails the run", async () => {
     const harness = makeHarness({ choice: "shrug", confidence: 1, probabilities: {} });
-    const result = await runTest(harness, Effect.flatMap(start(routing), outcome));
+    const result = await runTest(harness, Effect.flatMap(start(harness, routing), outcome));
     expect(Exit.isExit(result) && Exit.isFailure(result)).toBe(true);
     expect(harness.calls).toEqual(["route"]);
   });
@@ -210,6 +307,7 @@ describe("RunAutomation", () => {
       harness,
       Effect.gen(function* () {
         const executionId = yield* start(
+          harness,
           workflow(
             { id: "pause", title: "Pause", kind: "wait", duration: "3 days" },
             agent("after"),
@@ -217,84 +315,103 @@ describe("RunAutomation", () => {
         );
         expect(yield* outcome(executionId)).toBe("suspended");
         yield* TestClock.adjust("2 days");
-        yield* settle;
+        yield* harness.drain;
         expect(harness.calls).toEqual([]);
         yield* TestClock.adjust("1 day");
-        yield* settle;
+        yield* harness.drain;
         expect(harness.calls).toEqual(["after"]);
       }),
     );
+    expect(harness.events).toContainEqual({ runId: "run-1", step: "pause", status: "waiting" });
   });
 
-  test("a wait-until step waits for a date from the input, shifted by its offset", async () => {
+  test("a wait-until step waits for a date on the subject, shifted by its offset", async () => {
     const harness = makeHarness();
     await runTest(
       harness,
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse("2026-10-01T00:00:00Z"));
         const executionId = yield* start(
+          harness,
           workflow(
             {
               id: "week-before",
               title: "One week out",
               kind: "wait",
-              until: "input.start_date",
+              until: "employee.start_date",
               offset: "-7 days",
             },
             agent("welcome"),
           ),
-          { start_date: "2026-10-12T00:00:00Z" },
         );
         yield* TestClock.adjust("3 days");
-        yield* settle;
+        yield* harness.drain;
         expect(yield* outcome(executionId)).toBe("suspended");
         yield* TestClock.adjust("1 day");
-        yield* settle;
+        yield* harness.drain;
         expect(harness.calls).toEqual(["welcome"]);
       }),
     );
   });
 
-  test("a human step parks the run until someone responds", async () => {
+  test("a human step parks the run until its assignee responds", async () => {
     const harness = makeHarness();
     const steps = await runTest(
       harness,
       Effect.gen(function* () {
         const executionId = yield* start(
+          harness,
           workflow(
-            agent("draft"),
+            agent("propose"),
             {
-              id: "approve",
-              title: "Approve",
+              id: "confirm",
+              title: "Confirm",
               kind: "human",
-              prompt: "Approve the welcome note for {{new_hire}}?",
-              assignee: "{{manager}}",
-              response: "approval",
+              prompt: "Is this time good for {{employee.name}}?",
+              assignee: "employee.manager",
+              response: {
+                fields: [
+                  {
+                    name: "start",
+                    label: "Start",
+                    type: "datetime",
+                    default: "{{steps.propose.output}}",
+                  },
+                ],
+              },
             },
             {
-              id: "check",
-              title: "Check",
-              kind: "if",
-              cases: [
-                {
-                  when: { ref: "steps.approve.approved", op: "equals", value: true },
-                  steps: [agent("send")],
-                },
-              ],
+              id: "book",
+              title: "Book",
+              kind: "action",
+              use: "calendar.createEvent",
+              with: { start: "{{steps.confirm.values.start}}" },
             },
           ),
-          { new_hire: "Ada", manager: "grace@example.com" },
         );
         expect(yield* outcome(executionId)).toBe("suspended");
-        expect(harness.requests.map(({ prompt, assignee }) => ({ prompt, assignee }))).toEqual([
-          { prompt: "Approve the welcome note for Ada?", assignee: "grace@example.com" },
+        expect(
+          harness.requests.map(({ prompt, assignee, defaults }) => ({
+            prompt,
+            assignee,
+            defaults,
+          })),
+        ).toEqual([
+          {
+            prompt: "Is this time good for Ada?",
+            assignee: "grace",
+            defaults: { start: "Do propose after nothing" },
+          },
         ]);
-        yield* respond(harness.requests[0], { approved: true, respondedBy: "grace" });
+        yield* respond(harness, harness.requests[0], {
+          values: { start: "2026-10-13T10:00:00Z" },
+          respondedBy: "grace",
+        });
         return yield* finalSteps(executionId);
       }),
     );
-    expect(harness.calls).toEqual(["draft", "send"]);
-    expect(steps["approve"]).toEqual({ approved: true, respondedBy: "grace", timedOut: false });
+    expect(harness.calls).toEqual(["propose", "book"]);
+    expect(steps["book"]).toEqual({ sent: { start: "2026-10-13T10:00:00Z" } });
   });
 
   test("a human step with a timeout records that nobody answered", async () => {
@@ -303,20 +420,59 @@ describe("RunAutomation", () => {
       harness,
       Effect.gen(function* () {
         const executionId = yield* start(
+          harness,
           workflow({
             id: "confirm",
             title: "Confirm",
             kind: "human",
-            prompt: "Confirm the start date",
-            response: { fields: [{ name: "start_date", label: "Start date", type: "date" }] },
+            prompt: "Did you greet {{employee.name}}?",
+            response: "approval",
             timeout: "2 days",
           }),
         );
         yield* TestClock.adjust("2 days");
-        yield* settle;
+        yield* harness.drain;
         return yield* finalSteps(executionId);
       }),
     );
     expect(steps["confirm"]).toEqual({ timedOut: true });
+  });
+
+  test("a form that times out keeps its prefilled defaults", async () => {
+    const harness = makeHarness();
+    const steps = await runTest(
+      harness,
+      Effect.gen(function* () {
+        const executionId = yield* start(
+          harness,
+          workflow({
+            id: "confirm",
+            title: "Confirm",
+            kind: "human",
+            prompt: "Keep the start date?",
+            response: {
+              fields: [
+                { name: "start", label: "Start", type: "date", default: "{{employee.start_date}}" },
+              ],
+            },
+            timeout: "1 day",
+          }),
+        );
+        yield* TestClock.adjust("1 day");
+        yield* harness.drain;
+        return yield* finalSteps(executionId);
+      }),
+    );
+    expect(steps["confirm"]).toEqual({ timedOut: true, values: { start: "2026-10-12" } });
+  });
+
+  test("journals the payload, each Activity result, and the final result", async () => {
+    const harness = makeHarness();
+    const executionId = await runTest(harness, start(harness, workflow(agent("one"))));
+    expect([...harness.data.keys()].toSorted()).toEqual([
+      `wf:${executionId}:activity:one:1`,
+      `wf:${executionId}:payload`,
+      `wf:${executionId}:result`,
+    ]);
   });
 });

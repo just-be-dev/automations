@@ -1,25 +1,52 @@
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
+import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/http/FetchHttpClient";
-import * as HttpClient from "effect/http/HttpClient";
-import * as HttpClientRequest from "effect/http/HttpClientRequest";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
+import { DurableDeferred, WorkflowEngine } from "effect/workflow";
+import { agentOutput, agentPrompt, decidePrompt, decision } from "./agent-step.ts";
 import { openAutomationIndex } from "./automation-index.ts";
+import { checkWorkflow } from "./catalog.ts";
+import { runAction } from "./connection-runner.ts";
 import { designDraft } from "./design.ts";
+import { makeDurableEngine, type DurableEngine } from "./durable-engine.ts";
+import {
+  HumanResponse,
+  respondToHuman,
+  RunAutomation,
+  RunAutomationLive,
+  StepFailed,
+  StepRunner,
+  type HumanRequest,
+  type StepEvent,
+} from "./interpreter.ts";
+import { EntityStore } from "./entity-store.ts";
+import { EntityStoreD1 } from "./entity-store-d1.ts";
+import {
+  changedFields,
+  readRef,
+  type EntityData,
+  type EntityType,
+  type Subject,
+} from "./entities.ts";
 import { openPiAgent } from "./pi.ts";
 import {
+  conditionRefs,
   Exchange,
-  flattenSteps,
-  graph,
+  holds,
   PendingChat,
   Run,
+  subjectType,
+  valueMatches,
   Workflow,
-  type AgentStep,
-  type Step,
-  type WebhookStep,
+  type HumanTask,
+  type RunState,
+  type RunSummary,
 } from "./workflow.ts";
 
 const MODEL = "@cf/moonshotai/kimi-k2.7-code";
@@ -28,14 +55,19 @@ export class AutomationError extends Schema.TaggedError<AutomationError>()("Auto
   message: Schema.String,
 }) {}
 
-// Storage holds only values this object wrote, so a decoding failure is a defect.
-const StoredWorkflow = Schema.UndefinedOr(Workflow);
-const decodeStoredWorkflow = (value: unknown) =>
-  Schema.decodeUnknownEffect(StoredWorkflow)(value).pipe(Effect.orDie);
-const StoredRun = Schema.UndefinedOr(Run);
-const decodeStoredRun = (value: unknown) =>
-  Schema.decodeUnknownEffect(StoredRun)(value).pipe(Effect.orDie);
+// NOTE: workflows and runs written before triggers were entity-based don't decode any more. They were
+// discarded on purpose, so reading one drops it instead of failing.
+const decodeOrDrop =
+  <A, I>(schema: Schema.Codec<A, I>) =>
+  (value: unknown) =>
+    value === undefined
+      ? Effect.succeed(undefined)
+      : Schema.decodeUnknownEffect(schema)(value).pipe(
+          Effect.map((decoded): A | undefined => decoded),
+          Effect.orElseSucceed(() => undefined),
+        );
 
+// Storage holds only values this object wrote, so a decoding failure is a defect.
 const StoredExchangeCount = Schema.UndefinedOr(Schema.Int);
 const decodeStoredExchangeCount = (value: unknown) =>
   Schema.decodeUnknownEffect(StoredExchangeCount)(value).pipe(Effect.orDie);
@@ -44,8 +76,14 @@ const decodeStoredPendingChat = (value: unknown) =>
   Schema.decodeUnknownEffect(StoredPendingChat)(value).pipe(Effect.orDie);
 const decodeStoredExchanges = (values: ReadonlyArray<unknown>) =>
   Schema.decodeUnknownEffect(Schema.Array(Exchange))(values).pipe(Effect.orDie);
+const StoredRunId = Schema.UndefinedOr(Schema.String);
+const decodeStoredRunId = (value: unknown) =>
+  Schema.decodeUnknownEffect(StoredRunId)(value).pipe(Effect.orDie);
+const decodeToken = Schema.decodeUnknownEffect(DurableDeferred.Token);
 
-const runKey = (id: string) => `run:${id}`;
+const runPrefix = "run:";
+const runKey = (id: string) => `${runPrefix}${id}`;
+const executionKey = (executionId: string) => `execution:${executionId}`;
 // Each exchange gets its own key because a single storage value is capped at 128 KiB. The padding
 // keeps `list` returning them in order.
 const exchangePrefix = "exchange:";
@@ -53,32 +91,88 @@ const exchangeKey = (index: number) => `${exchangePrefix}${String(index).padStar
 
 const failureMessage = (error: { readonly message: string }) => error.message;
 
+const causeMessage = (cause: Cause.Cause<unknown>) => {
+  const failure = Cause.squash(cause);
+  return failure instanceof StepFailed
+    ? `Step ${failure.step} failed: ${failure.message}`
+    : Cause.pretty(cause);
+};
+
 /** Payload of the `designReply` callback: a persisted contract, so keep it compatible. */
 interface DesignReply {
   readonly automationId: string;
   readonly chatId: string;
 }
 
-// NOTE: until `RunAutomation` (src/interpreter.ts) replaces this runner, runs only execute flat
-// agent and webhook steps.
-const isFlatStep = (step: Step): step is AgentStep | WebhookStep =>
-  step.kind === "agent" || step.kind === "webhook";
+/**
+ * Payload of the `advance` callback, which replays a run's execution: a persisted contract. Jobs
+ * from before entity-based triggers carried only a `runId`; their runs were discarded.
+ */
+interface Advance {
+  readonly executionId?: string;
+}
 
-const unsupportedStepKinds = (workflow: Workflow) => [
-  ...new Set(flattenSteps(workflow.steps).flatMap((step) => (isFlatStep(step) ? [] : [step.kind]))),
-];
+/** Payload of the `clock` callback, which fires a durable clock: a persisted contract. */
+interface ClockFired {
+  readonly executionId: string;
+  readonly deferredName: string;
+}
 
-/** One automation: its draft and saved workflow, its runs, and the pi agent that designs and runs it. */
+const summary = (types: ReadonlyArray<EntityType>, run: Run): RunSummary => {
+  const type = types.find((candidate) => candidate.name === run.subject?.type);
+  const title = type === undefined ? undefined : run.subject?.data[type.title];
+  return {
+    id: run.id,
+    status: run.status,
+    startedAt: run.startedAt,
+    subject: run.subject === null ? null : typeof title === "string" ? title : run.subject.id,
+    openTasks: run.tasks.filter((task) => task.status === "open").length,
+  };
+};
+
+const applyEvent = (run: Run, event: StepEvent): Run => {
+  const current = run.steps[event.step];
+  // A replay reports finished steps again on its way through them.
+  if (current?.status === "done" && event.status !== "done") {
+    return run;
+  }
+  const steps = {
+    ...run.steps,
+    [event.step]:
+      event.record === undefined
+        ? { status: event.status }
+        : { status: event.status, record: event.record },
+  };
+  const tasks =
+    event.status === "done"
+      ? run.tasks.map((task): HumanTask =>
+          task.step === event.step ? { ...task, status: "closed" } : task,
+        )
+      : run.tasks;
+  return { ...run, steps, tasks };
+};
+
+/**
+ * One automation: its draft and saved workflow, its runs, and the pi agent that designs it and
+ * runs its agent steps. Runs execute `RunAutomation` on a durable engine journaled in this
+ * object's storage.
+ */
 export default class Automation extends Cloudflare.DurableObject<Automation>()(
   "AutomationAgent",
   Effect.gen(function* () {
     const state = yield* Cloudflare.DurableObjectState;
     const ai = yield* Cloudflare.Workers.AI();
     const index = yield* openAutomationIndex;
+    const entityStore = yield* EntityStoreD1;
 
     // The outer Effect constructs the class; the returned inner Effect constructs each instance.
     // @effect-diagnostics-next-line returnEffectInGen:off
     return Effect.gen(function* () {
+      const runtime = yield* Alchemy.RuntimeContext;
+      const entities = yield* EntityStore;
+      const withRuntime = <A, E>(effect: Effect.Effect<A, E, Alchemy.RuntimeContext>) =>
+        Effect.provideService(effect, Alchemy.RuntimeContext, runtime);
+
       const pi = yield* openPiAgent({
         storage: state.raw.storage,
         ai: yield* ai.raw,
@@ -86,95 +180,216 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
       }).pipe(Effect.orDie);
 
       const readWorkflow = (key: "draft" | "saved") =>
-        state.storage.get(key).pipe(Effect.flatMap(decodeStoredWorkflow));
+        state.storage.get(key).pipe(Effect.flatMap(decodeOrDrop(Workflow)));
       const readRun = (id: string) =>
-        state.storage.get(runKey(id)).pipe(Effect.flatMap(decodeStoredRun));
+        state.storage.get(runKey(id)).pipe(Effect.flatMap(decodeOrDrop(Run)));
       const writeRun = (run: Run) => state.storage.put(runKey(run.id), run);
 
-      const runAgentStep = Effect.fn("Automation.runAgentStep")(function* (
-        run: Run,
-        step: AgentStep,
-      ) {
-        const conversation = run.conversation ?? (yield* pi.createConversation);
-        if (run.conversation === undefined) {
-          yield* writeRun({ ...run, conversation });
-        }
-        return yield* pi.prompt({
-          conversation,
-          requestId: `${run.id}:${step.id}`,
-          text: `Execute this workflow step: ${step.instruction}\nInput: ${JSON.stringify(run.input)}\nPrior results: ${JSON.stringify(run.results)}`,
-        });
-      });
+      // Steps in parallel branches report at the same time, so updates to a run take turns.
+      const runLock = Semaphore.makeUnsafe(1);
+      const updateRun = (id: string, update: (run: Run) => Run) =>
+        runLock.withPermit(
+          Effect.gen(function* () {
+            const run = yield* readRun(id);
+            if (run === undefined) {
+              return;
+            }
+            const next = update(run);
+            if (next !== run) {
+              yield* writeRun(next);
+            }
+          }),
+        );
 
-      const runWebhookStep = Effect.fn("Automation.runWebhookStep")(
-        function* (run: Run, step: WebhookStep) {
-          const client = (yield* HttpClient.HttpClient).pipe(HttpClient.filterStatusOk);
-          const response = yield* client.execute(
-            HttpClientRequest.post(step.url).pipe(
-              HttpClientRequest.bodyJsonUnsafe({ input: run.input, results: run.results }),
+      const catalog = entities.listTypes.pipe(Effect.map((types) => ({ types })));
+
+      const loadEntity = (type: string, id: string) =>
+        entities
+          .getEntity(type, id)
+          .pipe(
+            Effect.map((found): Subject | undefined =>
+              found === undefined
+                ? undefined
+                : { type: found.type, id: found.id, data: found.data },
             ),
           );
-          const text = yield* response.text;
-          return text.slice(0, 4000);
-        },
-        Effect.timeout("30 seconds"),
-        // Webhook receivers are third parties: don't forward trace headers to them.
-        Effect.provideService(HttpClient.TracerPropagationEnabled, false),
-        Effect.provide(FetchHttpClient.layer),
-      );
 
-      const runStep = Effect.fn("Automation.runStep")(function* (run: Run, step: Step) {
-        if (!isFlatStep(step)) {
-          return yield* new AutomationError({
-            message: `Runs can't execute ${step.kind} steps yet`,
-          });
-        }
-        return step.kind === "agent"
-          ? yield* runAgentStep(run, step)
-          : yield* runWebhookStep(run, step);
+      const resolve = (refs: ReadonlyArray<string>, known: Pick<RunState, "subject" | "steps">) =>
+        Effect.gen(function* () {
+          const types = yield* entities.listTypes;
+          const values = yield* Effect.forEach(refs, (ref) =>
+            readRef(types, known, ref, loadEntity).pipe(
+              Effect.map((value) => [ref, value] as const),
+            ),
+          );
+          return Object.fromEntries(values);
+        });
+
+      // Agent steps in a run share one conversation, so later steps can build on earlier answers.
+      const conversationLock = Semaphore.makeUnsafe(1);
+      const conversationFor = (runId: string) =>
+        conversationLock.withPermit(
+          Effect.gen(function* () {
+            const existing = (yield* readRun(runId))?.conversation;
+            if (existing !== undefined) {
+              return existing;
+            }
+            const created = yield* pi.createConversation;
+            yield* updateRun(runId, (run) => ({ ...run, conversation: created }));
+            return created;
+          }),
+        );
+
+      const requestHuman = (request: HumanRequest) =>
+        updateRun(request.runId, (run) => {
+          if (run.tasks.some((task) => task.step === request.step.id)) {
+            return run;
+          }
+          // NOTE: Slack and email are simulated connections, so `notify` is recorded, not sent.
+          const task: HumanTask = {
+            step: request.step.id,
+            token: request.token,
+            title: request.step.title,
+            prompt: request.prompt,
+            assignee: request.assignee,
+            response: request.step.response,
+            defaults: request.defaults,
+            ...(request.step.notify === undefined ? {} : { notify: request.step.notify }),
+            status: "open",
+          };
+          return { ...run, tasks: [...run.tasks, task] };
+        });
+
+      const stepFailed = (step: string) => (error: { readonly message: string }) =>
+        new StepFailed({ step, message: error.message });
+
+      const runner = StepRunner.of({
+        resolve: (refs, known) =>
+          withRuntime(resolve(refs, known)).pipe(Effect.mapError(stepFailed("refs"))),
+        agent: ({ step, instruction, state: known }, idempotencyKey) =>
+          withRuntime(
+            Effect.gen(function* () {
+              const conversation = yield* conversationFor(known.runId);
+              const answer = yield* pi.prompt({
+                conversation,
+                requestId: `agent:${idempotencyKey}`,
+                text: agentPrompt(step, instruction, known),
+              });
+              return yield* agentOutput(step, answer);
+            }),
+          ).pipe(Effect.mapError(stepFailed(step.id))),
+        action: ({ step, inputs, state: known }, idempotencyKey) =>
+          runAction(step, inputs, known, idempotencyKey),
+        decide: ({ step, question, state: known }) =>
+          withRuntime(
+            Effect.gen(function* () {
+              const conversation = yield* conversationFor(known.runId);
+              const answer = yield* pi.prompt({
+                conversation,
+                text: decidePrompt(step, question, known),
+              });
+              return yield* decision(answer);
+            }),
+          ).pipe(Effect.mapError(stepFailed(step.id))),
+        requestHuman: (request) => withRuntime(requestHuman(request)),
+        report: (event) => withRuntime(updateRun(event.runId, (run) => applyEvent(run, event))),
       });
 
-      // Delivery is at least once: a step interrupted by eviction runs again. Agent steps resubmit
-      // with the same pi request ID; webhook receivers must be idempotent.
-      const advance: Alchemy.Callback<{ readonly runId: string }> = yield* Alchemy.makeCallback(
+      const durable: DurableEngine = makeDurableEngine({
+        get: (key) => withRuntime(state.storage.get(key)),
+        put: (key, value) => withRuntime(state.storage.put(key, value)),
+        wake: (executionId) =>
+          withRuntime(advance.schedule(executionId, { after: 0, payload: { executionId } })).pipe(
+            Effect.orDie,
+          ),
+        wakeAt: ({ executionId, deferredName, at }) =>
+          withRuntime(
+            clock.schedule(`${executionId}/${deferredName}`, {
+              at,
+              payload: { executionId, deferredName },
+            }),
+          ).pipe(Effect.orDie),
+      });
+      const provideEngine = Effect.provideService(WorkflowEngine.WorkflowEngine, durable.engine);
+      yield* Layer.build(
+        RunAutomationLive.pipe(
+          Layer.provide(Layer.succeed(StepRunner, runner)),
+          Layer.provide(Layer.succeed(WorkflowEngine.WorkflowEngine, durable.engine)),
+        ),
+      ).pipe(Effect.scoped);
+
+      const settle = (runId: string, result: Effect.Success<ReturnType<DurableEngine["replay"]>>) =>
+        updateRun(runId, (run): Run => {
+          if (result === undefined) {
+            return run;
+          }
+          if (result._tag === "Suspended") {
+            return { ...run, status: "waiting" };
+          }
+          return Exit.isSuccess(result.exit)
+            ? { ...run, status: "completed" }
+            : { ...run, status: "failed", error: causeMessage(result.exit.cause) };
+        });
+
+      // Delivery is at least once, and a replay only reruns what the journal lacks: Activities
+      // that finished keep their results. An action interrupted by eviction runs again with the
+      // same idempotency key.
+      const advance: Alchemy.Callback<Advance> = yield* Alchemy.makeCallback(
         "advance",
-        Effect.fn("Automation.advance")(function* ({ runId }: { readonly runId: string }) {
-          const run = yield* readRun(runId);
-          if (run === undefined || run.status !== "running") {
+        Effect.fn("Automation.advance")(function* ({ executionId }: Advance) {
+          if (executionId === undefined) {
             return;
           }
-          const step = run.workflow.steps[run.index];
-          if (step === undefined) {
-            return yield* writeRun({ ...run, status: "completed" });
+          const runId = yield* state.storage
+            .get(executionKey(executionId))
+            .pipe(Effect.flatMap(decodeStoredRunId));
+          // A run that was discarded leaves its journal behind; there's nothing to resume.
+          if (runId === undefined || (yield* readRun(runId)) === undefined) {
+            return;
           }
-          const output = yield* runStep(run, step).pipe(Effect.result);
-          if (Result.isFailure(output)) {
-            return yield* writeRun({
-              ...run,
-              status: "failed",
-              error: failureMessage(output.failure),
-            });
-          }
-          const { conversation: _finished, ...rest } = run;
-          const index = run.index + 1;
-          const next: Run = {
-            ...rest,
-            index,
-            results: [...run.results, { step: step.id, output: output.success }],
-            status: index === run.workflow.steps.length ? "completed" : "running",
-          };
-          yield* state.storage
-            .transaction(
-              Effect.gen(function* () {
-                yield* writeRun(next);
-                if (next.status === "running") {
-                  yield* advance.schedule(runId, { after: 0, payload: { runId } });
-                }
-              }),
-            )
-            .pipe(Effect.orDie);
+          yield* updateRun(runId, (run) =>
+            run.status === "waiting" ? { ...run, status: "running" } : run,
+          );
+          const result = yield* durable.replay(RunAutomation, executionId);
+          yield* settle(runId, result);
         }),
       );
+
+      const clock: Alchemy.Callback<ClockFired> = yield* Alchemy.makeCallback(
+        "clock",
+        Effect.fn("Automation.clock")(function* ({ executionId, deferredName }: ClockFired) {
+          yield* durable.fireClock(RunAutomation, executionId, deferredName);
+        }),
+      );
+
+      const beginRun = Effect.fn("Automation.beginRun")(function* (
+        workflow: Workflow,
+        subject: Subject | null,
+      ) {
+        const id = crypto.randomUUID();
+        const startedAt = yield* Clock.currentTimeMillis;
+        const payload = { runId: id, workflow, subject };
+        const executionId = yield* RunAutomation.executionId(payload);
+        const run: Run = {
+          id,
+          workflow,
+          subject,
+          status: "running",
+          steps: {},
+          tasks: [],
+          startedAt,
+        };
+        yield* state.storage
+          .transaction(
+            Effect.gen(function* () {
+              yield* writeRun(run);
+              yield* state.storage.put(executionKey(executionId), id);
+              yield* RunAutomation.execute(payload, { discard: true }).pipe(provideEngine);
+            }),
+          )
+          .pipe(Effect.orDie);
+        return { id, status: run.status };
+      });
 
       const readConversation = state.storage
         .list({ prefix: exchangePrefix })
@@ -184,18 +399,25 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         .get("pendingChat")
         .pipe(Effect.flatMap(decodeStoredPendingChat));
 
+      const listRuns = Effect.gen(function* () {
+        const entries = yield* state.storage.list({ prefix: runPrefix });
+        const runs = yield* Effect.forEach([...entries.values()], decodeOrDrop(Run));
+        // The titles only label the list, so a D1 failure shows IDs instead.
+        const types = yield* entities.listTypes.pipe(Effect.orElseSucceed(() => []));
+        return runs
+          .filter((run): run is Run => run !== undefined)
+          .toSorted((left, right) => right.startedAt - left.startedAt)
+          .slice(0, 20)
+          .map((run) => summary(types, run));
+      });
+
       const inspectWorkflow = Effect.fn("Automation.inspectWorkflow")(function* () {
         const draft = yield* readWorkflow("draft");
         const saved = yield* readWorkflow("saved");
         const conversation = yield* readConversation;
         const pendingChat = yield* readPendingChat;
-        return {
-          draft,
-          saved,
-          graph: draft === undefined ? null : graph(draft),
-          conversation,
-          pendingChat,
-        };
+        const runs = yield* listRuns;
+        return { draft, saved, conversation, pendingChat, runs };
       });
 
       const isWorking = (pending: PendingChat | undefined, chatId: string) =>
@@ -211,7 +433,10 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
           if (pending === undefined || !isWorking(pending, chatId)) {
             return;
           }
-          const reply = yield* designDraft(pi.prompt, chatId, pending.prompt).pipe(Effect.result);
+          const reply = yield* catalog.pipe(
+            Effect.flatMap((current) => designDraft(pi.prompt, current, chatId, pending.prompt)),
+            Effect.result,
+          );
           const wrote = yield* state.storage
             .transaction(
               Effect.gen(function* () {
@@ -282,54 +507,109 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         return { pendingChat: pending };
       });
 
+      /** Saves the draft once it checks against the current entity types. */
       const save = Effect.fn("Automation.save")(function* () {
         const draft = yield* readWorkflow("draft");
         if (draft === undefined) {
           return yield* new AutomationError({ message: "No draft to save" });
         }
+        yield* checkWorkflow(yield* catalog, draft);
         yield* state.storage.put("saved", draft);
-        return { saved: draft, graph: graph(draft) };
+        return { saved: draft };
       });
 
-      const start = Effect.fn("Automation.start")(function* (input: unknown, event?: string) {
+      /** Starts the saved workflow by hand, for the entity `subjectId` names when it has a subject. */
+      const start = Effect.fn("Automation.start")(function* (subjectId: string | undefined) {
         const saved = yield* readWorkflow("saved");
         if (saved === undefined) {
           return yield* new AutomationError({ message: "Save the workflow before starting it" });
         }
-        if (event !== undefined && saved.event !== event) {
-          return yield* new AutomationError({ message: "Event does not match the saved trigger" });
+        const type = subjectType(saved.trigger);
+        if (type === undefined) {
+          return yield* beginRun(saved, null);
         }
-        const unsupported = unsupportedStepKinds(saved);
-        if (unsupported.length > 0) {
-          return yield* new AutomationError({
-            message: `Runs can't execute ${unsupported.join(", ")} steps yet`,
-          });
+        if (subjectId === undefined) {
+          return yield* new AutomationError({ message: `Pick the ${type} this run is about` });
         }
-        const run: Run = {
-          id: crypto.randomUUID(),
-          workflow: saved,
-          input,
-          index: 0,
-          results: [],
-          status: "running",
-        };
-        yield* state.storage
-          .transaction(
-            Effect.gen(function* () {
-              yield* writeRun(run);
-              yield* advance.schedule(run.id, { after: 0, payload: { runId: run.id } });
-            }),
-          )
-          .pipe(Effect.orDie);
-        return { id: run.id, status: run.status };
+        const subject = yield* loadEntity(type, subjectId);
+        if (subject === undefined) {
+          return yield* new AutomationError({ message: `No ${type} ${subjectId}` });
+        }
+        return yield* beginRun(saved, subject);
+      });
+
+      /**
+       * Starts a run when the saved workflow's entity trigger matches a change: the entity is new,
+       * or a watched field changed, and the trigger's condition holds for the new version.
+       */
+      const entityChanged = Effect.fn("Automation.entityChanged")(function* (
+        before: EntityData | undefined,
+        after: Subject,
+      ) {
+        const saved = yield* readWorkflow("saved");
+        const trigger = saved?.trigger;
+        if (saved === undefined || trigger?.kind !== "entity" || trigger.entity !== after.type) {
+          return { runId: null };
+        }
+        const changed = changedFields(before, after.data);
+        const watched = trigger.fields ?? changed;
+        if (before !== undefined && !watched.some((field) => changed.includes(field))) {
+          return { runId: null };
+        }
+        if (trigger.when !== undefined) {
+          const values = yield* resolve(conditionRefs(trigger.when), { subject: after, steps: {} });
+          const now = yield* Clock.currentTimeMillis;
+          if (!holds(trigger.when, (ref) => values[ref], now)) {
+            return { runId: null };
+          }
+        }
+        const started = yield* beginRun(saved, after);
+        return { runId: started.id };
+      });
+
+      /** Answers a run's open human step. */
+      const respond = Effect.fn("Automation.respond")(function* (
+        runId: string,
+        stepId: string,
+        response: HumanResponse,
+      ) {
+        const run = yield* readRun(runId);
+        const task = run?.tasks.find((candidate) => candidate.step === stepId);
+        if (run === undefined || task === undefined || task.status !== "open") {
+          return yield* new AutomationError({ message: "That task isn't waiting for an answer" });
+        }
+        if (task.response === "approval") {
+          if (response.approved === undefined) {
+            return yield* new AutomationError({ message: "Approve or reject the request" });
+          }
+        } else {
+          const values = response.values ?? {};
+          const wrong = task.response.fields.filter(
+            (field) => !valueMatches(field.type, values[field.name]),
+          );
+          if (wrong.length > 0) {
+            return yield* new AutomationError({
+              message: `Fill in ${wrong.map((field) => field.label).join(", ")}`,
+            });
+          }
+        }
+        const token = yield* decodeToken(task.token).pipe(Effect.orDie);
+        yield* respondToHuman(token, response).pipe(provideEngine);
+        yield* updateRun(runId, (current) => ({
+          ...current,
+          tasks: current.tasks.map((candidate): HumanTask =>
+            candidate.step === stepId ? { ...candidate, status: "closed" } : candidate,
+          ),
+        }));
+        return { ok: true };
       });
 
       const run = Effect.fn("Automation.run")(function* (id: string) {
         return yield* readRun(id);
       });
 
-      return { inspectWorkflow, chat, save, start, run };
-    });
+      return { inspectWorkflow, chat, save, start, entityChanged, respond, run };
+    }).pipe(Effect.provide(entityStore));
   }).pipe(
     Effect.provide(
       Layer.mergeAll(Cloudflare.Workers.AIBinding, Cloudflare.D1.QueryDatabaseBinding),
