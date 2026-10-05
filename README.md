@@ -75,7 +75,7 @@ Templates hold approved wording, such as the standard welcome email, with slots 
 | `GET /api/entities/:type`, `GET /api/entities/:type/:id`   | Read entities                                                                                              |
 | `PUT /api/entities/:type/:id`                              | Create or update an entity and start its runs                                                              |
 | `DELETE /api/entities/types/:type`                         | Delete a type nothing depends on                                                                           |
-| `DELETE /api/entities/:type/:id`                           | Delete an entity (starts no runs)                                                                          |
+| `DELETE /api/entities/:type/:id`                           | Delete an entity that no role lists (starts no runs)                                                       |
 | `POST /api/mcp`                                            | The entity store as an MCP server                                                                          |
 | `GET /api/templates`, `GET /api/templates/:name`           | List or read templates                                                                                     |
 | `PUT /api/templates/:name`, `DELETE /api/templates/:name`  | Create, replace, or delete a template                                                                      |
@@ -84,7 +84,7 @@ Templates hold approved wording, such as the standard welcome email, with slots 
 
 `/entities` in the studio (**Debug → Entity store** in the sidebar) is a debug page for the entity store. Define entity types field by field, then create, edit, and delete their entities. Saving an entity is an ordinary entity write, so it starts the saved automations that watch its type.
 
-`/api/mcp` serves the same store to agents over MCP's Streamable HTTP transport. Its tools are `list_entity_types`, `define_entity_type`, `delete_entity_type`, `list_entities`, `get_entity`, `put_entity`, and `delete_entity`. The server is stateless: it assigns no session, answers in JSON, and supports protocol revisions 2024-11-05 through 2025-11-25. With `mise run dev`:
+`/api/mcp` serves the same store to agents over MCP's Streamable HTTP transport. Its tools are `list_entity_types`, `define_entity_type`, `delete_entity_type`, `list_entities`, `get_entity`, `put_entity`, `delete_entity`, `list_roles`, and `define_role`. The server is stateless: it assigns no session, answers in JSON, and supports protocol revisions 2024-11-05 through 2025-11-25. With `mise run dev`:
 
 ```sh
 claude mcp add --transport http entity-store "$STUDIO_URL/api/mcp"

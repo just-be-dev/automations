@@ -12,6 +12,7 @@ import {
   EntityRecord,
   EntityType,
   InvalidEntity,
+  Role,
   Subject,
 } from "./entities.ts";
 import { EntityStore, EntityStoreError, type EntityChange } from "./entity-store.ts";
@@ -73,7 +74,7 @@ const DefineEntityType = Tool.make("define_entity_type", {
 
 const DeleteEntityType = Tool.make("delete_entity_type", {
   description:
-    "Deletes an entity type. Fails while it has entities, another type or a template slot refers to it, or a saved automation watches it.",
+    "Deletes an entity type. Fails while it has entities, another type or a template slot refers to it, a role has members of it, or a saved automation watches it.",
   parameters: TypeParams,
   success: Schema.Struct({ deleted: EntityName }),
   failure: EntityFailure,
@@ -111,13 +112,32 @@ const PutEntity = Tool.make("put_entity", {
   .annotate(Tool.OpenWorld, true);
 
 const DeleteEntity = Tool.make("delete_entity", {
-  description: "Deletes an entity. Starts no automations.",
+  description: "Deletes an entity. Starts no automations. Fails while a role lists it as a member.",
   parameters: EntityParams,
   success: Schema.Struct({ deleted: EntityRecord }),
   failure: EntityFailure,
 })
   .annotate(Tool.Title, "Delete entity")
   .annotate(Tool.Destructive, true);
+
+const ListRoles = Tool.make("list_roles", {
+  description:
+    "Lists the roles. A role is a named group of people who approve the operations an automation asks first about. Its members are entities, by type and ID, whose type has a text field named `email`.",
+  success: Schema.Struct({ roles: Schema.Array(Role) }),
+  failure: EntityFailure,
+})
+  .annotate(Tool.Title, "List roles")
+  .annotate(Tool.Readonly, true);
+
+const DefineRole = Tool.make("define_role", {
+  description:
+    "Creates a role or replaces one with the same name. Names are snake_case. Every member must be a stored entity with an email: its type has a text field named `email`. Approval tasks already open keep the members they had.",
+  parameters: Schema.Struct({ role: Role }),
+  success: Schema.Struct({ role: Role }),
+  failure: EntityFailure,
+})
+  .annotate(Tool.Title, "Define role")
+  .annotate(Tool.Idempotent, true);
 
 export const EntityTools = Toolkit.make(
   ListEntityTypes,
@@ -127,6 +147,8 @@ export const EntityTools = Toolkit.make(
   GetEntity,
   PutEntity,
   DeleteEntity,
+  ListRoles,
+  DefineRole,
 );
 
 const notFound = (type: string, id: string) =>
@@ -160,6 +182,8 @@ export const EntityToolHandlers = EntityTools.toLayer(
         Effect.flatMap(store.deleteEntity(type, id), (deleted) =>
           deleted === undefined ? Effect.fail(notFound(type, id)) : Effect.succeed({ deleted }),
         ),
+      list_roles: () => Effect.map(store.listRoles, (roles) => ({ roles })),
+      define_role: ({ role }) => Effect.map(store.putRole(role), (stored) => ({ role: stored })),
     });
   }),
 );
@@ -217,7 +241,7 @@ export const jsonRpcError = (
 ): JsonRpcResponse => ({ jsonrpc: "2.0", id, error: { code, message } });
 
 const instructions =
-  "Reads and writes the automations studio's entity store: entity types (schemas) and the entities stored under them. Writing an entity with put_entity starts the saved automations that watch its type, the same as the HTTP API does.";
+  "Reads and writes the automations studio's entity store: entity types (schemas), the entities stored under them, and roles, the groups of people who approve the operations automations ask first about. Writing an entity with put_entity starts the saved automations that watch its type, the same as the HTTP API does. A role's members can't be deleted or lose their email.";
 
 const describeTool = (tool: Tool.Any) => ({
   name: tool.name,

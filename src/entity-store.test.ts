@@ -155,6 +155,53 @@ describe("EntityStore", () => {
       "employee has no email field, so it can't be a member; No person nobody",
     );
   });
+
+  test("a role's members stay people with an email until they leave it", async () => {
+    const attempts = await runWithPeople(
+      Effect.gen(function* () {
+        const entities = yield* EntityStore;
+        yield* entities.putRole({
+          name: "ops",
+          label: "Ops",
+          members: [{ type: "person", id: "sam" }],
+        });
+        const failure = (effect: Effect.Effect<unknown, { readonly message: string }>) =>
+          effect.pipe(
+            Effect.flip,
+            Effect.map((error) => error.message),
+          );
+        return {
+          deleteMember: yield* failure(entities.deleteEntity("person", "sam")),
+          clearEmail: yield* failure(entities.putEntity("person", "sam", { email: null })),
+          dropEmailField: yield* failure(
+            entities.putType({
+              ...person,
+              fields: person.fields.filter((f) => f.name !== "email"),
+            }),
+          ),
+          deleteType: yield* failure(entities.deleteType("person")),
+          kept: yield* entities.getEntity("person", "sam"),
+          renamed: yield* entities.putEntity("person", "sam", { name: "Samuel" }),
+          left: yield* entities
+            .putRole({ name: "ops", label: "Ops", members: [] })
+            .pipe(Effect.andThen(entities.deleteEntity("person", "sam"))),
+        };
+      }),
+    );
+    expect(attempts.deleteMember).toBe(
+      "Can't delete person sam: it is a member of ops. Take it out of them first.",
+    );
+    expect(attempts.clearEmail).toBe("person sam needs an email: it is a member of ops");
+    expect(attempts.dropEmailField).toBe(
+      "person needs a text field named email: roles have members of it (ops)",
+    );
+    expect(attempts.deleteType).toBe(
+      "Can't delete person: it still has 1 entity; roles have members of it: ops",
+    );
+    expect(attempts.kept?.data).toEqual({ name: "Sam", email: "sam@example.com" });
+    expect(attempts.renamed.after.data).toEqual({ name: "Samuel", email: "sam@example.com" });
+    expect(attempts.left?.id).toBe("sam");
+  });
 });
 
 describe("EntityStore types", () => {

@@ -47,7 +47,8 @@ export class EntityStore extends Context.Service<
     ) => Effect.Effect<EntityType, EntityStoreError | InvalidEntity>;
     /**
      * Deletes an entity type that nothing depends on: it has no entities, no other type's `ref`
-     * field or template slot points to it, and no saved automation watches it.
+     * field or template slot points to it, no role has members of it, and no saved automation
+     * watches it.
      */
     readonly deleteType: (name: string) => Effect.Effect<void, EntityStoreError | InvalidEntity>;
     readonly listEntities: (
@@ -68,12 +69,13 @@ export class EntityStore extends Context.Service<
     ) => Effect.Effect<EntityChange, EntityStoreError | InvalidEntity>;
     /**
      * Deletes an entity and returns what it held, or `undefined` when there was none. Deleting
-     * starts no runs, and `ref` fields that pointed to it read as `null`.
+     * starts no runs, and `ref` fields that pointed to it read as `null`. A role's member can't be
+     * deleted; take it out of the role first.
      */
     readonly deleteEntity: (
       type: string,
       id: string,
-    ) => Effect.Effect<EntityRecord | undefined, EntityStoreError>;
+    ) => Effect.Effect<EntityRecord | undefined, EntityStoreError | InvalidEntity>;
     /** Records which entity type an automation's saved workflow watches, or that it watches none. */
     readonly subscribe: (
       automationId: string,
@@ -122,12 +124,33 @@ export interface EntityStorage {
 }
 
 /** Builds the service over an implementation's storage, so every one merges and checks alike. */
-export const makeEntityStore = (storage: EntityStorage) =>
-  EntityStore.of({
+export const makeEntityStore = (storage: EntityStorage) => {
+  /**
+   * The names of the roles with a member of `type`, or with that one entity when `id` is given.
+   * Their members must stay people who can approve: stored, with an email address.
+   */
+  const rolesWith = (type: string, id?: string) =>
+    Effect.map(storage.listRoles, (roles) =>
+      roles
+        .filter((role) =>
+          role.members.some(
+            (member) => member.type === type && (id === undefined || member.id === id),
+          ),
+        )
+        .map((role) => role.name),
+    );
+
+  return EntityStore.of({
     listTypes: storage.listTypes,
     putType: Effect.fn("EntityStore.putType")(function* (type: EntityType) {
       const others = (yield* storage.listTypes).filter((other) => other.name !== type.name);
       yield* checkEntityType(others, type);
+      const roles = yield* rolesWith(type.name);
+      if (roles.length > 0 && !type.fields.some(isEmailField)) {
+        return yield* new InvalidEntity({
+          message: `${type.name} needs a text field named email: roles have members of it (${roles.join(", ")})`,
+        });
+      }
       yield* storage.putType(type);
       return type;
     }),
@@ -150,6 +173,7 @@ export const makeEntityStore = (storage: EntityStorage) =>
       );
       const entities = yield* storage.listEntities(name);
       const watchers = yield* storage.subscribers(name);
+      const roles = yield* rolesWith(name);
       const problems = [
         ...(entities.length === 0
           ? []
@@ -157,6 +181,7 @@ export const makeEntityStore = (storage: EntityStorage) =>
         ...(referrers.length === 0 ? [] : [`${referrers.join(", ")} points to it`]),
         ...(slots.length === 0 ? [] : [`template slots point to it: ${slots.join(", ")}`]),
         ...(watchers.length === 0 ? [] : [`automations watch it: ${watchers.join(", ")}`]),
+        ...(roles.length === 0 ? [] : [`roles have members of it: ${roles.join(", ")}`]),
       ];
       if (problems.length > 0) {
         return yield* new InvalidEntity({
@@ -184,15 +209,31 @@ export const makeEntityStore = (storage: EntityStorage) =>
         ),
       );
       const merged = yield* checkEntityData(type, { ...kept, ...data });
+      const email = merged["email"];
+      if (typeof email !== "string" || email === "") {
+        const roles = yield* rolesWith(typeName, id);
+        if (roles.length > 0) {
+          return yield* new InvalidEntity({
+            message: `${typeName} ${id} needs an email: it is a member of ${roles.join(", ")}`,
+          });
+        }
+      }
       const updatedAt = yield* Clock.currentTimeMillis;
       yield* storage.writeEntity({ type: typeName, id, data: merged, updatedAt });
       return { before: before?.data, after: { type: typeName, id, data: merged } };
     }),
     deleteEntity: Effect.fn("EntityStore.deleteEntity")(function* (type: string, id: string) {
       const found = yield* storage.getEntity(type, id);
-      if (found !== undefined) {
-        yield* storage.deleteEntity(type, id);
+      if (found === undefined) {
+        return undefined;
       }
+      const roles = yield* rolesWith(type, id);
+      if (roles.length > 0) {
+        return yield* new InvalidEntity({
+          message: `Can't delete ${type} ${id}: it is a member of ${roles.join(", ")}. Take it out of them first.`,
+        });
+      }
+      yield* storage.deleteEntity(type, id);
       return found;
     }),
     subscribe: storage.subscribe,
@@ -218,7 +259,13 @@ export const makeEntityStore = (storage: EntityStorage) =>
             return [`${member.type} has no email field, so it can't be a member`];
           }
           const found = yield* storage.getEntity(member.type, member.id);
-          return found === undefined ? [`No ${member.type} ${member.id}`] : [];
+          if (found === undefined) {
+            return [`No ${member.type} ${member.id}`];
+          }
+          const email = found.data["email"];
+          return typeof email === "string" && email !== ""
+            ? []
+            : [`${member.type} ${member.id} has no email`];
         }),
       );
       if (problems.flat().length > 0) {
@@ -228,6 +275,7 @@ export const makeEntityStore = (storage: EntityStorage) =>
       return role;
     }),
   });
+};
 
 /** An in-memory store, seeded with `types`, `entities`, `templates`, and `roles`. */
 export const layerMemory = (seed: {

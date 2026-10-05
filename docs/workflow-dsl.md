@@ -222,7 +222,9 @@ A role is a named group of people who approve the operations a workflow [asks fi
 }
 ```
 
-`migrations/0004_roles.sql` creates this role. `GET /api/roles` lists roles, and `PUT /api/roles/:name` creates or replaces one once every member exists and has an email field.
+`migrations/0004_roles.sql` creates this role. `GET /api/roles` lists roles, and `PUT /api/roles/:name` creates or replaces one once every member exists and has an email: its type has a text field named `email`, and it's set. The MCP server's `list_roles` and `define_role` tools do the same.
+
+The store keeps members able to approve. It refuses to delete an entity a role lists, to clear a member's email, to redefine a member's type without an `email` field, and to delete a type a role has members of. Take the member out of the role first. An approval task already open keeps the members it was opened with.
 
 ## Refs
 

@@ -15,6 +15,16 @@ const employee: EntityType = {
   ],
 };
 
+const person: EntityType = {
+  name: "person",
+  label: "Person",
+  title: "name",
+  fields: [
+    { name: "name", label: "Name", type: "text" },
+    { name: "email", label: "Email", type: "text" },
+  ],
+};
+
 const answer = (message: unknown) =>
   Effect.runPromise(
     answerMcp(message).pipe(
@@ -23,8 +33,16 @@ const answer = (message: unknown) =>
           Layer.provide(
             Layer.merge(
               layerMemory({
-                types: [employee],
-                entities: [{ type: "employee", id: "ada", data: { name: "Ada" }, updatedAt: 0 }],
+                types: [employee, person],
+                entities: [
+                  { type: "employee", id: "ada", data: { name: "Ada" }, updatedAt: 0 },
+                  {
+                    type: "person",
+                    id: "sam",
+                    data: { name: "Sam", email: "sam@example.com" },
+                    updatedAt: 0,
+                  },
+                ],
               }),
               Layer.succeed(EntitySubscribers, {
                 notify: (change) =>
@@ -78,6 +96,8 @@ describe("entity store MCP", () => {
       "get_entity",
       "put_entity",
       "delete_entity",
+      "list_roles",
+      "define_role",
     ]);
     expect(tools.every((tool) => (tool.inputSchema as { type?: string }).type === "object")).toBe(
       true,
@@ -98,6 +118,26 @@ describe("entity store MCP", () => {
           triggered: [{ automation: "watching-employee", runId: "run-1" }],
         },
       },
+    });
+  });
+
+  test("defines and lists roles, whose members must have an email", async () => {
+    const ops = { name: "ops", label: "Ops", members: [{ type: "person", id: "sam" }] };
+    expect(await call("define_role", { role: ops })).toMatchObject({
+      result: { isError: false, structuredContent: { role: ops } },
+    });
+    expect(
+      await call("define_role", {
+        role: { ...ops, members: [{ type: "employee", id: "ada" }] },
+      }),
+    ).toMatchObject({
+      result: {
+        isError: true,
+        content: [{ text: "employee has no email field, so it can't be a member" }],
+      },
+    });
+    expect(await call("list_roles", {})).toMatchObject({
+      result: { isError: false, structuredContent: { roles: [] } },
     });
   });
 
