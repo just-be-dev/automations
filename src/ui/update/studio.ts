@@ -5,7 +5,7 @@ import { modifyFields } from "foldkit/struct";
 import { type PendingChat, subjectType, type Workflow } from "../../workflow.ts";
 import { LoadAutomations, LoadSubjects, PollAutomation } from "../command.ts";
 import type { Message } from "../message.ts";
-import { Activity, type Model, SubjectChoices } from "../model.ts";
+import { Activity, type Model, modifyMessageInput, SubjectChoices } from "../model.ts";
 
 export const fail = (model: Model, error: string) => ({
   model: modifyFields(model, { activity: () => Activity.Failed({ error }) }),
@@ -48,10 +48,10 @@ export const loadedAutomation = (
             ],
           }),
           failed: ({ prompt }) => ({
-            model: modifyFields(model, {
-              messageInput: (value) => (value === "" ? prompt : value),
-              activity: () => Activity.Failed({ error: unfinishedReply }),
-            }),
+            model: modifyFields(
+              modifyMessageInput(model, (value) => (value === "" ? prompt : value)),
+              { activity: () => Activity.Failed({ error: unfinishedReply }) },
+            ),
           }),
         }),
       ),

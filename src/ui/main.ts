@@ -23,7 +23,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
     directory: Directory.Loading(),
     roles: RoleChoices.Loading(),
     revision: 0,
-    messageInput: "",
+    messageInputs: {},
     conversation: [],
     maybeDraft: Option.none(),
     maybeSaved: Option.none(),

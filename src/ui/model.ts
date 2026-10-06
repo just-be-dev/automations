@@ -94,7 +94,8 @@ export const Model = Schema.Struct({
   directory: Directory,
   roles: RoleChoices,
   revision: Schema.Int,
-  messageInput: Schema.String,
+  /** Each automation's unsent message, so the composer never carries one into another automation. */
+  messageInputs: Schema.Record(Schema.String, Schema.String),
   conversation: Schema.Array(Exchange),
   maybeDraft: Schema.Option(Workflow),
   maybeSaved: Schema.Option(Workflow),
@@ -114,3 +115,16 @@ export const Model = Schema.Struct({
   activity: Activity,
 });
 export type Model = typeof Model.Type;
+
+/** The open automation's unsent message. */
+export const messageInputOf = (model: Model) => model.messageInputs[model.automationId] ?? "";
+
+/** Changes the open automation's unsent message, dropping it once empty. */
+export const modifyMessageInput = (model: Model, f: (value: string) => string): Model => {
+  const { [model.automationId]: current = "", ...others } = model.messageInputs;
+  const next = f(current);
+  return {
+    ...model,
+    messageInputs: next === "" ? others : { ...others, [model.automationId]: next },
+  };
+};

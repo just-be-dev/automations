@@ -21,7 +21,7 @@ import {
 } from "./command.ts";
 import { init } from "./main.ts";
 import { Message } from "./message.ts";
-import type { Model } from "./model.ts";
+import { messageInputOf, type Model, modifyMessageInput } from "./model.ts";
 import { Overview } from "./page/index.ts";
 import { update } from "./update/index.ts";
 import { approvalTask, laptopTask, onboarding, runOf, studioUrl, summaryOf } from "./fixtures.ts";
@@ -42,6 +42,8 @@ const automationLoaded = (
 
 const loaded = (search = "automation=my-automation") =>
   update(init({ theme: "System" }, studioUrl(search)).model, automationLoaded()).model;
+
+const typed = (current: Model, text: string) => modifyMessageInput(current, () => text);
 
 const runUrl = (runId: string) => studioUrl(`automation=my-automation&run=${runId}`);
 
@@ -99,7 +101,7 @@ const loadedRun = (run: ReturnType<typeof runOf>) => ({
 test("chat waits for the agent's reply, shows the draft, and saves that automation", () => {
   story(
     update,
-    given(modifyFields(loaded("automation=orders"), { messageInput: () => "Summarize orders" })),
+    given(typed(loaded("automation=orders"), "Summarize orders")),
     message(Message.ClickedSend()),
     Command.expectExact(
       SendMessage({ automationId: "orders", revision: 0, message: "Summarize orders" }),
@@ -114,7 +116,7 @@ test("chat waits for the agent's reply, shows the draft, and saves that automati
       }),
     ),
     model((current) => {
-      expect(current.messageInput).toBe("");
+      expect(messageInputOf(current)).toBe("");
       expect(current.maybePendingChat).toEqual(Option.some(working));
     }),
     Command.expectExact(PollAutomation({ automationId: "orders", revision: 0 })),
@@ -179,7 +181,7 @@ test("a reply the agent couldn't write puts the prompt back in the composer", ()
     init({ theme: "System" }, studioUrl("automation=orders")).model,
     automationLoaded({ maybePendingChat: Option.some(failed) }),
   );
-  expect(reopened.model.messageInput).toBe("Summarize orders");
+  expect(messageInputOf(reopened.model)).toBe("Summarize orders");
   expect(reopened.model.activity).toEqual(
     expect.objectContaining({
       _tag: "Failed",
@@ -187,6 +189,27 @@ test("a reply the agent couldn't write puts the prompt back in the composer", ()
     }),
   );
   expect(reopened.commands ?? []).toEqual([]);
+});
+
+test("an unsent or failed message stays with its automation", () => {
+  const failed = { ...working, status: "failed", error: "Agent did not answer" } as const;
+  const restored = update(
+    init({ theme: "System" }, studioUrl("automation=orders")).model,
+    automationLoaded({ maybePendingChat: Option.some(failed) }),
+  ).model;
+  const switched = update(
+    restored,
+    Message.ChangedUrl({ url: studioUrl("automation=other") }),
+  ).model;
+  expect(messageInputOf(switched)).toBe("");
+  const typedOther = update(switched, Message.UpdatedMessageInput({ value: "Other idea" })).model;
+  const back = update(
+    typedOther,
+    Message.ChangedUrl({ url: studioUrl("automation=orders") }),
+  ).model;
+  expect(messageInputOf(back)).toBe("Summarize orders");
+  const again = update(back, Message.ChangedUrl({ url: studioUrl("automation=other") })).model;
+  expect(messageInputOf(again)).toBe("Other idea");
 });
 
 test("a late chat response cannot touch another automation", () => {
@@ -204,7 +227,7 @@ test("a late chat response cannot touch another automation", () => {
 });
 
 test("sending preserves text typed while the request was in flight", () => {
-  const current = modifyFields(loaded(), { messageInput: () => "Next revision" });
+  const current = typed(loaded(), "Next revision");
   const received = update(
     current,
     Message.SucceededSendMessage({
@@ -213,7 +236,7 @@ test("sending preserves text typed while the request was in flight", () => {
       pendingChat: working,
     }),
   );
-  expect(received.model.messageInput).toBe("Next revision");
+  expect(messageInputOf(received.model)).toBe("Next revision");
 });
 
 test("a saved workflow about an employee loads employees, and a run starts for the one picked", () => {
@@ -510,10 +533,7 @@ test("a form task submits its prefilled defaults with the person's edits as type
 });
 
 test("request failures re-enable actions and old failures leave a new automation unchanged", () => {
-  const sending = update(
-    modifyFields(loaded(), { messageInput: () => "Hello" }),
-    Message.ClickedSend(),
-  );
+  const sending = update(typed(loaded(), "Hello"), Message.ClickedSend());
   const failed = update(
     sending.model,
     Message.FailedRequest({ revision: 0, error: "Access denied" }),
@@ -529,10 +549,7 @@ test("request failures re-enable actions and old failures leave a new automation
 });
 
 test("invalid IDs and saving without a draft return errors without requests", () => {
-  const invalid = modifyFields(loaded(), {
-    automationId: () => "orders/bad",
-    messageInput: () => "Hello",
-  });
+  const invalid = typed(modifyFields(loaded(), { automationId: () => "orders/bad" }), "Hello");
   expect(update(invalid, Message.ClickedSend()).commands).toBeUndefined();
   expect(update(invalid, Message.ClickedSend()).model.activity._tag).toBe("Failed");
   expect(update(loaded(), Message.ClickedSave()).model.activity).toEqual({
@@ -543,8 +560,7 @@ test("invalid IDs and saving without a draft return errors without requests", ()
 
 test("messages up to 10,000 characters are sent and longer ones are rejected", () => {
   const longest = "a".repeat(10_000);
-  const withInput = (messageInput: string) =>
-    modifyFields(loaded(), { messageInput: () => messageInput });
+  const withInput = (messageInput: string) => typed(loaded(), messageInput);
 
   story(
     update,
@@ -659,10 +675,7 @@ test("the studio boots with the saved theme", () => {
 });
 
 test("the overview drops the studio's late replies, and a run link from it opens that run", () => {
-  const sending = update(
-    modifyFields(loaded(), { messageInput: () => "Hello" }),
-    Message.ClickedSend(),
-  ).model;
+  const sending = update(typed(loaded(), "Hello"), Message.ClickedSend()).model;
   story(
     update,
     given(sending),

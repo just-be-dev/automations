@@ -12,7 +12,7 @@ import { icon } from "@/lib/icons";
 import type { PendingChat } from "../../workflow.ts";
 import { maxMessageLength } from "../constant.ts";
 import { Message } from "../message.ts";
-import { Activity, type Exchange, type Model } from "../model.ts";
+import { Activity, type Exchange, messageInputOf, type Model } from "../model.ts";
 
 export const conversationView = (model: Model, h: HtmlBuilder<Message>) =>
   h.section(
@@ -182,7 +182,7 @@ const composerView = (model: Model, h: HtmlBuilder<Message>) =>
               id: "message",
               label: "Your message",
               labelClass: "sr-only",
-              value: model.messageInput,
+              value: messageInputOf(model),
               placeholder: "When an order arrives, summarize its contents and send the summary to…",
               onInput: (value) => Message.UpdatedMessageInput({ value }),
               className:
@@ -195,7 +195,7 @@ const composerView = (model: Model, h: HtmlBuilder<Message>) =>
             [
               h.span(
                 [h.Class("font-mono text-[11px] text-muted-foreground tabular-nums")],
-                [`${model.messageInput.length} / ${maxMessageLength.toLocaleString("en-US")}`],
+                [`${messageInputOf(model).length} / ${maxMessageLength.toLocaleString("en-US")}`],
               ),
               button(
                 {

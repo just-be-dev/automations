@@ -28,6 +28,8 @@ import {
   Activity,
   Directory,
   type Model,
+  messageInputOf,
+  modifyMessageInput,
   Page,
   RoleChoices,
   RunDetail,
@@ -126,9 +128,7 @@ export const update = (model: Model, message: Message) =>
       };
     },
     CompletedApplyTheme: () => ({ model }),
-    UpdatedMessageInput: ({ value }) => ({
-      model: modifyFields(model, { messageInput: () => value }),
-    }),
+    UpdatedMessageInput: ({ value }) => ({ model: modifyMessageInput(model, () => value) }),
     ClickedSend: () => {
       if (Activity.guards.Working(model.activity)) {
         return { model };
@@ -136,7 +136,8 @@ export const update = (model: Model, message: Message) =>
       if (!AutomationId.isValid(model.automationId)) {
         return fail(model, "Use an alphanumeric automation ID");
       }
-      if (!model.messageInput.trim() || model.messageInput.length > maxMessageLength) {
+      const messageInput = messageInputOf(model);
+      if (!messageInput.trim() || messageInput.length > maxMessageLength) {
         return fail(model, "Message must be 1–10,000 characters");
       }
       return {
@@ -147,7 +148,7 @@ export const update = (model: Model, message: Message) =>
           SendMessage({
             automationId: model.automationId.trim(),
             revision: model.revision,
-            message: model.messageInput,
+            message: messageInput,
           }),
         ],
       };
@@ -293,12 +294,14 @@ export const update = (model: Model, message: Message) =>
       revision !== model.revision
         ? { model }
         : {
-            model: modifyFields(model, {
-              maybePendingChat: () => Option.some(pendingChat),
-              maybeProgress: () => Option.none(),
-              messageInput: (value) => (value === sentMessage ? "" : value),
-              activity: () => thinking,
-            }),
+            model: modifyFields(
+              modifyMessageInput(model, (value) => (value === sentMessage ? "" : value)),
+              {
+                maybePendingChat: () => Option.some(pendingChat),
+                maybeProgress: () => Option.none(),
+                activity: () => thinking,
+              },
+            ),
             commands: [PollAutomation({ automationId: model.automationId.trim(), revision })],
           },
     SucceededSaveDraft: ({ revision, saved }) =>
