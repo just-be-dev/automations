@@ -660,7 +660,7 @@ test("action steps show the template they use and the inputs each match case sup
     given(withDraft(welcome)),
     expect(role("list", { name: "Welcome the hire inputs" })).toHaveText("to: employee"),
     expect(role("list", { name: "Welcome the hire cases" })).toContainText(
-      'If employee.role contains "engineer"Template engineering_welcome_email · hire: employee · manager: employee.manager',
+      "If employee.role contains “engineer”Template engineering_welcome_email · hire: employee · manager: employee.manager",
     ),
     expect(role("list", { name: "Welcome the hire cases" })).toContainText(
       "OtherwiseTemplate welcome_email · hire: employee",
@@ -912,6 +912,74 @@ test("nested steps render as labelled lanes with readable conditions and setting
     expect(text("If ask.approved is true")).toExist(),
     expect(text("Pauses for 3 days")).toExist(),
     expect(role("list", { name: "Reads" })).toHaveText("employee.start_dateemployee.manager"),
+  );
+});
+
+test("conditions name a shared ref once, fold in not, and list long groups", () => {
+  scene(
+    { update, view },
+    given(
+      withDraft({
+        name: "Onboarding",
+        trigger: { kind: "manual", subject: "employee" },
+        steps: [
+          {
+            id: "check",
+            title: "Check",
+            kind: "if",
+            cases: [
+              {
+                when: {
+                  any: [
+                    { ref: "employee.role", op: "contains", value: "engineer" },
+                    { ref: "employee.role", op: "contains", value: "Engineer" },
+                  ],
+                },
+                steps: [{ id: "first", title: "First", kind: "wait", duration: "1 day" }],
+              },
+              {
+                when: {
+                  any: [
+                    {
+                      not: {
+                        any: [
+                          { ref: "employee.manager", op: "exists" },
+                          { ref: "employee.level", op: "greaterThan", value: 3 },
+                        ],
+                      },
+                    },
+                  ],
+                },
+                steps: [{ id: "second", title: "Second", kind: "wait", duration: "1 day" }],
+              },
+              {
+                when: {
+                  all: [
+                    { ref: "employee.start_date", op: "after", value: "now" },
+                    { ref: "employee.start_date", op: "before", value: "2026-11-02" },
+                    {
+                      any: [
+                        { ref: "employee.team", op: "equals", value: "ops" },
+                        { not: { ref: "employee.remote", op: "notEquals", value: true } },
+                      ],
+                    },
+                  ],
+                },
+                steps: [{ id: "third", title: "Third", kind: "wait", duration: "1 day" }],
+              },
+            ],
+          },
+        ],
+      }),
+    ),
+    expect(text("If employee.role contains “engineer” or “Engineer”")).toExist(),
+    expect(text("If employee.manager is not set and employee.level is not more than 3")).toExist(),
+    expect(text(/^If all of these are true:/)).toExist(),
+    expect(role("listitem", { name: "employee.start_date is after now" })).toExist(),
+    expect(role("listitem", { name: "employee.start_date is before Nov 2, 2026" })).toExist(),
+    expect(
+      role("listitem", { name: "employee.team is “ops” or employee.remote is true" }),
+    ).toExist(),
   );
 });
 

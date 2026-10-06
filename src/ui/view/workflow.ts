@@ -19,7 +19,7 @@ import {
   UserRound,
   X,
 } from "lucide";
-import { recordView } from "@/components/record";
+import { formatText, recordView } from "@/components/record";
 import { componentName } from "@/lib/component";
 import { withArticle } from "@/lib/format";
 import { icon, triggerIcon } from "@/lib/icons";
@@ -237,61 +237,210 @@ const stepLabel = (step: Step): string =>
     }),
   );
 
-const comparisonLabel: Record<Comparison, string> = {
-  equals: "is",
-  notEquals: "is not",
-  greaterThan: "is greater than",
-  lessThan: "is less than",
-  contains: "contains",
-  before: "is before",
-  after: "is after",
+/**
+ * A condition as people read it. `not` is pushed down into the comparisons (De Morgan), so it reads
+ * "doesn't contain" instead of wrapping a group, and nested groups that join the same way merge.
+ */
+type ConditionTerm =
+  | {
+      readonly kind: "test";
+      readonly ref: string;
+      readonly op: Comparison | "exists";
+      readonly isNegated: boolean;
+      readonly value: Schema.Json;
+    }
+  | {
+      readonly kind: "group";
+      readonly join: "all" | "any";
+      readonly terms: ReadonlyArray<ConditionTerm>;
+    };
+
+const groupTerm = (
+  join: "all" | "any",
+  conditions: ReadonlyArray<Condition>,
+  isNegated: boolean,
+): ConditionTerm => {
+  const effectiveJoin = isNegated ? (join === "all" ? "any" : "all") : join;
+  const terms = Array.flatMap(conditions, (condition) => {
+    const term = conditionTerm(condition, isNegated);
+    return term.kind === "group" && term.join === effectiveJoin ? term.terms : [term];
+  });
+  const [only] = terms;
+  return only !== undefined && terms.length === 1
+    ? only
+    : { kind: "group", join: effectiveJoin, terms };
 };
 
-const valueView = (value: unknown, h: HtmlBuilder<Message>) =>
-  h.span(
-    [componentName("value"), h.Class("font-mono text-[0.92em] text-foreground")],
-    [JSON.stringify(value)],
-  );
-
-const comparedValueView = (op: Comparison, value: unknown, h: HtmlBuilder<Message>) =>
-  (op === "before" || op === "after") && Predicate.isString(value)
-    ? h.span(
-        [componentName("compared-value"), h.Class("font-mono text-[0.92em] text-foreground")],
-        [value],
-      )
-    : valueView(value, h);
-
-const joinedConditions = (
-  conditions: ReadonlyArray<Condition>,
-  separator: string,
-  h: HtmlBuilder<Message>,
-): ReadonlyArray<Html | string> =>
-  joinedViews(
-    Array.map(conditions, (condition) => conditionView(condition, h)),
-    separator,
-  );
-
-const conditionView = (
-  condition: Condition,
-  h: HtmlBuilder<Message>,
-): ReadonlyArray<Html | string> => {
+const conditionTerm = (condition: Condition, isNegated = false): ConditionTerm => {
   if ("all" in condition) {
-    return ["(", ...joinedConditions(condition.all, " and ", h), ")"];
+    return groupTerm("all", condition.all, isNegated);
   }
   if ("any" in condition) {
-    return ["(", ...joinedConditions(condition.any, " or ", h), ")"];
+    return groupTerm("any", condition.any, isNegated);
   }
   if ("not" in condition) {
-    return ["not ", ...conditionView(condition.not, h)];
+    return conditionTerm(condition.not, !isNegated);
   }
   if (condition.op === "exists") {
-    return [refView(condition.ref, h), " is set"];
+    return { kind: "test", ref: condition.ref, op: "exists", isNegated, value: null };
   }
-  return [
-    refView(condition.ref, h),
-    ` ${comparisonLabel[condition.op]} `,
-    comparedValueView(condition.op, condition.value, h),
-  ];
+  const swapsOp = isNegated && (condition.op === "equals" || condition.op === "notEquals");
+  return {
+    kind: "test",
+    ref: condition.ref,
+    op: swapsOp ? (condition.op === "equals" ? "notEquals" : "equals") : condition.op,
+    isNegated: isNegated && !swapsOp,
+    value: condition.value,
+  };
+};
+
+const comparisonLabel: Record<Comparison | "exists", readonly [holds: string, fails: string]> = {
+  equals: ["is", "is not"],
+  notEquals: ["is not", "is"],
+  greaterThan: ["is more than", "is not more than"],
+  lessThan: ["is less than", "is not less than"],
+  contains: ["contains", "doesn't contain"],
+  before: ["is before", "is not before"],
+  after: ["is after", "is not after"],
+  exists: ["is set", "is not set"],
+};
+
+const joinLabel = { all: "and", any: "or" } as const;
+
+/** A value as people read it: text in quotes, dates formatted, and "empty" for null. */
+const conditionValueView = (
+  op: Comparison | "exists",
+  value: Schema.Json,
+  h: HtmlBuilder<Message>,
+) =>
+  Match.value(value).pipe(
+    Match.when(Predicate.isString, (text) =>
+      (op === "before" || op === "after") && text === "now"
+        ? "now"
+        : h.span(
+            [componentName("condition-value"), h.Class("text-foreground")],
+            [op === "before" || op === "after" ? formatText("", text) : `“${text}”`],
+          ),
+    ),
+    Match.when(Predicate.isBoolean, (flag) => (flag ? "true" : "false")),
+    Match.when(Predicate.isNull, () => "empty"),
+    Match.when(Predicate.isNumber, (number) =>
+      h.span([componentName("condition-value"), h.Class("text-foreground")], [String(number)]),
+    ),
+    Match.orElse((json) =>
+      h.span(
+        [componentName("condition-value"), h.Class("font-mono text-[0.92em] text-foreground")],
+        [JSON.stringify(json)],
+      ),
+    ),
+  );
+
+const testParts = (
+  term: Extract<ConditionTerm, { readonly kind: "test" }>,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Html | string> => [
+  comparisonLabel[term.op][term.isNegated ? 1 : 0],
+  ...(term.op === "exists" ? [] : [" ", conditionValueView(term.op, term.value, h)]),
+];
+
+const joinWordView = (join: "all" | "any", h: HtmlBuilder<Message>) =>
+  h.span([h.Class("font-medium text-foreground")], [` ${joinLabel[join]} `]);
+
+const joinedTerms = (
+  join: "all" | "any",
+  parts: ReadonlyArray<ReadonlyArray<Html | string>>,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Html | string> =>
+  Array.flatMap(parts, (part, index) => [...(index === 0 ? [] : [joinWordView(join, h)]), ...part]);
+
+/** The tests of a group that all read the same ref, which the group can then name once. */
+const sharedRefTests = (terms: ReadonlyArray<ConditionTerm>) => {
+  const tests = Array.flatMap(terms, (term) => (term.kind === "test" ? [term] : []));
+  const [first] = tests;
+  return first !== undefined &&
+    tests.length === terms.length &&
+    Array.every(tests, (test) => test.ref === first.ref)
+    ? Option.some({ ref: first.ref, tests })
+    : Option.none();
+};
+
+const termView = (
+  term: ConditionTerm,
+  isNested: boolean,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Html | string> => {
+  if (term.kind === "test") {
+    return [refView(term.ref, h), " ", ...testParts(term, h)];
+  }
+  if (Array.isReadonlyArrayEmpty(term.terms)) {
+    return [term.join === "all" ? "always" : "never"];
+  }
+  const parts = Option.match(sharedRefTests(term.terms), {
+    onNone: () =>
+      joinedTerms(
+        term.join,
+        Array.map(term.terms, (inner) => termView(inner, true, h)),
+        h,
+      ),
+    onSome: ({ ref, tests }) => {
+      const [first] = tests;
+      const isOneComparison =
+        first !== undefined &&
+        first.op !== "exists" &&
+        !first.isNegated &&
+        Array.every(tests, (test) => test.op === first.op && !test.isNegated);
+      return [
+        refView(ref, h),
+        " ",
+        ...(isOneComparison
+          ? [
+              comparisonLabel[first.op][0],
+              " ",
+              ...joinedTerms(
+                term.join,
+                Array.map(tests, (test) => [conditionValueView(test.op, test.value, h)]),
+                h,
+              ),
+            ]
+          : joinedTerms(
+              term.join,
+              Array.map(tests, (test) => testParts(test, h)),
+              h,
+            )),
+      ];
+    },
+  });
+  return isNested && term.terms.length > 1 ? ["(", ...parts, ")"] : parts;
+};
+
+/** A condition on one line, for triggers and short headings. */
+const conditionView = (condition: Condition, h: HtmlBuilder<Message>) =>
+  termView(conditionTerm(condition), false, h);
+
+const conditionListClass = "mt-1 flex list-disc flex-col gap-1 pl-4 marker:text-sand-9";
+
+/**
+ * "If" and a condition. A group of several different tests is listed one per line, so a long
+ * condition stays readable.
+ */
+const ifConditionView = (condition: Condition, h: HtmlBuilder<Message>) => {
+  const term = conditionTerm(condition);
+  const isListed =
+    term.kind === "group" &&
+    Option.isNone(sharedRefTests(term.terms)) &&
+    (term.terms.length > 2 || Array.some(term.terms, (inner) => inner.kind === "group"));
+  return term.kind === "group" && isListed
+    ? h.div(
+        [componentName("if-condition")],
+        [
+          term.join === "all" ? "If all of these are true:" : "If at least one of these is true:",
+          h.ul(
+            [h.Class(conditionListClass)],
+            Array.map(term.terms, (inner) => h.li([], termView(inner, false, h))),
+          ),
+        ],
+      )
+    : h.div([componentName("if-condition")], ["If ", ...termView(term, false, h)]);
 };
 
 const offsetText = (offset: string) =>
@@ -390,7 +539,7 @@ const matchView = (
           [
             h.div(
               [h.Class("text-xs text-muted-foreground")],
-              ["If ", ...conditionView(patternCondition(match.on, branch.when), h)],
+              [ifConditionView(patternCondition(match.on, branch.when), h)],
             ),
             ...inputSourceView(`Case ${index + 1} inputs`, branch, isExpanded, h),
           ],
@@ -570,7 +719,7 @@ const stepLanes = (step: Step, h: HtmlBuilder<Message>): ReadonlyArray<Lane> =>
       if: (branch) => [
         ...Array.map(branch.cases, (branchCase, index) => ({
           label: `Case ${index + 1}`,
-          heading: ["If ", ...conditionView(branchCase.when, h)],
+          heading: [ifConditionView(branchCase.when, h)],
           steps: branchCase.steps,
         })),
         ...(branch.otherwise === undefined || Array.isReadonlyArrayEmpty(branch.otherwise)
