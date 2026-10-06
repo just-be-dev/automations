@@ -20,6 +20,7 @@ import {
   X,
 } from "lucide";
 import { recordView } from "@/components/record";
+import { componentName } from "@/lib/component";
 import { withArticle } from "@/lib/format";
 import { icon, triggerIcon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
@@ -59,7 +60,11 @@ import { chipClass, notifyLabel, stepMetaView } from "./shared.ts";
 
 const subjectRefView = (ref: string, h: HtmlBuilder<Message>) =>
   h.span(
-    [h.Class(cn(chipClass, "text-foreground")), h.Title(`Read from the subject: ${ref}`)],
+    [
+      componentName("subject-ref"),
+      h.Class(cn(chipClass, "text-foreground")),
+      h.Title(`Read from the subject: ${ref}`),
+    ],
     [ref],
   );
 
@@ -69,7 +74,7 @@ const refView = (ref: string, h: HtmlBuilder<Message>) => {
   const [root, ...path] = ref.split(".");
   return root === "steps"
     ? h.span(
-        [h.Class(stepRefClass), h.Title(`Recorded by step ${path[0] ?? ""}`)],
+        [componentName("ref"), h.Class(stepRefClass), h.Title(`Recorded by step ${path[0] ?? ""}`)],
         [path.join(".")],
       )
     : subjectRefView(ref, h);
@@ -93,7 +98,7 @@ const readsView = (workflow: Workflow, h: HtmlBuilder<Message>) =>
       onEmpty: () => h.empty,
       onNonEmpty: (refs) =>
         h.div(
-          [h.Class("flex flex-wrap items-baseline gap-x-2 gap-y-1.5")],
+          [componentName("reads"), h.Class("flex flex-wrap items-baseline gap-x-2 gap-y-1.5")],
           [
             h.h3([h.Id("trigger-reads"), h.Class("text-muted-foreground")], ["Reads"]),
             h.ul(
@@ -156,7 +161,7 @@ const triggerTextView = (trigger: Trigger, h: HtmlBuilder<Message>): ReadonlyArr
 
 const triggerView = (workflow: Workflow, h: HtmlBuilder<Message>) =>
   h.div(
-    [h.Class("flex gap-3")],
+    [componentName("trigger"), h.Class("flex gap-3")],
     [
       h.div(
         [h.Class("flex w-[18px] shrink-0 flex-col items-center"), h.AriaHidden(true)],
@@ -191,7 +196,7 @@ export const workflowView = (
   h: HtmlBuilder<Message>,
 ) =>
   h.div(
-    [h.Class("flex max-w-2xl flex-col")],
+    [componentName("workflow"), h.Class("flex max-w-2xl flex-col")],
     [
       triggerView(workflow, h),
       h.ol(
@@ -242,11 +247,17 @@ const comparisonLabel: Record<Comparison, string> = {
 };
 
 const valueView = (value: unknown, h: HtmlBuilder<Message>) =>
-  h.span([h.Class("font-mono text-[0.92em] text-foreground")], [JSON.stringify(value)]);
+  h.span(
+    [componentName("value"), h.Class("font-mono text-[0.92em] text-foreground")],
+    [JSON.stringify(value)],
+  );
 
 const comparedValueView = (op: Comparison, value: unknown, h: HtmlBuilder<Message>) =>
   (op === "before" || op === "after") && Predicate.isString(value)
-    ? h.span([h.Class("font-mono text-[0.92em] text-foreground")], [value])
+    ? h.span(
+        [componentName("compared-value"), h.Class("font-mono text-[0.92em] text-foreground")],
+        [value],
+      )
     : valueView(value, h);
 
 const joinedConditions = (
@@ -312,7 +323,7 @@ const inputListView = (
   h: HtmlBuilder<Message>,
 ) =>
   h.ul(
-    [h.AriaLabel(label), h.Class("flex flex-col gap-0.5 text-xs")],
+    [componentName("input-list"), h.AriaLabel(label), h.Class("flex flex-col gap-0.5 text-xs")],
     Array.map(Object.entries(inputs), ([name, value]) =>
       h.keyed("li")(
         name,
@@ -324,7 +335,7 @@ const inputListView = (
 
 const templateUseView = (use: TemplateUse, h: HtmlBuilder<Message>) =>
   h.p(
-    [h.Class("text-xs text-muted-foreground")],
+    [componentName("template-use"), h.Class("text-xs text-muted-foreground")],
     [
       "Template ",
       h.span([h.Class(cn(chipClass, "text-foreground")), h.Title("A stored template")], [use.use]),
@@ -354,7 +365,11 @@ const matchView = (
   h: HtmlBuilder<Message>,
 ) =>
   h.ol(
-    [h.AriaLabel(`${action.title} cases`), h.Class("flex flex-col gap-1.5")],
+    [
+      componentName("match"),
+      h.AriaLabel(`${action.title} cases`),
+      h.Class("flex flex-col gap-1.5"),
+    ],
     [
       ...Array.map(match.cases, (branch, index) =>
         h.li(
@@ -396,7 +411,7 @@ const permissionTagView = (
 const humanFieldView = (field: HumanField, h: HtmlBuilder<Message>) =>
   h.keyed("li")(
     field.name,
-    [],
+    [componentName("human-field")],
     [
       h.span([h.Class("text-foreground")], [field.label]),
       ` · ${field.type}`,
@@ -414,7 +429,7 @@ const stepDetailView = (
     Match.discriminatorsExhaustive("kind")({
       agent: (agent) =>
         h.div(
-          [h.Class("flex flex-col gap-1.5")],
+          [componentName("step-detail"), h.Class("flex flex-col gap-1.5")],
           [
             h.p([h.Class(detailClass(isExpanded))], templateView(agent.instruction, h)),
             agent.output === undefined
@@ -438,7 +453,7 @@ const stepDetailView = (
         ),
       action: (action) =>
         h.div(
-          [h.Class("flex flex-col gap-1.5")],
+          [componentName("step-detail"), h.Class("flex flex-col gap-1.5")],
           [
             h.div(
               [h.Class("flex items-center gap-2 text-xs text-muted-foreground")],
@@ -455,7 +470,7 @@ const stepDetailView = (
         ),
       wait: (wait) =>
         h.p(
-          [h.Class("text-xs text-muted-foreground")],
+          [componentName("step-detail"), h.Class("text-xs text-muted-foreground")],
           "until" in wait
             ? [
                 "Until ",
@@ -466,14 +481,17 @@ const stepDetailView = (
         ),
       parallel: (parallel) =>
         h.p(
-          [h.Class("text-xs text-muted-foreground")],
+          [componentName("step-detail"), h.Class("text-xs text-muted-foreground")],
           [`${parallel.branches.length} branches run at the same time, then the run continues.`],
         ),
       if: () =>
-        h.p([h.Class("text-xs text-muted-foreground")], ["Runs the first case that matches."]),
+        h.p(
+          [componentName("step-detail"), h.Class("text-xs text-muted-foreground")],
+          ["Runs the first case that matches."],
+        ),
       decide: (decide) =>
         h.div(
-          [h.Class("flex flex-col gap-1.5")],
+          [componentName("step-detail"), h.Class("flex flex-col gap-1.5")],
           [
             h.p([h.Class(detailClass(isExpanded))], templateView(decide.question, h)),
             stepMetaView([`Model: ${decide.model}`], h),
@@ -481,12 +499,12 @@ const stepDetailView = (
         ),
       stop: (stop) =>
         h.p(
-          [h.Class(detailClass(isExpanded))],
+          [componentName("step-detail"), h.Class(detailClass(isExpanded))],
           ["Ends the run: ", ...templateView(stop.reason, h)],
         ),
       human: (human) =>
         h.div(
-          [h.Class("flex flex-col gap-1.5")],
+          [componentName("step-detail"), h.Class("flex flex-col gap-1.5")],
           [
             h.p([h.Class(detailClass(isExpanded))], templateView(human.prompt, h)),
             stepMetaView(
@@ -560,7 +578,7 @@ const stepLanes = (step: Step, h: HtmlBuilder<Message>): ReadonlyArray<Lane> =>
 
 const laneView = (lane: Lane, context: StepContext, h: HtmlBuilder<Message>) =>
   h.li(
-    [h.Class("flex flex-col gap-2")],
+    [componentName("lane"), h.Class("flex flex-col gap-2")],
     [
       h.div([h.Class("text-xs text-muted-foreground")], lane.heading),
       h.ol(
@@ -581,6 +599,7 @@ const stepStatusLabel: Record<RunStep["status"], string> = {
 const stepStatusView = (runStep: RunStep, h: HtmlBuilder<Message>) =>
   h.span(
     [
+      componentName("step-status"),
       h.Class(
         cn(
           "mt-0.5 inline-flex shrink-0 items-center gap-1 text-[11px] font-medium",
@@ -612,7 +631,7 @@ const stepResultView = (
   h: HtmlBuilder<Message>,
 ) =>
   h.div(
-    [h.Class("flex flex-col gap-1.5")],
+    [componentName("step-result"), h.Class("flex flex-col gap-1.5")],
     [
       h.div(
         [h.Class("text-[11px] text-muted-foreground")],
@@ -644,6 +663,7 @@ const stepView = (step: Step, context: StepContext, h: HtmlBuilder<Message>): Ht
   return h.keyed("li")(
     step.id,
     [
+      componentName("step"),
       h.Class(
         cn(
           "rail-item animate-in fade-in slide-in-from-top-1 duration-300",

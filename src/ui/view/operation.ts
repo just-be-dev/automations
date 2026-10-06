@@ -1,6 +1,7 @@
 import type { HtmlBuilder } from "foldkit/html";
 import { CalendarDays, Mail, MessageSquare, Webhook } from "lucide";
 import { badge } from "@/components/ui/badge";
+import { componentName } from "@/lib/component";
 import type { icon } from "@/lib/icons";
 import { connectionOf, findOperation } from "../../connections.ts";
 import type { Message } from "../message.ts";
@@ -23,6 +24,14 @@ export const operationTitle = (operationId: string) =>
 export const isSimulated = (operationId: string) => connectionOf(operationId)?.simulated === true;
 
 export const tagView = (label: string, h: HtmlBuilder<Message>) =>
-  badge({ variant: "secondary", className: "h-4 px-1.5 text-[10px]" }, [label], h);
+  badge(
+    {
+      variant: "secondary",
+      className: "h-4 px-1.5 text-[10px]",
+      attributes: [componentName("tag")],
+    },
+    [label],
+    h,
+  );
 
 export const simulatedTagView = (h: HtmlBuilder<Message>) => tagView("Simulated", h);

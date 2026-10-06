@@ -9,6 +9,7 @@ import { badge } from "@/components/ui/badge";
 import { button, buttonClass } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
 import { inputClass } from "@/components/ui/input";
+import { componentName } from "@/lib/component";
 import {
   formatTime,
   openTasksText,
@@ -35,7 +36,7 @@ const noteClass = "text-sm text-muted-foreground";
 
 export const view = Submodel.defineView<Model, Message>((model, h) =>
   h.div(
-    [h.Class("flex-1 px-6 py-6 lg:min-h-0 lg:overflow-y-auto")],
+    [componentName("overview"), h.Class("flex-1 px-6 py-6 lg:min-h-0 lg:overflow-y-auto")],
     [
       h.div(
         [h.Class("flex max-w-3xl flex-col gap-10")],
@@ -77,7 +78,7 @@ interface ActiveRun {
 
 const activeRunsView = (automations: ReadonlyArray<Automation>, h: HtmlBuilder<Message>) =>
   h.section(
-    [h.AriaLabelledBy("active-runs"), h.Class("flex flex-col gap-2")],
+    [componentName("active-runs"), h.AriaLabelledBy("active-runs"), h.Class("flex flex-col gap-2")],
     [
       h.h2([h.Id("active-runs"), h.Class(eyebrowClass)], ["Running now"]),
       Array.match(
@@ -107,7 +108,7 @@ const newestFirst = Order.mapInput(
 const activeRunView = ({ automation, run }: ActiveRun, h: HtmlBuilder<Message>) =>
   h.keyed("li")(
     `${automation.id}/${run.id}`,
-    [],
+    [componentName("active-run")],
     [
       h.a(
         [
@@ -150,7 +151,7 @@ const automationsView = (
   h: HtmlBuilder<Message>,
 ) =>
   h.section(
-    [h.AriaLabelledBy("automations"), h.Class("flex flex-col gap-2")],
+    [componentName("automations"), h.AriaLabelledBy("automations"), h.Class("flex flex-col gap-2")],
     [
       h.h2([h.Id("automations"), h.Class(eyebrowClass)], ["Automations"]),
       Array.match(automations, {
@@ -228,7 +229,7 @@ const launchFor = (launch: Launch, automationId: string) =>
 const automationView = (automation: Automation, launch: Launch, h: HtmlBuilder<Message>) =>
   h.keyed("li")(
     automation.id,
-    [h.Class("flex flex-col gap-3 px-4 py-3.5")],
+    [componentName("automation"), h.Class("flex flex-col gap-3 px-4 py-3.5")],
     [
       h.div(
         [h.Class("flex items-start gap-3")],
@@ -306,18 +307,22 @@ const automationView = (automation: Automation, launch: Launch, h: HtmlBuilder<M
 const nextRunView = (automation: Automation, h: HtmlBuilder<Message>) =>
   Option.match(automation.maybeNextRunAt, {
     onNone: () => h.empty,
-    onSome: (at) => h.p([h.Class("text-xs text-sand-10")], [`Next run ${formatTime(at)}`]),
+    onSome: (at) =>
+      h.p(
+        [componentName("next-run"), h.Class("text-xs text-sand-10")],
+        [`Next run ${formatTime(at)}`],
+      ),
   });
 
 const lastRunView = (automation: Automation, h: HtmlBuilder<Message>) =>
   Option.match(automation.maybeLastRun, {
     onNone: () =>
       Option.isSome(automation.maybeTrigger)
-        ? h.p([h.Class("text-xs text-sand-10")], ["No runs yet"])
+        ? h.p([componentName("last-run"), h.Class("text-xs text-sand-10")], ["No runs yet"])
         : h.empty,
     onSome: (run) =>
       h.p(
-        [h.Class("text-xs text-sand-10")],
+        [componentName("last-run"), h.Class("text-xs text-sand-10")],
         [
           `Last run ${formatTime(run.startedAt)} · `,
           h.a(
@@ -341,12 +346,12 @@ const launchView = (automation: Automation, launch: Launch, h: HtmlBuilder<Messa
       Subjects.match(subjects, {
         Loading: () =>
           h.p(
-            [h.Class(cn(launchRowClass, "text-muted-foreground"))],
+            [componentName("launch"), h.Class(cn(launchRowClass, "text-muted-foreground"))],
             [`Loading ${entityType.replaceAll("_", " ")} records…`],
           ),
         Unavailable: ({ error }) =>
           h.div(
-            [h.Class(launchRowClass)],
+            [componentName("launch"), h.Class(launchRowClass)],
             [
               h.span(
                 [h.Class("text-destructive"), h.Title(error)],
@@ -357,7 +362,7 @@ const launchView = (automation: Automation, launch: Launch, h: HtmlBuilder<Messa
           ),
         Ready: ({ label, subjects: options }) =>
           h.div(
-            [h.Class(launchRowClass)],
+            [componentName("launch"), h.Class(launchRowClass)],
             [
               h.label([h.For(`subject-${automation.id}`), h.Class("sr-only")], [label]),
               h.select(
@@ -399,12 +404,16 @@ const launchView = (automation: Automation, launch: Launch, h: HtmlBuilder<Messa
       }),
     Starting: () =>
       h.p(
-        [h.Role("status"), h.Class(cn(launchRowClass, "text-muted-foreground"))],
+        [
+          componentName("launch"),
+          h.Role("status"),
+          h.Class(cn(launchRowClass, "text-muted-foreground")),
+        ],
         [icon(h, LoaderCircle, "size-3.5 animate-spin text-signal"), "Starting a run…"],
       ),
     Started: ({ runId }) =>
       h.p(
-        [h.Role("status"), h.Class(launchRowClass)],
+        [componentName("launch"), h.Role("status"), h.Class(launchRowClass)],
         [
           icon(h, CircleCheck, "size-3.5 text-success"),
           "Run started.",
@@ -419,10 +428,19 @@ const launchView = (automation: Automation, launch: Launch, h: HtmlBuilder<Messa
       ),
     Failed: ({ error }) =>
       h.p(
-        [h.Role("alert"), h.Class(cn(launchRowClass, "text-destructive"))],
+        [componentName("launch"), h.Role("alert"), h.Class(cn(launchRowClass, "text-destructive"))],
         [icon(h, CircleAlert, "size-3.5"), error],
       ),
   });
 
 const cancelView = (h: HtmlBuilder<Message>) =>
-  button({ onClick: Message.ClickedCancelStart(), variant: "ghost", size: "sm" }, "Cancel", h);
+  button(
+    {
+      onClick: Message.ClickedCancelStart(),
+      variant: "ghost",
+      size: "sm",
+      attributes: [componentName("cancel")],
+    },
+    "Cancel",
+    h,
+  );

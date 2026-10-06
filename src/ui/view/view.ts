@@ -2,6 +2,7 @@ import * as Option from "effect/Option";
 import type { Document, HtmlBuilder } from "foldkit/html";
 import { Monitor, Moon, Sun } from "lucide";
 import { button } from "@/components/ui/button";
+import { componentName } from "@/lib/component";
 import { icon } from "@/lib/icons";
 import { Message, toEntitiesMessage, toOverviewMessage } from "../message.ts";
 import { listedName, type Model, Page } from "../model.ts";
@@ -16,7 +17,7 @@ import { workflowPanelView } from "./studio.ts";
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   title: "Automations studio",
   body: h.div(
-    [h.Class("flex min-h-full flex-col bg-sidebar lg:h-full lg:flex-row")],
+    [componentName("app"), h.Class("flex min-h-full flex-col bg-sidebar lg:h-full lg:flex-row")],
     [
       sidebarView(model, h),
       h.div(
@@ -44,7 +45,7 @@ const pageView = (model: Model, h: HtmlBuilder<Message>) =>
   Page.match(model.page, {
     Overview: ({ overview }) =>
       h.main(
-        [h.Class("flex min-w-0 flex-1 flex-col lg:min-h-0")],
+        [componentName("page"), h.Class("flex min-w-0 flex-1 flex-col lg:min-h-0")],
         [
           h.submodel({
             slotId: "overview",
@@ -56,7 +57,7 @@ const pageView = (model: Model, h: HtmlBuilder<Message>) =>
       ),
     Entities: ({ entities }) =>
       h.main(
-        [h.Class("flex min-w-0 flex-1 flex-col lg:min-h-0")],
+        [componentName("page"), h.Class("flex min-w-0 flex-1 flex-col lg:min-h-0")],
         [
           h.submodel({
             slotId: "entities",
@@ -69,6 +70,7 @@ const pageView = (model: Model, h: HtmlBuilder<Message>) =>
     Studio: () =>
       h.main(
         [
+          componentName("page"),
           h.Class(
             "grid min-w-0 flex-1 grid-cols-1 lg:min-h-0 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]",
           ),
@@ -80,7 +82,10 @@ const pageView = (model: Model, h: HtmlBuilder<Message>) =>
 
 const headerView = (model: Model, h: HtmlBuilder<Message>) =>
   h.header(
-    [h.Class("flex h-12 shrink-0 items-center justify-between gap-4 border-b px-4")],
+    [
+      componentName("header"),
+      h.Class("flex h-12 shrink-0 items-center justify-between gap-4 border-b px-4"),
+    ],
     [headerTitleView(model, h), themeToggleView(model.theme, h)],
   );
 
@@ -93,12 +98,15 @@ const headerTitleView = (model: Model, h: HtmlBuilder<Message>) =>
   });
 
 const headerLabelView = (label: string, h: HtmlBuilder<Message>) =>
-  h.div([h.Class("truncate text-sm font-medium tracking-tight")], [label]);
+  h.div(
+    [componentName("header-label"), h.Class("truncate text-sm font-medium tracking-tight")],
+    [label],
+  );
 
 /** The open automation's name, falling back to its ID until the sidebar lists it. */
 const automationTitleView = (model: Model, h: HtmlBuilder<Message>) =>
   h.div(
-    [h.Class("flex min-w-0 items-baseline gap-2")],
+    [componentName("automation-title"), h.Class("flex min-w-0 items-baseline gap-2")],
     Option.match(listedName(model.directory, model.automationId), {
       onNone: () => [
         h.span([h.Class("truncate font-mono text-[13px] font-medium")], [model.automationId]),
@@ -127,6 +135,7 @@ const themeToggleView = (theme: Theme, h: HtmlBuilder<Message>) =>
       size: "icon-sm",
       className: "rounded-[10px] text-sand-10",
       attributes: [
+        componentName("theme-toggle"),
         h.AriaLabel(`Color theme: ${theme}`),
         h.Title(`Color theme: ${theme}. Click for ${nextTheme[theme]}.`),
       ],

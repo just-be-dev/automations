@@ -1,4 +1,4 @@
-import type { Html, HtmlBuilder } from "foldkit/html";
+import type { Attribute, Html, HtmlBuilder } from "foldkit/html";
 
 type Child = Html | string;
 
@@ -30,14 +30,27 @@ export const emptyContentClass =
 
 type StyleConfig = Readonly<{ className?: string }>;
 
+type EmptyConfig<M> = Readonly<{
+  className?: string;
+  /** Extra attributes merged onto the empty state's root element. */
+  attributes?: ReadonlyArray<Attribute<M>>;
+}>;
+
 type EmptyMediaConfig = Readonly<{ variant?: EmptyMediaVariant; className?: string }>;
 
 const emptyContainer = <M>(
-  config: StyleConfig,
+  config: EmptyConfig<M>,
   children: ReadonlyArray<Child>,
   h: HtmlBuilder<M>,
 ): Html =>
-  h.div([h.Class(cn(emptyClass, config.className)), h.DataAttribute("slot", "empty")], children);
+  h.div(
+    [
+      h.Class(cn(emptyClass, config.className)),
+      h.DataAttribute("slot", "empty"),
+      ...(config.attributes ?? []),
+    ],
+    children,
+  );
 
 const emptyHeader = <M>(
   config: StyleConfig,

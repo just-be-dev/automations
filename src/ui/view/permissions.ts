@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 import type { HtmlBuilder } from "foldkit/html";
 import { CircleCheck, Hand } from "lucide";
 import { inputClass } from "@/components/ui/input";
+import { componentName } from "@/lib/component";
 import { icon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { permissionOf } from "../../connections.ts";
@@ -29,7 +30,11 @@ export const permissionsView = (workflow: Workflow, model: Model, h: HtmlBuilder
     onEmpty: () => h.empty,
     onNonEmpty: (operationIds) =>
       h.section(
-        [h.AriaLabelledBy("permissions"), h.Class("flex max-w-2xl flex-col gap-2")],
+        [
+          componentName("permissions"),
+          h.AriaLabelledBy("permissions"),
+          h.Class("flex max-w-2xl flex-col gap-2"),
+        ],
         [
           h.h3([h.Id("permissions"), h.Class(eyebrowClass)], ["Permissions"]),
           h.p(
@@ -66,7 +71,7 @@ const permissionRowView = (
     Message.SelectedPermission({ operation: operationId, permission });
   return h.keyed("li")(
     operationId,
-    [h.Class("flex flex-wrap items-center gap-2.5 py-1.5")],
+    [componentName("permission-row"), h.Class("flex flex-wrap items-center gap-2.5 py-1.5")],
     [
       h.span(
         [h.Class("icon-tile"), h.AriaHidden(true)],
@@ -153,6 +158,7 @@ interface PermissionButton {
 const permissionButtonView = (button: PermissionButton, h: HtmlBuilder<Message>) =>
   h.button(
     [
+      componentName("permission-button"),
       h.Type("button"),
       h.AriaLabel(button.label),
       h.AriaPressed(String(button.isChosen)),

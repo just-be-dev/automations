@@ -3,6 +3,7 @@ import * as Option from "effect/Option";
 import type { HtmlBuilder } from "foldkit/html";
 import { LayoutDashboard, Database, Plus, Workflow as WorkflowIcon } from "lucide";
 import { button } from "@/components/ui/button";
+import { componentName } from "@/lib/component";
 import { icon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { Message } from "../message.ts";
@@ -17,6 +18,7 @@ const navItemClass =
 export const sidebarView = (model: Model, h: HtmlBuilder<Message>) =>
   h.nav(
     [
+      componentName("sidebar"),
       h.AriaLabel("Automations"),
       h.Class("flex shrink-0 flex-col border-b px-2 pb-2 lg:min-h-0 lg:w-60 lg:border-b-0"),
     ],
@@ -133,7 +135,7 @@ const automationLinkView = (
 ) =>
   h.keyed("li")(
     automation.id,
-    [],
+    [componentName("automation-link")],
     [
       h.a(
         [
