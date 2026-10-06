@@ -1,5 +1,5 @@
 import * as Schema from "effect/Schema";
-import { AskedQuestions, Question } from "../agents/planner/question.ts";
+import { AskedQuestions, Question } from "../ai/ask-question/question.ts";
 import { Trigger } from "../workflow/model.ts";
 import { RunSummary } from "../workflow/run.ts";
 

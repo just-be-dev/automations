@@ -2,10 +2,10 @@ import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import type { QuestionsAnswer } from "../agents/planner/question.ts";
+import type { QuestionsAnswer } from "./question.ts";
 
 /**
- * Wakes a planner turn parked on its questions, within one automation instance. Answers are kept
+ * Wakes an agent turn parked on its questions, within one automation instance. Answers are kept
  * in storage, so a turn pi resumes after a restart finds them there; this only spares a turn still
  * in memory from waiting for a restart, and tells the reply in progress that its turn has parked.
  */
@@ -18,9 +18,9 @@ export class AnswerHub extends Context.Service<
      */
     readonly answerSlot: (callId: string) => Effect.Effect<Effect.Effect<QuestionsAnswer>>;
     readonly deliver: (callId: string, answer: QuestionsAnswer) => Effect.Effect<void>;
-    /** Resolves with the wait for the turn answering `chatId` to park on a question. */
-    readonly watchParked: (chatId: string) => Effect.Effect<Effect.Effect<void>>;
-    readonly parked: (chatId: string) => Effect.Effect<void>;
+    /** Resolves with the wait for turn `turnId` to park on a question. */
+    readonly watchParked: (turnId: string) => Effect.Effect<Effect.Effect<void>>;
+    readonly parked: (turnId: string) => Effect.Effect<void>;
   }
 >()("automations/AnswerHub") {}
 
@@ -48,15 +48,15 @@ export const makeAnswerHub = Effect.sync(() => {
       ),
     deliver: (callId, answer) =>
       slot(callId).pipe(Effect.flatMap((deferred) => Deferred.succeed(deferred, answer))),
-    watchParked: (chatId) =>
+    watchParked: (turnId) =>
       Deferred.make<void>().pipe(
-        Effect.tap((deferred) => Effect.sync(() => parkings.set(chatId, deferred))),
+        Effect.tap((deferred) => Effect.sync(() => parkings.set(turnId, deferred))),
         Effect.map(Deferred.await),
       ),
-    parked: (chatId) =>
+    parked: (turnId) =>
       Effect.suspend(() => {
-        const deferred = parkings.get(chatId);
-        parkings.delete(chatId);
+        const deferred = parkings.get(turnId);
+        parkings.delete(turnId);
         return deferred === undefined ? Effect.void : Deferred.succeed(deferred, undefined);
       }),
   });

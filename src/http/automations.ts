@@ -4,7 +4,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { Automations } from "../automation/service.ts";
-import { QuestionsAnswer } from "../agents/planner/question.ts";
+import { QuestionsAnswer } from "../ai/ask-question/question.ts";
 import { createAutomation } from "../automation/creation.ts";
 import { AutomationIndex } from "../automation/index.ts";
 import type { AutomationOverview } from "../automation/model.ts";

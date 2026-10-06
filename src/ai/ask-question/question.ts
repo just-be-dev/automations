@@ -1,10 +1,10 @@
 import * as Schema from "effect/Schema";
 
 /**
- * The questions the planner asks while it answers a message, and the answers the person may pick
- * from. Asking parks the planner's turn until the person answers: the studio walks them through
- * the questions one at a time, each option is a button, every question also takes an answer in
- * their own words, and the answers return to the planner as the tool's result.
+ * The questions an agent asks the person with `ask_question`, the answers the person may pick
+ * from, and how they answered. Asking parks the agent's turn until the person answers: the studio
+ * walks them through the questions one at a time, each option is a button, every question also
+ * takes an answer in their own words, and the answers return to the agent as the tool's result.
  */
 
 export const MAX_QUESTIONS = 4;
@@ -90,7 +90,7 @@ const questionProblems = (question: Question, index: number): ReadonlyArray<stri
 };
 
 /**
- * Everything that keeps the questions from being shown, in words the planner can act on. Every
+ * Everything that keeps the questions from being shown, in words the agent can act on. Every
  * problem is listed, so one correction can fix them all.
  */
 export const questionnaireProblems = (
@@ -124,7 +124,7 @@ export const QuestionsAnswer = Schema.Union([
 ]);
 export type QuestionsAnswer = typeof QuestionsAnswer.Type;
 
-/** Questions the planner asked while answering a message, and how the person answered them. */
+/** Questions an agent asked in one call, and how the person answered them. */
 export const AskedQuestions = Schema.Struct({
   questions: Schema.Array(Question),
   answer: QuestionsAnswer,
@@ -151,7 +151,7 @@ export const answerProblem = (
     : undefined;
 };
 
-/** The tool result the planner reads once the person has answered. */
+/** The tool result the agent reads once the person has answered. */
 export const answerResult = (questions: ReadonlyArray<Question>, answer: QuestionsAnswer) => {
   if (answer.kind === "message") {
     return `Instead of picking answers, the person wrote:\n\n${answer.text.trim()}\n\nTreat this as their answer, and carry on.`;

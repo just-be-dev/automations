@@ -11,7 +11,7 @@ import {
   type ProgressPhrase,
 } from "../agents/planner/planner.ts";
 import { ProgressClassifier } from "../agents/planner/progress-classifier.ts";
-import type { QuestionsAnswer } from "../agents/planner/question.ts";
+import type { QuestionsAnswer } from "../ai/ask-question/question.ts";
 import { PiAgent } from "../ai/pi.ts";
 import { findOperation } from "../connections/registry.ts";
 import { EntityStore } from "../entities/store.ts";

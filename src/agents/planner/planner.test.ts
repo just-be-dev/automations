@@ -11,7 +11,7 @@ import {
   turnMessage,
   type ClassifyRequest,
 } from "./planner.ts";
-import { answerResult, type Question } from "./question.ts";
+import type { Question } from "../../ai/ask-question/question.ts";
 import { plannerTools } from "./tools.ts";
 import { PiError, type AgentTool, type AgentToolError, type PromptOptions } from "../../ai/pi.ts";
 
@@ -213,7 +213,7 @@ describe("the planner's tools", () => {
     expect(await Effect.runPromise(copy.call("check_workflow"))).toContain("1–20 steps");
   });
 
-  test("ask questions, wait for the answers, and return them", async () => {
+  test("ask questions through the working copy's store, and return the answers", async () => {
     const copy = workingCopy(planOf(draft));
     const before = await Effect.runPromise(copy.plan);
     const questions = [
@@ -237,60 +237,6 @@ describe("the planner's tools", () => {
     );
     expect(copy.asked).toEqual([{ callId: "call-1", questions }]);
     expect(await Effect.runPromise(copy.plan)).toEqual(before);
-  });
-
-  test("tell the planner when the person skipped its questions or wrote instead", () => {
-    const questions = [
-      {
-        question: "Which tone?",
-        header: "Tone",
-        options: [{ label: "Formal" }, { label: "Casual" }],
-      },
-    ];
-    expect(answerResult(questions, { kind: "answers", answers: [" "] })).toStartWith(
-      "The person skipped your questions.",
-    );
-    expect(answerResult(questions, { kind: "message", text: " Warm but brief \n" })).toBe(
-      "Instead of picking answers, the person wrote:\n\nWarm but brief\n\nTreat this as their answer, and carry on.",
-    );
-  });
-
-  test("tell the planner everything wrong with its questions, and show none of them", async () => {
-    const copy = workingCopy(planOf(draft));
-    const ask = (questions: ReadonlyArray<unknown>) =>
-      Effect.runPromise(copy.call("ask_question", { questions }).pipe(Effect.flip)).then(
-        (error) => error.message,
-      );
-    const question = (index: number, labels: ReadonlyArray<string> = ["Yes", "No"]) => ({
-      question: `Question ${index}?`,
-      header: `Header ${index}`,
-      options: labels.map((label) => ({ label })),
-    });
-
-    expect(await ask([])).toContain("Ask at least 1 question.");
-    expect(await ask([1, 2, 3, 4, 5].map((index) => question(index)))).toContain(
-      "You asked 5 questions; ask at most 4 at a time.",
-    );
-    const problems = await ask([
-      { ...question(1, ["Managers"]), header: "Who approves the email" },
-      { ...question(1, ["HR", "hr", "Other", "A", "B"]), header: "" },
-      question(3, ["Yes", "x".repeat(61)]),
-    ]);
-    expect(problems).toStartWith("Nothing was shown. Fix these and ask again:\n- ");
-    expect(problems).toContain('The question "Question 1?" is asked more than once.');
-    expect(problems).toContain(
-      'Question 1\'s header "Who approves the email" is longer than 16 characters.',
-    );
-    expect(problems).toContain("Question 1 has 1 option; give it at least 2");
-    expect(problems).toContain("Question 2 has no header");
-    expect(problems).toContain("Question 2 has 5 options; give it at most 4");
-    expect(problems).toContain('Question 2 has more than one option labelled "HR".');
-    expect(problems).toContain(
-      "Question 2's option \"Other\" isn't needed: the studio already lets the person write their own answer.",
-    );
-    expect(problems).toContain("is longer than 60 characters");
-    expect(await ask([{ question: "Which role?" }])).toContain("header");
-    expect(copy.asked).toEqual([]);
   });
 
   test("set permissions", async () => {

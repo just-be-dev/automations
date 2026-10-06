@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { PiAgent } from "../../ai/pi.ts";
 import { ClassifierError, ProgressClassifier } from "../../agents/planner/progress-classifier.ts";
-import { AnswerHub, makeAnswerHub } from "../../automation/answer-hub.ts";
+import { AnswerHub, makeAnswerHub } from "../../ai/ask-question/answer-hub.ts";
 import { makeAutomation } from "../../automation/application.ts";
 import { AutomationHost, AutomationStorageError } from "../../automation/host.ts";
 import { makePlanning } from "../../automation/planning.ts";

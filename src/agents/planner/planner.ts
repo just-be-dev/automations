@@ -6,7 +6,7 @@ import type { LiveAnswer, PiAgent } from "../../ai/pi.ts";
 import { InvalidWorkflow, type Workflow } from "../../workflow/model.ts";
 import { MAX_SCHEDULED_RUNS, MIN_SCHEDULE_GAP_MINUTES } from "../../workflow/schedule.ts";
 import { assemblePlan, planOf, planYaml, samePlan, type Plan } from "./plan.ts";
-import { MAX_OPTIONS, MAX_QUESTIONS, MIN_OPTIONS } from "./question.ts";
+import { MAX_OPTIONS, MAX_QUESTIONS, MIN_OPTIONS } from "../../ai/ask-question/question.ts";
 
 /**
  * The planner agent: its system prompt instructions, how its edits and answer become a draft, and

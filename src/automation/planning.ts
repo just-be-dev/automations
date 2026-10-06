@@ -7,12 +7,12 @@ import {
   answerProblem,
   Question,
   QuestionsAnswer,
-} from "../agents/planner/question.ts";
+} from "../ai/ask-question/question.ts";
 import { plannerTools, type PlanStore } from "../agents/planner/tools.ts";
 import { AgentToolError } from "../ai/pi.ts";
 import { EntityStore } from "../entities/store.ts";
 import type { Workflow } from "../workflow/model.ts";
-import { AnswerHub } from "./answer-hub.ts";
+import { AnswerHub } from "../ai/ask-question/answer-hub.ts";
 import { AutomationHost, decodeOrDrop } from "./host.ts";
 import { AutomationError } from "./model.ts";
 import { catalogOf } from "./workflow-store.ts";

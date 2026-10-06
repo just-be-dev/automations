@@ -12,7 +12,7 @@ import { EntityStore, EntityStoreError, layerMemory } from "../entities/store.ts
 import type { Workflow } from "../workflow/model.ts";
 import { ExecutionId, ExecutionValues } from "../workflow/execution.ts";
 import { RunId } from "../workflow/run.ts";
-import { answerHubLayer } from "./answer-hub.ts";
+import { answerHubLayer } from "../ai/ask-question/answer-hub.ts";
 import { makeAutomation } from "./application.ts";
 import { AutomationHost } from "./host.ts";
 import { AutomationIndex, AutomationIndexError } from "./index.ts";
