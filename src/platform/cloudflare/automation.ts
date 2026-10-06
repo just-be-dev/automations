@@ -20,6 +20,9 @@ const PROGRESS_MODEL = "@cf/cloudflare/clef-flash";
 const PlanReply = Schema.Struct({ automationId: Schema.String, chatId: Schema.String });
 const Advance = Schema.Struct({ executionId: Schema.optionalKey(ExecutionId) });
 const ClockFired = Schema.Struct({ executionId: ExecutionId, deferredName: Schema.String });
+const Tick = Schema.Struct({ at: Schema.Finite });
+/** The saved schedule has one pending occurrence at a time, under this job ID. */
+const TICK_JOB = "schedule";
 
 /** Cloudflare hosts the application; business operations don't know about bindings or callbacks. */
 export default class Automation extends Cloudflare.DurableObject<Automation>()(
@@ -70,6 +73,9 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
                 payload: { executionId, deferredName },
               }),
             ).pipe(Effect.orDie),
+          tick: (at) =>
+            withRuntime(tick.schedule(TICK_JOB, { at, payload: { at } })).pipe(Effect.orDie),
+          cancelTick: withRuntime(Effect.suspend(() => tick.cancel(TICK_JOB))).pipe(Effect.orDie),
         },
       });
       // The planner's tools edit its working copy through the host, so pi opens with them.
@@ -109,6 +115,12 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         Schema.decodeUnknownEffect(ClockFired)(payload).pipe(
           Effect.orDie,
           Effect.flatMap(callbacks.clock),
+        ),
+      );
+      const tick = yield* Alchemy.makeCallback("tick", (payload: unknown) =>
+        Schema.decodeUnknownEffect(Tick)(payload).pipe(
+          Effect.orDie,
+          Effect.flatMap(callbacks.tick),
         ),
       );
       return operations;

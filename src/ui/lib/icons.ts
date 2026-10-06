@@ -1,5 +1,6 @@
 import type { Attribute, ChildAttribute, Html, HtmlBuilder } from "foldkit/html";
-import type { IconNode, SVGProps } from "lucide";
+import { CalendarClock, CalendarDays, Play, Radio, type IconNode, type SVGProps } from "lucide";
+import type { Trigger } from "../../workflow.ts";
 
 /**
  * Render a lucide icon as Foldkit virtual DOM.
@@ -76,3 +77,17 @@ export const icon = <M>(
     [...svgAttributes(className, h), ...(position ? [h.DataAttribute("icon", position)] : [])],
     node.map(([tag, attrs]) => svgElement(tag, h)(nodeToAttributes(attrs, h))),
   );
+
+/** The icon for what starts a workflow's runs. */
+export const triggerIcon = (trigger: Trigger): IconNode => {
+  switch (trigger.kind) {
+    case "entity":
+      return Radio;
+    case "schedule":
+      return CalendarClock;
+    case "date":
+      return CalendarDays;
+    case "manual":
+      return Play;
+  }
+};

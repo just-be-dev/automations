@@ -4,14 +4,7 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import { Submodel } from "foldkit";
 import type { Html, HtmlBuilder } from "foldkit/html";
-import {
-  CircleAlert,
-  CircleCheck,
-  LoaderCircle,
-  Play,
-  Radio,
-  Workflow as WorkflowIcon,
-} from "lucide";
+import { CircleAlert, CircleCheck, LoaderCircle, Play, Workflow as WorkflowIcon } from "lucide";
 import { badge } from "@/components/ui/badge";
 import { button, buttonClass } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
@@ -24,9 +17,15 @@ import {
   runStatusLabel,
   withArticle,
 } from "@/lib/format";
-import { icon } from "@/lib/icons";
+import { icon, triggerIcon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
-import type { RunSummary, Trigger } from "../../../workflow.ts";
+import {
+  checkTimePhrase,
+  describeSchedule,
+  offsetPhrase,
+  type RunSummary,
+  type Trigger,
+} from "../../../workflow.ts";
 import { automationHref, runHref } from "../../route.ts";
 import { Message } from "./message.ts";
 import { type Automation, isRunning, Launch, Listing, type Model, Subjects } from "./model.ts";
@@ -205,6 +204,19 @@ export const triggerSummary = (trigger: Trigger) =>
         const condition = entity.when === undefined ? "" : ", if its condition holds";
         return `When ${withArticle(entity.entity)} is created or ${changes}${condition}`;
       },
+      date: (date) => {
+        const [type = "", ...path] = date.on.split(".");
+        const condition = date.when === undefined ? "" : ", if its condition holds";
+        return `${offsetPhrase(date.offset)}each ${type.replaceAll("_", " ")}'s ${path.join(".")} ${checkTimePhrase(date.time, date.timezone)}${condition}`;
+      },
+      schedule: (schedule) => {
+        const condition = schedule.when === undefined ? "" : " that meets its condition";
+        const each =
+          schedule.entity === undefined
+            ? ""
+            : `, for each ${schedule.entity.replaceAll("_", " ")}${condition}`;
+        return `${describeSchedule(schedule)}${each}`;
+      },
     }),
   );
 
@@ -228,7 +240,7 @@ const automationView = (automation: Automation, launch: Launch, h: HtmlBuilder<M
                 h,
                 Option.match(automation.maybeTrigger, {
                   onNone: () => WorkflowIcon,
-                  onSome: (trigger) => (trigger.kind === "entity" ? Radio : Play),
+                  onSome: triggerIcon,
                 }),
                 "size-3.5",
               ),
@@ -255,6 +267,7 @@ const automationView = (automation: Automation, launch: Launch, h: HtmlBuilder<M
                   }),
                 ],
               ),
+              nextRunView(automation, h),
               lastRunView(automation, h),
               Option.match(automation.maybeError, {
                 onNone: () => h.empty,
@@ -289,6 +302,12 @@ const automationView = (automation: Automation, launch: Launch, h: HtmlBuilder<M
       }),
     ],
   );
+
+const nextRunView = (automation: Automation, h: HtmlBuilder<Message>) =>
+  Option.match(automation.maybeNextRunAt, {
+    onNone: () => h.empty,
+    onSome: (at) => h.p([h.Class("text-xs text-sand-10")], [`Next run ${formatTime(at)}`]),
+  });
 
 const lastRunView = (automation: Automation, h: HtmlBuilder<Message>) =>
   Option.match(automation.maybeLastRun, {

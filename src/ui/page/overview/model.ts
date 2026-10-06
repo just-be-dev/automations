@@ -9,6 +9,8 @@ export const Automation = Schema.Struct({
   name: Schema.String,
   /** The saved workflow's trigger. Only a saved automation can run. */
   maybeTrigger: Schema.Option(Trigger),
+  /** When a schedule trigger next starts runs, in epoch milliseconds. */
+  maybeNextRunAt: Schema.Option(Schema.Finite),
   activeRuns: Schema.Array(RunSummary),
   maybeLastRun: Schema.Option(RunSummary),
   maybeError: Schema.Option(Schema.String),

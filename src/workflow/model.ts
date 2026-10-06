@@ -2,6 +2,14 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { EntityName } from "../entities/model.ts";
+import {
+  cronProblem,
+  dailyCron,
+  DEFAULT_TIME,
+  fallsOn,
+  isTimeZone,
+  type Schedule,
+} from "./schedule.ts";
 
 export class InvalidWorkflow extends Schema.TaggedError<InvalidWorkflow>()("InvalidWorkflow", {
   message: Schema.String,
@@ -246,12 +254,91 @@ export const EntityTrigger = Schema.Struct({
   when: Schema.optionalKey(Condition),
 });
 
-export const Trigger = Schema.Union([ManualTrigger, EntityTrigger]);
+const TimeZone = Schema.String.check(
+  Schema.makeFilter(isTimeZone, {
+    message: 'Time zones are IANA names, such as "Europe/London" or "America/New_York"',
+  }),
+);
+
+/**
+ * Starts runs on a cron schedule (`minute hour day-of-month month weekday`) in `timezone`, UTC
+ * when omitted. Without `entity`, each occurrence starts one run with no subject. With it, each
+ * occurrence starts a run for every entity of that type for which `when` holds then, with the
+ * entity as its subject.
+ */
+export const ScheduleTrigger = Schema.Struct({
+  kind: Schema.Literal("schedule"),
+  cron: Schema.String.check(Schema.makeFilter((cron: string) => cronProblem(cron) ?? true)),
+  timezone: Schema.optionalKey(TimeZone),
+  entity: Schema.optionalKey(EntityName),
+  when: Schema.optionalKey(Condition),
+});
+
+/** A shift from a date in whole days or weeks: "3 days" after it, or "-1 week" before it. */
+const DayOffset = Identifier(
+  /^-?\d{1,4} (day|week)s?$/,
+  'Offsets from a date are whole days or weeks, such as "3 days" or "-1 week"',
+);
+
+/**
+ * Starts a run for each entity of type `entity` on the day the date at `on` falls, shifted by
+ * `offset`, at `time` (24-hour, "09:00" when omitted) in `timezone` (UTC when omitted), if `when`
+ * holds then. The date is read on the day, so changing it moves the run.
+ */
+export const DateTrigger = Schema.Struct({
+  kind: Schema.Literal("date"),
+  entity: EntityName,
+  on: Ref,
+  offset: Schema.optionalKey(DayOffset),
+  time: Schema.optionalKey(
+    Identifier(/^([01]\d|2[0-3]):[0-5]\d$/, 'Times of day are 24-hour "HH:MM", such as "09:00"'),
+  ),
+  timezone: Schema.optionalKey(TimeZone),
+  when: Schema.optionalKey(Condition),
+});
+
+export const Trigger = Schema.Union([ManualTrigger, EntityTrigger, ScheduleTrigger, DateTrigger]);
 export type Trigger = typeof Trigger.Type;
+
+/** Triggers that start runs at times of their own, through the automation's schedule. */
+export type TimedTrigger = Extract<Trigger, { readonly kind: "schedule" | "date" }>;
+
+export const isTimed = (trigger: Trigger): trigger is TimedTrigger =>
+  trigger.kind === "schedule" || trigger.kind === "date";
 
 /** The entity type a run is about, which is also the root of refs to it. */
 export const subjectType = (trigger: Trigger) =>
-  trigger.kind === "entity" ? trigger.entity : trigger.subject;
+  trigger.kind === "manual" ? trigger.subject : trigger.entity;
+
+/** The condition a trigger checks against an entity before it starts a run for it. */
+export const triggerCondition = (trigger: Trigger) =>
+  trigger.kind === "manual" ? undefined : trigger.when;
+
+/** Every ref a trigger reads from an entity before it starts a run for it. */
+export const triggerRefs = (trigger: Trigger) => [
+  ...(trigger.kind === "date" ? [trigger.on] : []),
+  ...conditionRefs(triggerCondition(trigger) ?? { all: [] }),
+];
+
+/** When a timed trigger checks for runs to start: its cron, or daily at a date trigger's time. */
+export const triggerSchedule = (trigger: TimedTrigger): Schedule =>
+  trigger.kind === "schedule"
+    ? trigger
+    : { cron: dailyCron(trigger.time ?? DEFAULT_TIME), timezone: trigger.timezone };
+
+/**
+ * Whether a timed trigger starts a run for an entity at `at`, given the values of its
+ * `triggerRefs`: a date trigger's date falls that day, and the condition holds.
+ */
+export const isDue = (trigger: TimedTrigger, read: (ref: string) => unknown, at: number) =>
+  (trigger.kind !== "date" ||
+    fallsOn(
+      read(trigger.on),
+      durationMillis(trigger.offset ?? "0 days") / 86_400_000,
+      at,
+      trigger.timezone,
+    )) &&
+  (trigger.when === undefined || holds(trigger.when, read, at));
 
 export const ValueType = Schema.Literals(["text", "number", "boolean", "date", "datetime"]);
 export type ValueType = typeof ValueType.Type;
@@ -646,12 +733,7 @@ export const stepNeeds = (step: Step): ReadonlyArray<string> => [
 
 /** Every ref the workflow reads, in order of first use, the trigger's condition included. */
 export const workflowRefs = (workflow: Pick<Workflow, "trigger" | "steps">) => [
-  ...new Set([
-    ...(workflow.trigger.kind === "entity" && workflow.trigger.when !== undefined
-      ? conditionRefs(workflow.trigger.when)
-      : []),
-    ...flattenSteps(workflow.steps).flatMap(stepRefs),
-  ]),
+  ...new Set([...triggerRefs(workflow.trigger), ...flattenSteps(workflow.steps).flatMap(stepRefs)]),
 ];
 
 /** The operations the workflow's action steps use, in order of first use. */

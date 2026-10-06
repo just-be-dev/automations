@@ -11,7 +11,9 @@ const OverviewResponse = Schema.Array(
   Schema.Struct({
     id: Schema.String,
     name: Schema.String,
-    saved: Schema.OptionFromOptional(Schema.Struct({ trigger: Trigger })),
+    saved: Schema.OptionFromOptional(
+      Schema.Struct({ trigger: Trigger, nextRunAt: Schema.OptionFromOptional(Schema.Finite) }),
+    ),
     activeRuns: Schema.Array(RunSummary),
     lastRun: Schema.OptionFromOptional(RunSummary),
     error: Schema.OptionFromOptional(Schema.String),
@@ -28,6 +30,7 @@ const loadOverview = (session: number, poll: number) =>
           id: automation.id,
           name: automation.name,
           maybeTrigger: Option.map(automation.saved, (saved) => saved.trigger),
+          maybeNextRunAt: Option.flatMap(automation.saved, (saved) => saved.nextRunAt),
           activeRuns: automation.activeRuns,
           maybeLastRun: automation.lastRun,
           maybeError: automation.error,

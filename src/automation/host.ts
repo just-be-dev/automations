@@ -43,6 +43,10 @@ export class AutomationHost extends Context.Service<
         deferredName: string,
         at: number,
       ) => Effect.Effect<void>;
+      /** Delivers the saved schedule's occurrence at `at`, replacing any pending one. */
+      readonly tick: (at: number) => Effect.Effect<void>;
+      /** Cancels the pending occurrence, if there is one. */
+      readonly cancelTick: Effect.Effect<void>;
     };
   }
 >()("automations/AutomationHost") {}

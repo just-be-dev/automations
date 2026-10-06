@@ -13,8 +13,6 @@ import {
   Hourglass,
   LoaderCircle,
   OctagonX,
-  Play,
-  Radio,
   Scale,
   SkipForward,
   Split,
@@ -23,7 +21,7 @@ import {
 } from "lucide";
 import { recordView } from "@/components/record";
 import { withArticle } from "@/lib/format";
-import { icon } from "@/lib/icons";
+import { icon, triggerIcon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { Role } from "../../entities.ts";
 import {
@@ -31,7 +29,10 @@ import {
   type ActionMatch,
   type ActionStep,
   type Comparison,
+  checkTimePhrase,
   type Condition,
+  describeSchedule,
+  offsetPhrase,
   type HumanField,
   type InputSource,
   patternCondition,
@@ -133,6 +134,23 @@ const triggerTextView = (trigger: Trigger, h: HtmlBuilder<Message>): ReadonlyArr
         ...changedFieldsView(entity.fields, h),
         ...(entity.when === undefined ? [] : [", and ", ...conditionView(entity.when, h)]),
       ],
+      date: (date) => [
+        offsetPhrase(date.offset),
+        subjectRefView(date.on, h),
+        ` ${checkTimePhrase(date.time, date.timezone)}`,
+        ...(date.when === undefined ? [] : [", if ", ...conditionView(date.when, h)]),
+      ],
+      schedule: (schedule) => [
+        describeSchedule(schedule),
+        ...(schedule.entity === undefined
+          ? []
+          : [
+              `, for each ${schedule.entity.replaceAll("_", " ")}`,
+              ...(schedule.when === undefined
+                ? []
+                : [" where ", ...conditionView(schedule.when, h)]),
+            ]),
+      ],
     }),
   );
 
@@ -143,11 +161,7 @@ const triggerView = (workflow: Workflow, h: HtmlBuilder<Message>) =>
       h.div(
         [h.Class("flex w-[18px] shrink-0 flex-col items-center"), h.AriaHidden(true)],
         [
-          icon(
-            h,
-            workflow.trigger.kind === "entity" ? Radio : Play,
-            "mt-[3px] size-[18px] text-muted-foreground",
-          ),
+          icon(h, triggerIcon(workflow.trigger), "mt-[3px] size-[18px] text-muted-foreground"),
           h.div([h.Class("mt-1.5 w-[1.5px] flex-1 bg-rail")]),
         ],
       ),
