@@ -2,6 +2,7 @@ import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import { labelFromName } from "@/lib/format";
 import {
   type EntityData,
   type EntityField,
@@ -37,11 +38,6 @@ export const typeDraftOf = (type: EntityType): TypeDraft => {
     fields,
     nextKey: fields.length,
   };
-};
-
-export const labelFromName = (name: string) => {
-  const words = name.trim().replaceAll("_", " ");
-  return words.charAt(0).toUpperCase() + words.slice(1);
 };
 
 /** The type a draft describes, or the first thing to fix. The server checks refs again. */

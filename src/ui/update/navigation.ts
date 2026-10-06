@@ -3,9 +3,14 @@ import { Update } from "foldkit";
 import { modifyFields } from "foldkit/struct";
 import { LoadAutomation } from "../command.ts";
 import { AutomationId } from "../domain/index.ts";
-import { type Message, toEntitiesMessage, toOverviewMessage } from "../message.ts";
+import {
+  type Message,
+  toEntitiesMessage,
+  toOverviewMessage,
+  toTemplatesMessage,
+} from "../message.ts";
 import { Activity, type Model, Page, RunDetail, SubjectChoices } from "../model.ts";
-import { Entities, Overview } from "../page/index.ts";
+import { Entities, Overview, Templates } from "../page/index.ts";
 import { AppRoute } from "../route.ts";
 import { modifyOpenRun, openingRun, reloadOpenRun } from "./open-run.ts";
 import { fail } from "./studio.ts";
@@ -39,6 +44,15 @@ export const showPage = (model: Model, route: AppRoute): Update.Return<Model, Me
             activity: () => Activity.Ready({ notice: "" }),
           }),
         toParentMessage: toOverviewMessage,
+      }),
+    Templates: ({ maybeTemplateName }) =>
+      Update.foldChildInit(Templates.init(maybeTemplateName), {
+        toParentModel: (templates) =>
+          modifyFields(model, {
+            page: () => Page.Templates({ templates }),
+            activity: () => Activity.Ready({ notice: "" }),
+          }),
+        toParentMessage: toTemplatesMessage,
       }),
     Entities: ({ maybeTypeName }) =>
       Update.foldChildInit(Entities.init(maybeTypeName), {
@@ -79,6 +93,7 @@ export const showPage = (model: Model, route: AppRoute): Update.Return<Model, Me
 const routeAutomationId = (route: AppRoute) =>
   AppRoute.match(route, {
     Overview: () => "",
+    Templates: () => "",
     Entities: () => "",
     Studio: ({ automationId }) => automationId,
     Run: ({ automationId }) => automationId,
@@ -88,6 +103,7 @@ const isShowing = (model: Model, route: AppRoute) =>
   routeAutomationId(route) === model.automationId &&
   AppRoute.match(route, {
     Overview: () => false,
+    Templates: () => false,
     Entities: () => false,
     Studio: () => Page.guards.Studio(model.page),
     Run: ({ runId }) => Page.guards.Run(model.page) && model.page.openRun.runId === runId,
@@ -98,6 +114,16 @@ const isShowing = (model: Model, route: AppRoute) =>
  * there. Following a link to the run already open reloads it.
  */
 export const followRoute = (model: Model, route: AppRoute): Update.Return<Model, Message> => {
+  if (AppRoute.guards.Templates(route) && Page.guards.Templates(model.page)) {
+    return Update.foldChildInit(
+      Templates.reflectUrl(model.page.templates, route.maybeTemplateName),
+      {
+        toParentModel: (templates): Model =>
+          modifyFields(model, { page: (): Page => Page.Templates({ templates }) }),
+        toParentMessage: toTemplatesMessage,
+      },
+    );
+  }
   if (AppRoute.guards.Entities(route) && Page.guards.Entities(model.page)) {
     return Update.foldChildInit(Entities.reflectUrl(model.page.entities, route.maybeTypeName), {
       toParentModel: (entities): Model =>
@@ -117,6 +143,7 @@ export const opensInPanel = (model: Model, route: AppRoute) =>
     ? Option.none<{ readonly automationId: string; readonly runId: string }>()
     : AppRoute.match(route, {
         Overview: () => Option.none(),
+        Templates: () => Option.none(),
         Entities: () => Option.none(),
         Studio: () => Option.none(),
         Run: ({ automationId, runId }) =>

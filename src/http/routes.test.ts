@@ -2,12 +2,59 @@ import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as Layer from "effect/Layer";
+import { AutomationIndex } from "../automation/index.ts";
+import { Automations } from "../automation/service.ts";
 import { layerMemory } from "../entities/store.ts";
 import { EntitySubscribers } from "../entities/subscribers.ts";
 import { catalogRoutes } from "./catalog.ts";
 import { entityRoutes } from "./entities.ts";
 import { mcpRoutes } from "./mcp.ts";
 import { json } from "./response.ts";
+
+const unused = () => Effect.die("Unexpected operation");
+
+/** Each listed automation's saved and draft template uses, or a failure to answer. */
+const templateUses: Record<
+  string,
+  { readonly saved: ReadonlyArray<string>; readonly draft: ReadonlyArray<string> } | string
+> = {
+  welcome: { saved: ["welcome_email"], draft: ["welcome_email", "farewell"] },
+  drafting: { saved: [], draft: ["welcome_email"] },
+  unrelated: { saved: ["farewell"], draft: [] },
+  broken: "Durable Object reset",
+};
+
+const automationsLayer = Layer.merge(
+  Layer.succeed(AutomationIndex, {
+    list: Effect.succeed(
+      Object.keys(templateUses).map((id) => ({ id, name: `Automation ${id}`, updatedAt: 0 })),
+    ),
+    create: unused,
+    record: unused,
+    recordIfMissing: unused,
+  }),
+  Layer.succeed(Automations, {
+    get: (id) => ({
+      inspectWorkflow: unused,
+      overview: unused,
+      answer: unused,
+      templateUses: () => {
+        const uses = templateUses[id];
+        // Durable Object RPC errors arrive as plain objects.
+        return typeof uses === "string" || uses === undefined
+          ? Effect.fail({ message: uses ?? "Unknown" })
+          : Effect.succeed(uses);
+      },
+      chat: unused,
+      save: unused,
+      setPermissions: unused,
+      start: unused,
+      entityChanged: unused,
+      run: unused,
+      respond: unused,
+    }),
+  }),
+);
 
 const app = () =>
   HttpRouter.toWebHandler(
@@ -18,7 +65,8 @@ const app = () =>
       HttpRouter.add("*", "*", json({ error: "Not found" }, 404)),
     ).pipe(
       Layer.provideMerge(
-        Layer.merge(
+        Layer.mergeAll(
+          automationsLayer,
           layerMemory({
             types: [
               {
@@ -104,6 +152,28 @@ test("static type routes take precedence, and missing or invalid resources keep 
     );
     expect(invalid.status).toBe(400);
     expect(await invalid.json()).toMatchObject({ error: "employee.name must be a text" });
+  } finally {
+    await dispose();
+  }
+});
+
+test("a template's usage lists the automations whose saved workflow or draft use it", async () => {
+  const { handler, dispose } = app();
+  try {
+    const response = await handler(
+      new Request("http://studio/api/templates/welcome_email/automations"),
+    );
+    expect(response.status).toBe(200);
+    const usage: unknown = await response.json();
+    expect(usage).toEqual({
+      automations: [
+        { id: "welcome", name: "Automation welcome", updatedAt: 0, saved: true, draft: true },
+        { id: "drafting", name: "Automation drafting", updatedAt: 0, saved: false, draft: true },
+      ],
+      unchecked: [
+        { id: "broken", name: "Automation broken", updatedAt: 0, error: "Durable Object reset" },
+      ],
+    });
   } finally {
     await dispose();
   }

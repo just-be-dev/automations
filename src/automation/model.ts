@@ -80,3 +80,18 @@ export const AutomationOverview = Schema.Struct({
   error: Schema.optionalKey(Schema.String),
 });
 export interface AutomationOverview extends Schema.Schema.Type<typeof AutomationOverview> {}
+
+/** A listed automation whose saved workflow, draft, or both use a template. */
+export const TemplateUser = Schema.Struct({
+  ...AutomationSummary.fields,
+  saved: Schema.Boolean,
+  draft: Schema.Boolean,
+});
+export interface TemplateUser extends Schema.Schema.Type<typeof TemplateUser> {}
+
+/** Who uses a template. Automations that couldn't answer are listed apart with their error. */
+export const TemplateUsage = Schema.Struct({
+  automations: Schema.Array(TemplateUser),
+  unchecked: Schema.Array(Schema.Struct({ ...AutomationSummary.fields, error: Schema.String })),
+});
+export interface TemplateUsage extends Schema.Schema.Type<typeof TemplateUsage> {}

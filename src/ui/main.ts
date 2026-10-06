@@ -22,6 +22,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
   const route = routeFromUrl(url);
   const automationId = AppRoute.match(route, {
     Overview: () => "",
+    Templates: () => "",
     Entities: () => "",
     Studio: (studio) => studio.automationId,
     Run: (run) => run.automationId,

@@ -9,7 +9,7 @@ import { Empty } from "@/components/ui/empty";
 import { input, inputClass, inputLabelClass, inputWrapperClass } from "@/components/ui/input";
 import { componentName } from "@/lib/component";
 import { localDateTimeText } from "@/lib/datetime";
-import { plural, withArticle } from "@/lib/format";
+import { labelFromName, plural, withArticle } from "@/lib/format";
 import { icon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import {
@@ -19,7 +19,6 @@ import {
   FieldType,
 } from "../../../entities.ts";
 import { entitiesHref } from "../../route.ts";
-import { labelFromName } from "./draft.ts";
 import { Message } from "./message.ts";
 import {
   Activity,

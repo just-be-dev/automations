@@ -1,14 +1,14 @@
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import type { HtmlBuilder } from "foldkit/html";
-import { LayoutDashboard, Database, Plus, Workflow as WorkflowIcon } from "lucide";
+import { LayoutDashboard, Database, FileText, Plus, Workflow as WorkflowIcon } from "lucide";
 import { button } from "@/components/ui/button";
 import { componentName } from "@/lib/component";
 import { icon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { Message } from "../message.ts";
 import { type AutomationSummary, Directory, type Model, Page } from "../model.ts";
-import { automationHref, entitiesHref, overviewHref } from "../route.ts";
+import { automationHref, entitiesHref, overviewHref, templatesHref } from "../route.ts";
 
 const sidebarNoteClass = "px-1.5 py-1 text-xs text-muted-foreground";
 
@@ -51,6 +51,20 @@ export const sidebarView = (model: Model, h: HtmlBuilder<Message>) =>
           ),
         ],
         [icon(h, LayoutDashboard, "size-4"), "Overview"],
+      ),
+      h.a(
+        [
+          h.Href(templatesHref(Option.none())),
+          ...(Page.guards.Templates(model.page) ? [h.AriaCurrent("page")] : []),
+          h.Class(
+            cn(
+              navItemClass,
+              "items-center text-[13px] font-medium tracking-tight",
+              Page.guards.Templates(model.page) && "bg-hover text-foreground",
+            ),
+          ),
+        ],
+        [icon(h, FileText, "size-4"), "Templates"],
       ),
       h.div(
         [h.Class("mt-3 mb-px flex h-[22px] items-center justify-between gap-2 pr-0.5 pl-1.5")],

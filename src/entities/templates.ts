@@ -199,11 +199,16 @@ const expandStep = (templates: ReadonlyArray<Template>, step: Step): Step => {
 const expandSteps = (templates: ReadonlyArray<Template>, steps: ReadonlyArray<Step>) =>
   steps.map((step) => expandStep(templates, step));
 
-const usedTemplates = (steps: ReadonlyArray<Step>): ReadonlyArray<string> =>
+const stepTemplates = (steps: ReadonlyArray<Step>): ReadonlyArray<string> =>
   steps.flatMap((step) => [
     ...(step.kind === "action" ? actionTemplates(step).map((use) => use.use) : []),
-    ...childSequences(step).flatMap(usedTemplates),
+    ...childSequences(step).flatMap(stepTemplates),
   ]);
+
+/** The names of the templates a workflow uses, each once, in order of first use. */
+export const usedTemplates = (workflow: Workflow): ReadonlyArray<string> => [
+  ...new Set(stepTemplates(workflow.steps)),
+];
 
 /**
  * Replaces every template use with the inputs its content fills, so a run carries the wording it
@@ -214,7 +219,7 @@ export const expandTemplates = (
   workflow: Workflow,
   templates: ReadonlyArray<Template>,
 ): Effect.Effect<Workflow, InvalidWorkflow> => {
-  const missing = [...new Set(usedTemplates(workflow.steps))].filter(
+  const missing = usedTemplates(workflow).filter(
     (name) => findTemplate(templates, name) === undefined,
   );
   return missing.length === 0

@@ -20,7 +20,7 @@ import {
   StartRun,
 } from "../command.ts";
 import { AutomationId, TaskAnswer } from "../domain/index.ts";
-import { Message, toEntitiesMessage, toOverviewMessage } from "../message.ts";
+import { Message, toEntitiesMessage, toOverviewMessage, toTemplatesMessage } from "../message.ts";
 import {
   Activity,
   Directory,
@@ -33,7 +33,7 @@ import {
   RunNotice,
   SubjectChoices,
 } from "../model.ts";
-import { Entities, Overview } from "../page/index.ts";
+import { Entities, Overview, Templates } from "../page/index.ts";
 import { routeFromUrl, runHref } from "../route.ts";
 import { nextTheme } from "../theme.ts";
 import { followRoute, openRunPanel, opensInPanel } from "./navigation.ts";
@@ -81,6 +81,15 @@ const foldEntities = Update.foldChild({
   write: (model: Model, nextEntities: Entities.Model): Model =>
     modifyFields(model, { page: (): Page => Page.Entities({ entities: nextEntities }) }),
   toParentMessage: toEntitiesMessage,
+});
+
+const foldTemplates = Update.foldChild({
+  update: Templates.update,
+  read: (model: Model) =>
+    Page.guards.Templates(model.page) ? Option.some(model.page.templates) : Option.none(),
+  write: (model: Model, nextTemplates: Templates.Model): Model =>
+    modifyFields(model, { page: (): Page => Page.Templates({ templates: nextTemplates }) }),
+  toParentMessage: toTemplatesMessage,
 });
 
 const foldOverview = Update.foldChild({
@@ -434,5 +443,6 @@ export const update = (model: Model, message: Message) =>
     FailedRequest: ({ revision, error }) =>
       revision !== model.revision ? { model } : fail(model, error),
     GotOverviewMessage: ({ message }) => foldOverview(model, message),
+    GotTemplatesMessage: ({ message }) => foldTemplates(model, message),
     GotEntitiesMessage: ({ message }) => foldEntities(model, message),
   });

@@ -78,7 +78,7 @@ The response lists the runs the change `triggered`. People answer human steps fr
 
 A saved automation with a schedule trigger runs on a cron schedule in a time zone, such as every weekday at 9:00 in London. It can start one run each time, or one for every entity of a type that meets a condition, such as each employee who starts in the coming week. The overview shows the schedule in words and when it next runs (see [Triggers](docs/workflow-dsl.md#schedule)). A date trigger starts a run on, before, or after a date each entity holds, such as three days after each employee's start date, and follows the date if it changes (see [`date`](docs/workflow-dsl.md#date)). One occurrence starts at most 50 runs; one that matches more starts none and records a failed run saying so, and a save that already matches more is refused.
 
-Templates hold approved wording, such as the standard welcome email, with slots the automation fills (`hire → employee`). The planner uses a template whenever one fits instead of writing the text, and picks one per case with a `match`, for example a different welcome email by role. Write them with `PUT /api/templates/:name` (see [Templates](docs/workflow-dsl.md#templates)). Editing a template changes runs that start afterwards; runs already going keep the wording they started with.
+Templates hold approved wording, such as the standard welcome email, with slots the automation fills (`hire → employee`). The planner uses a template whenever one fits instead of writing the text, and picks one per case with a `match`, for example a different welcome email by role. Manage them on the studio's **Templates** page (`/templates`), which also lists the automations whose saved workflow or draft uses each one, or write them with `PUT /api/templates/:name` (see [Templates](docs/workflow-dsl.md#templates)). Editing a template changes runs that start afterwards; runs already going keep the wording they started with.
 
 | Endpoint                                                   | Purpose                                                                                                    |
 | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
@@ -101,6 +101,7 @@ Templates hold approved wording, such as the standard welcome email, with slots 
 | `POST /api/mcp`                                            | The entity store as an MCP server                                                                          |
 | `GET /api/templates`, `GET /api/templates/:name`           | List or read templates                                                                                     |
 | `PUT /api/templates/:name`, `DELETE /api/templates/:name`  | Create, replace, or delete a template                                                                      |
+| `GET /api/templates/:name/automations`                     | The automations whose saved workflow or draft use a template                                               |
 
 ### Entity store
 
@@ -122,7 +123,7 @@ Deployed stages sit behind Access, so send the service token as headers (`--head
 - Chat is asynchronous: `POST /chat` returns `202` with a `pendingChat`, and the reply and new draft appear on `GET /api/automations/:id` once `pendingChat` is gone. Until then the response includes `progress`, a plain phrase such as "Planning the steps…". If the agent fails, `pendingChat` stays with `status: "failed"` and an `error` until the next message. Each exchange in `conversation` has the `prompt`, the Markdown `reply`, and the questions the agent asked on the way with their answers (`asked`). While the agent waits for answers, `pendingChat` has `status: "asking"` and its `questions`; until the reply is written, it also lists the questions already answered in `asked`. `POST /api/automations/:id/answers` with `{ "chatId", "answer": { "kind": "answers", "answers": ["…", null] } }` (one answer per question, `null` to skip) resumes it; a `POST /chat` meanwhile answers with `{ "kind": "message" }` instead.
 - Runs advance through Alchemy durable callbacks that replay them from a journal in the Durable Object's storage. If the Durable Object is evicted mid-step, that step runs again; agent steps reuse their pi request ID instead of prompting twice.
 - Workflows and runs written before entity-based triggers were discarded; the Automation object drops them when it reads them.
-- Templates are managed through the API only; the studio shows which template a step uses but has no template editor yet. A run whose saved workflow no longer checks against the templates and entity types (for example, a template it uses was deleted) is recorded as failed instead of starting.
+- A run whose saved workflow no longer checks against the templates and entity types (for example, a template it uses was deleted) is recorded as failed instead of starting.
 - pi-ai, pi-durable, and Alchemy 2 are beta. Pin versions before production use.
 
 ## Inspiration

@@ -1,5 +1,6 @@
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import { usedTemplates } from "../entities/templates.ts";
 import { nextOccurrence } from "../workflow/schedule.ts";
 import { makeDesignSession } from "./design-session.ts";
 import { makeRuns } from "./runs.ts";
@@ -40,10 +41,21 @@ export const makeAutomation = Effect.fn("Automation.make")(function* () {
     };
   });
 
+  /** The templates the saved workflow and the draft use, by name. */
+  const templateUses = Effect.fn("Automation.templateUses")(function* () {
+    const saved = yield* workflows.read("saved");
+    const draft = yield* workflows.read("draft");
+    return {
+      saved: saved === undefined ? [] : usedTemplates(saved),
+      draft: draft === undefined ? [] : usedTemplates(draft),
+    };
+  });
+
   return {
     callbacks: { ...runs.callbacks, planReply: design.planReply },
     inspectWorkflow,
     overview,
+    templateUses,
     chat: design.chat,
     answer: design.answer,
     save: workflows.save,

@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import type { EntityType } from "./model.ts";
-import { expandTemplates, fillTemplate, templateProblems, type Template } from "./templates.ts";
+import {
+  expandTemplates,
+  fillTemplate,
+  templateProblems,
+  usedTemplates,
+  type Template,
+} from "./templates.ts";
 import type { Workflow } from "../workflow/model.ts";
 
 const employee: EntityType = {
@@ -137,5 +143,19 @@ describe("expandTemplates", () => {
   test("fails when a template is missing", () => {
     const error = Effect.runSync(Effect.flip(expandTemplates(workflow, [])));
     expect(error.message).toBe("Unknown templates: welcome");
+  });
+
+  test("usedTemplates names each template once, from the step, its match, and nested branches", () => {
+    const farewell = {
+      ...send,
+      id: "farewell",
+      template: { use: "farewell", with: { hire: "{{employee}}" } },
+    };
+    expect(
+      usedTemplates({
+        ...workflow,
+        steps: [...workflow.steps, farewell, { ...send, id: "again" }],
+      }),
+    ).toEqual(["welcome", "farewell"]);
   });
 });

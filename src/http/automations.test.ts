@@ -31,6 +31,7 @@ test("HTTP delegates the complete save without an entity store or directory writ
         inspectWorkflow: unused,
         overview: unused,
         answer: unused,
+        templateUses: unused,
         chat: unused,
         save: (automationId) =>
           Effect.sync(() => {
@@ -94,6 +95,7 @@ test("creating an automation names it, lists it, and sends its description as th
         inspectWorkflow: unused,
         overview: unused,
         answer: unused,
+        templateUses: unused,
         chat: (automationId, message) =>
           id === "order-summaries"
             ? Effect.fail({ message: "The agent is still answering the previous message" })

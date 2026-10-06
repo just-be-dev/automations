@@ -5,6 +5,12 @@ export const withArticle = (entityType: string) => {
   return `${/^[aeiou]/i.test(noun) ? "an" : "a"} ${noun}`;
 };
 
+/** `start_date` → `Start date`. */
+export const labelFromName = (name: string) => {
+  const words = name.trim().replaceAll("_", " ");
+  return words.charAt(0).toUpperCase() + words.slice(1);
+};
+
 export const formatTime = (millis: number) =>
   new Date(millis).toLocaleString("en-US", {
     month: "short",

@@ -493,12 +493,13 @@ When a run starts, `expandTemplates` replaces each use with the inputs its conte
 
 `migrations/0003_templates.sql` creates `engineering_welcome_email` and `welcome_email`, which welcomes any new hire.
 
-| Endpoint                      | Purpose                                     |
-| ----------------------------- | ------------------------------------------- |
-| `GET /api/templates`          | List templates                              |
-| `GET /api/templates/:name`    | Read one template                           |
-| `PUT /api/templates/:name`    | Create or replace a template once it checks |
-| `DELETE /api/templates/:name` | Delete a template                           |
+| Endpoint                               | Purpose                                          |
+| -------------------------------------- | ------------------------------------------------ |
+| `GET /api/templates`                   | List templates                                   |
+| `GET /api/templates/:name`             | Read one template                                |
+| `PUT /api/templates/:name`             | Create or replace a template once it checks      |
+| `DELETE /api/templates/:name`          | Delete a template                                |
+| `GET /api/templates/:name/automations` | Automations whose saved workflow or draft use it |
 
 ## Conditions
 

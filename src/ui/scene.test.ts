@@ -49,7 +49,7 @@ import {
 import { init } from "./main.ts";
 import { Message, toOverviewMessage } from "./message.ts";
 import type { Model } from "./model.ts";
-import { Entities, Overview } from "./page/index.ts";
+import { Entities, Overview, Templates } from "./page/index.ts";
 import { update } from "./update/index.ts";
 import { view } from "./view/index.ts";
 
@@ -666,6 +666,10 @@ test("action steps show the template they use and the inputs each match case sup
       "OtherwiseTemplate welcome_email · hire: employee",
     ),
     expect(role("list", { name: "Otherwise inputs" })).toHaveText("subject: Welcome"),
+    expect(role("link", { name: "welcome_email" })).toHaveAttr(
+      "href",
+      "/templates?template=welcome_email",
+    ),
   );
 });
 
@@ -1159,5 +1163,23 @@ test("the sidebar's entity store link opens the entity store page", () => {
     expect(role("link", { name: "Entity store" })).toHaveAttr("href", "/entities"),
     expect(role("heading", { name: "Entity types" })).toExist(),
     expect(text("No entity types yet.")).toExist(),
+  );
+});
+
+test("the sidebar's templates link opens the templates page", () => {
+  scene(
+    { update, view },
+    given(
+      applied(loaded, [
+        Message.ChangedUrl({ url: { ...studioUrl(), pathname: "/templates" } }),
+        Message.GotTemplatesMessage({
+          message: Templates.Message.SucceededLoadCatalog({ templates: [], types: [] }),
+        }),
+      ]),
+    ),
+    expect(role("link", { name: "Templates" })).toHaveAttr("aria-current", "page"),
+    expect(role("link", { name: "Templates" })).toHaveAttr("href", "/templates"),
+    expect(role("heading", { name: "Templates" })).toExist(),
+    expect(text("No templates yet.")).toExist(),
   );
 });

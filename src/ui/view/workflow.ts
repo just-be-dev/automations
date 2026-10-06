@@ -48,6 +48,7 @@ import {
   workflowRefs,
 } from "../../workflow.ts";
 import { Message } from "../message.ts";
+import { templatesHref } from "../route.ts";
 import {
   type IconNode,
   isSimulated,
@@ -338,7 +339,19 @@ const templateUseView = (use: TemplateUse, h: HtmlBuilder<Message>) =>
     [componentName("template-use"), h.Class("text-xs text-muted-foreground")],
     [
       "Template ",
-      h.span([h.Class(cn(chipClass, "text-foreground")), h.Title("A stored template")], [use.use]),
+      h.a(
+        [
+          h.Href(templatesHref(Option.some(use.use))),
+          h.Title("Open the template"),
+          h.Class(
+            cn(
+              chipClass,
+              "text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50",
+            ),
+          ),
+        ],
+        [use.use],
+      ),
       ...Array.flatMap(Object.entries(use.with), ([slot, value]) => [
         ` · ${slot}: `,
         ...templateView(value, h),
