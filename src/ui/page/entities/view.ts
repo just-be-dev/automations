@@ -7,6 +7,7 @@ import { CircleAlert, Database, LoaderCircle, Pencil, Plus, Trash2, X } from "lu
 import { button } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
 import { input, inputClass, inputLabelClass, inputWrapperClass } from "@/components/ui/input";
+import { componentName } from "@/lib/component";
 import { localDateTimeText } from "@/lib/datetime";
 import { plural, withArticle } from "@/lib/format";
 import { icon } from "@/lib/icons";
@@ -47,7 +48,7 @@ const fieldTypeLabel = (field: EntityField) =>
 
 export const view = Submodel.defineView<Model, Message>((model, h) =>
   h.div(
-    [h.Class("flex flex-1 flex-col lg:min-h-0")],
+    [componentName("entities"), h.Class("flex flex-1 flex-col lg:min-h-0")],
     [
       h.div(
         [h.Class("grid flex-1 grid-cols-1 lg:min-h-0 lg:grid-cols-[15rem_minmax(0,1fr)]")],
@@ -64,6 +65,7 @@ export const view = Submodel.defineView<Model, Message>((model, h) =>
 const typeListView = (model: Model, h: HtmlBuilder<Message>) =>
   h.section(
     [
+      componentName("type-list"),
       h.AriaLabel("Entity types"),
       h.Class(
         "flex flex-col border-b px-3 py-4 lg:min-h-0 lg:overflow-y-auto lg:border-r lg:border-b-0",
@@ -116,7 +118,7 @@ const typeListView = (model: Model, h: HtmlBuilder<Message>) =>
 const typeLinkView = (type: EntityType, isCurrent: boolean, h: HtmlBuilder<Message>) =>
   h.keyed("li")(
     type.name,
-    [],
+    [componentName("type-link")],
     [
       h.a(
         [
@@ -143,6 +145,7 @@ const typeLinkView = (type: EntityType, isCurrent: boolean, h: HtmlBuilder<Messa
 const detailView = (model: Model, h: HtmlBuilder<Message>) =>
   h.section(
     [
+      componentName("detail"),
       h.AriaLabel("Entity type"),
       h.Class("flex flex-col gap-8 px-6 py-5 lg:min-h-0 lg:overflow-y-auto"),
     ],
@@ -162,7 +165,7 @@ const detailView = (model: Model, h: HtmlBuilder<Message>) =>
 const noTypeView = (model: Model, h: HtmlBuilder<Message>) => {
   const maybeMissing = Option.filter(model.maybeTypeName, () => Types.guards.Ready(model.types));
   return Empty(
-    { className: cn("max-w-xl", cardClass) },
+    { className: cn("max-w-xl", cardClass), attributes: [componentName("no-type")] },
     [
       Empty.header(
         {},
@@ -200,7 +203,12 @@ const noTypeView = (model: Model, h: HtmlBuilder<Message>) => {
 
 const confirmView = (question: string, model: Model, h: HtmlBuilder<Message>) =>
   h.div(
-    [h.Class("flex items-center gap-2"), h.Role("group"), h.AriaLabel(question)],
+    [
+      componentName("confirm"),
+      h.Class("flex items-center gap-2"),
+      h.Role("group"),
+      h.AriaLabel(question),
+    ],
     [
       h.span([h.Class("text-xs text-destructive")], [question]),
       button(
@@ -219,7 +227,7 @@ const confirmView = (question: string, model: Model, h: HtmlBuilder<Message>) =>
 
 const typeDetailView = (type: EntityType, model: Model, h: HtmlBuilder<Message>) =>
   h.div(
-    [h.Class("flex flex-col gap-8")],
+    [componentName("type-detail"), h.Class("flex flex-col gap-8")],
     [
       h.div(
         [h.Class("flex flex-wrap items-start justify-between gap-4")],
@@ -264,7 +272,7 @@ const cellClass = "border-b px-3 py-2 align-top";
 
 const fieldsTableView = (type: EntityType, h: HtmlBuilder<Message>) =>
   h.div(
-    [h.Class(cn("overflow-x-auto", cardClass))],
+    [componentName("fields-table"), h.Class(cn("overflow-x-auto", cardClass))],
     [
       h.table(
         [h.Class(tableClass), h.AriaLabel(`${type.label} fields`)],
@@ -309,7 +317,7 @@ const fieldsTableView = (type: EntityType, h: HtmlBuilder<Message>) =>
 
 const entitiesSectionView = (type: EntityType, model: Model, h: HtmlBuilder<Message>) =>
   h.div(
-    [h.Class("flex flex-col gap-3")],
+    [componentName("entities-section"), h.Class("flex flex-col gap-3")],
     [
       h.div(
         [h.Class("flex items-center justify-between gap-2")],
@@ -349,7 +357,7 @@ const entitiesSectionView = (type: EntityType, model: Model, h: HtmlBuilder<Mess
 
 const cellValueView = (value: Schema.Json | undefined, h: HtmlBuilder<Message>): Html | string => {
   if (value === undefined || value === null) {
-    return h.span([h.Class("text-sand-9")], ["—"]);
+    return h.span([componentName("cell-value"), h.Class("text-sand-9")], ["—"]);
   }
   if (typeof value === "boolean") {
     return value ? "Yes" : "No";
@@ -364,7 +372,7 @@ const entitiesTableView = (
   h: HtmlBuilder<Message>,
 ) =>
   h.div(
-    [h.Class(cn("overflow-x-auto", cardClass))],
+    [componentName("entities-table"), h.Class(cn("overflow-x-auto", cardClass))],
     [
       h.table(
         [h.Class(tableClass), h.AriaLabel(`${type.label} entities`)],
@@ -418,7 +426,7 @@ const entityActionsView = (entity: EntityRecord, model: Model, h: HtmlBuilder<Me
   Confirmation.guards.DeleteEntity(model.confirmation) && model.confirmation.id === entity.id
     ? confirmView(`Delete ${entity.id}?`, model, h)
     : h.div(
-        [h.Class("flex items-center justify-end gap-1")],
+        [componentName("entity-actions"), h.Class("flex items-center justify-end gap-1")],
         [
           button(
             {
@@ -450,7 +458,7 @@ const formActionsView = (
   h: HtmlBuilder<Message>,
 ) =>
   h.div(
-    [h.Class("flex items-center gap-2")],
+    [componentName("form-actions"), h.Class("flex items-center gap-2")],
     [
       button({ type: "submit", size: "sm", isDisabled: isWorking(model) }, saveLabel, h),
       button({ onClick: onCancel, variant: "ghost", size: "sm" }, "Cancel", h),
@@ -476,7 +484,7 @@ const labelledSelectView = (
   h: HtmlBuilder<Message>,
 ) =>
   h.div(
-    [h.Class(inputWrapperClass)],
+    [componentName("labelled-select"), h.Class(inputWrapperClass)],
     [
       h.label([h.For(config.id), h.Class(inputLabelClass)], [config.label]),
       h.select(
@@ -514,6 +522,7 @@ const entityFieldView = (field: EntityField, text: string, h: HtmlBuilder<Messag
           value: field.type === "datetime" ? localDateTimeText(text) : text,
           onInput,
           className: "bg-background",
+          wrapperAttributes: [componentName("entity-field")],
           ...(field.type === "ref"
             ? { description: `The ID of ${withArticle(field.to ?? "entity")}` }
             : {}),
@@ -531,6 +540,7 @@ const entityFormView = (
 ) =>
   h.form(
     [
+      componentName("entity-form"),
       h.AriaLabel(isNew ? `New ${type.label.toLowerCase()}` : `Edit ${draft.id}`),
       h.OnSubmit(Message.SubmittedEntity()),
       h.Class(cn("flex flex-col gap-4 px-4 py-4", cardClass)),
@@ -572,6 +582,7 @@ const typeFormView = (draft: TypeDraft, isNew: boolean, model: Model, h: HtmlBui
   ]);
   return h.form(
     [
+      componentName("type-form"),
       h.AriaLabel(isNew ? "New entity type" : `Edit ${draft.name}`),
       h.OnSubmit(Message.SubmittedType()),
       h.Class("flex max-w-3xl flex-col gap-6"),
@@ -673,7 +684,10 @@ const fieldRowView = (
   const name = field.name.trim() || "new field";
   return h.keyed("div")(
     String(field.key),
-    [h.Class("grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_8rem_8rem_auto] items-center gap-2")],
+    [
+      componentName("field-row"),
+      h.Class("grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_8rem_8rem_auto] items-center gap-2"),
+    ],
     [
       h.input([
         h.AriaLabel(`Field name (${name})`),
@@ -734,6 +748,7 @@ const fieldRowView = (
 const statusView = (model: Model, h: HtmlBuilder<Message>) =>
   h.div(
     [
+      componentName("status"),
       h.Role("status"),
       h.Class(
         cn(

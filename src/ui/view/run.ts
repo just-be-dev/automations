@@ -2,6 +2,7 @@ import * as Option from "effect/Option";
 import type { HtmlBuilder } from "foldkit/html";
 import { CircleAlert, LoaderCircle, Maximize2, OctagonX, Pencil, X } from "lucide";
 import { button, buttonClass } from "@/components/ui/button";
+import { componentName } from "@/lib/component";
 import { formatTime, runDotClass, runStatusClass, runStatusLabel } from "@/lib/format";
 import { icon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
@@ -16,6 +17,7 @@ import { workflowView } from "./workflow.ts";
 const editAutomationView = (automationId: string, h: HtmlBuilder<Message>) =>
   h.a(
     [
+      componentName("edit-automation"),
       h.Href(automationHref(automationId)),
       h.DataAttribute("slot", "button"),
       h.Class(buttonClass({ variant: "outline", size: "sm" })),
@@ -39,10 +41,15 @@ const runStatusBadgeView = (openRun: OpenRun, isCompact: boolean, h: HtmlBuilder
 
 const runBodyView = (openRun: OpenRun, model: Model, h: HtmlBuilder<Message>) =>
   RunDetail.match(openRun.detail, {
-    Loading: () => h.p([h.Class("text-sm text-muted-foreground")], ["Loading the run…"]),
+    Loading: () =>
+      h.p(
+        [componentName("run-body"), h.Class("text-sm text-muted-foreground")],
+        ["Loading the run…"],
+      ),
     Unavailable: ({ error }) =>
       h.p(
         [
+          componentName("run-body"),
           h.Role("alert"),
           h.Class(
             "flex items-start gap-2 rounded-[10px] bg-destructive/10 px-3 py-2 text-sm text-destructive",
@@ -58,17 +65,29 @@ const runNoticeView = (openRun: OpenRun, className: string, h: HtmlBuilder<Messa
     Idle: () => h.empty,
     Sending: () =>
       h.div(
-        [h.Role("status"), h.Class(cn(noticeBarClass, "text-muted-foreground", className))],
+        [
+          componentName("run-notice"),
+          h.Role("status"),
+          h.Class(cn(noticeBarClass, "text-muted-foreground", className)),
+        ],
         [icon(h, LoaderCircle, "size-3.5 animate-spin text-signal"), "Sending your answer…"],
       ),
     Sent: () =>
       h.div(
-        [h.Role("status"), h.Class(cn(noticeBarClass, "text-muted-foreground", className))],
+        [
+          componentName("run-notice"),
+          h.Role("status"),
+          h.Class(cn(noticeBarClass, "text-muted-foreground", className)),
+        ],
         ["Answer sent."],
       ),
     Failed: ({ error }) =>
       h.div(
-        [h.Role("status"), h.Class(cn(noticeBarClass, "text-destructive", className))],
+        [
+          componentName("run-notice"),
+          h.Role("status"),
+          h.Class(cn(noticeBarClass, "text-destructive", className)),
+        ],
         [icon(h, CircleAlert, "size-3.5"), error],
       ),
   });
@@ -77,7 +96,11 @@ const noticeBarClass = "flex min-w-0 items-center gap-2 border-t py-3 text-xs";
 
 export const runPageView = (model: Model, openRun: OpenRun, h: HtmlBuilder<Message>) =>
   h.main(
-    [h.Class("flex min-w-0 flex-1 flex-col lg:min-h-0"), h.AriaLabel("Run")],
+    [
+      componentName("run-page"),
+      h.Class("flex min-w-0 flex-1 flex-col lg:min-h-0"),
+      h.AriaLabel("Run"),
+    ],
     [
       h.div(
         [h.Class("flex-1 px-6 py-6 lg:overflow-y-auto")],
@@ -111,6 +134,7 @@ export const runPageView = (model: Model, openRun: OpenRun, h: HtmlBuilder<Messa
 export const runPanelView = (model: Model, openRun: OpenRun, h: HtmlBuilder<Message>) =>
   h.aside(
     [
+      componentName("run-panel"),
       h.AriaLabel("Run preview"),
       h.Class(
         "flex flex-col border-t bg-background animate-in fade-in slide-in-from-right-2 duration-200 lg:min-h-0 lg:w-[26rem] lg:shrink-0 lg:border-t-0 lg:border-l xl:w-[32rem] 2xl:w-[38rem]",
@@ -167,6 +191,7 @@ export const runPanelView = (model: Model, openRun: OpenRun, h: HtmlBuilder<Mess
 const runBadgeView = (run: Run, isCompact: boolean, h: HtmlBuilder<Message>) =>
   h.span(
     [
+      componentName("run-badge"),
       h.Class(
         cn(
           "inline-flex items-center gap-1.5 text-sm font-semibold whitespace-nowrap",
@@ -191,7 +216,7 @@ const runView = (
   h: HtmlBuilder<Message>,
 ) =>
   h.div(
-    [h.Class("flex max-w-2xl flex-col gap-6")],
+    [componentName("run"), h.Class("flex max-w-2xl flex-col gap-6")],
     [
       h.p(
         [h.Class("text-sm text-muted-foreground")],

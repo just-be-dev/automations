@@ -6,6 +6,7 @@ import { badge } from "@/components/ui/badge";
 import { button } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
 import { inputClass } from "@/components/ui/input";
+import { componentName } from "@/lib/component";
 import {
   formatTime,
   openTasksText,
@@ -33,7 +34,7 @@ import { workflowView } from "./workflow.ts";
 
 export const workflowPanelView = (model: Model, h: HtmlBuilder<Message>) =>
   h.section(
-    [h.Class("flex flex-col lg:min-h-0"), h.AriaLabel("Workflow")],
+    [componentName("workflow-panel"), h.Class("flex flex-col lg:min-h-0"), h.AriaLabel("Workflow")],
     [
       h.div(
         [h.Class("flex items-start justify-between gap-4 px-6 pt-5")],
@@ -89,7 +90,7 @@ export const workflowPanelView = (model: Model, h: HtmlBuilder<Message>) =>
 
 const draftView = (model: Model, h: HtmlBuilder<Message>) =>
   h.div(
-    [h.Class("flex flex-col gap-10")],
+    [componentName("draft"), h.Class("flex flex-col gap-10")],
     [
       Option.match(model.maybeDraft, {
         onNone: () => emptyWorkflowView(h),
@@ -120,17 +121,17 @@ const subjectPickerView = (model: Model, h: HtmlBuilder<Message>) =>
     NotNeeded: () => h.empty,
     Loading: ({ entityType }) =>
       h.span(
-        [h.Class("text-xs text-muted-foreground")],
+        [componentName("subject-picker"), h.Class("text-xs text-muted-foreground")],
         [`Loading ${entityType.replaceAll("_", " ")} records…`],
       ),
     Unavailable: ({ entityType, error }) =>
       h.span(
-        [h.Class("text-xs text-destructive"), h.Title(error)],
+        [componentName("subject-picker"), h.Class("text-xs text-destructive"), h.Title(error)],
         [`Couldn't load ${entityType.replaceAll("_", " ")} records`],
       ),
     Ready: ({ entityType, label, subjects }) =>
       h.div(
-        [h.Class("flex items-center")],
+        [componentName("subject-picker"), h.Class("flex items-center")],
         [
           h.label([h.For("subject"), h.Class("sr-only")], [label]),
           h.select(
@@ -159,7 +160,11 @@ const subjectPickerView = (model: Model, h: HtmlBuilder<Message>) =>
   });
 
 const subjectOptionView = (subject: SubjectOption, isSelected: boolean, h: HtmlBuilder<Message>) =>
-  h.keyed("option")(subject.id, [h.Value(subject.id), h.Selected(isSelected)], [subject.title]);
+  h.keyed("option")(
+    subject.id,
+    [componentName("subject-option"), h.Value(subject.id), h.Selected(isSelected)],
+    [subject.title],
+  );
 
 const workflowDisplayToggleView = (display: WorkflowDisplay, h: HtmlBuilder<Message>) =>
   button(
@@ -167,7 +172,11 @@ const workflowDisplayToggleView = (display: WorkflowDisplay, h: HtmlBuilder<Mess
       onClick: Message.SelectedWorkflowDisplay({ display: display === "Json" ? "Steps" : "Json" }),
       variant: display === "Json" ? "secondary" : "ghost",
       size: "xs",
-      attributes: [h.AriaPressed(String(display === "Json")), h.Title("Show the draft's raw JSON")],
+      attributes: [
+        componentName("workflow-display-toggle"),
+        h.AriaPressed(String(display === "Json")),
+        h.Title("Show the draft's raw JSON"),
+      ],
     },
     [icon(h, Braces, "size-3", "inline-start"), "JSON"],
     h,
@@ -176,6 +185,7 @@ const workflowDisplayToggleView = (display: WorkflowDisplay, h: HtmlBuilder<Mess
 const workflowJsonView = (workflow: Workflow, h: HtmlBuilder<Message>) =>
   h.pre(
     [
+      componentName("workflow-json"),
       h.AriaLabel("Draft JSON"),
       h.Class(
         "max-w-3xl overflow-x-auto rounded-[10px] bg-card px-4 py-3 font-mono text-xs leading-relaxed shadow-card",
@@ -186,7 +196,10 @@ const workflowJsonView = (workflow: Workflow, h: HtmlBuilder<Message>) =>
 
 const emptyWorkflowView = (h: HtmlBuilder<Message>) =>
   Empty(
-    { className: "max-w-xl rounded-[10px] bg-card shadow-card" },
+    {
+      className: "max-w-xl rounded-[10px] bg-card shadow-card",
+      attributes: [componentName("empty-workflow")],
+    },
     [
       Empty.header(
         {},
@@ -212,7 +225,11 @@ const recentRunsView = (model: Model, h: HtmlBuilder<Message>) =>
     onEmpty: () => h.empty,
     onNonEmpty: (runs) =>
       h.section(
-        [h.AriaLabelledBy("recent-runs"), h.Class("flex max-w-2xl flex-col gap-2")],
+        [
+          componentName("recent-runs"),
+          h.AriaLabelledBy("recent-runs"),
+          h.Class("flex max-w-2xl flex-col gap-2"),
+        ],
         [
           h.h3([h.Id("recent-runs"), h.Class(eyebrowClass)], ["Recent runs"]),
           h.ul(
@@ -238,7 +255,7 @@ const runRowView = (
 ) =>
   h.keyed("li")(
     run.id,
-    [],
+    [componentName("run-row")],
     [
       h.a(
         [
@@ -276,6 +293,7 @@ const runRowView = (
 const statusView = (model: Model, h: HtmlBuilder<Message>) =>
   h.div(
     [
+      componentName("status"),
       h.Id("status"),
       h.Role("status"),
       h.Class(

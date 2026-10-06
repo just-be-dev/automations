@@ -4,6 +4,7 @@ import { CircleAlert, LoaderCircle } from "lucide";
 import { button, buttonClass } from "@/components/ui/button";
 import * as Dialog from "@/components/ui/dialog";
 import { textarea } from "@/components/ui/textarea";
+import { componentName } from "@/lib/component";
 import { icon } from "@/lib/icons";
 import { newAutomationDescriptionId } from "../constant.ts";
 import { Message, toNewAutomationDialogMessage } from "../message.ts";
@@ -24,6 +25,7 @@ export const newAutomationDialogView = (model: Model, h: HtmlBuilder<Message>) =
     toParentMessage: toNewAutomationDialogMessage,
     viewInputs: Dialog.styledViewInputs(
       {
+        attributes: [componentName("new-automation-dialog")],
         hasDescription: true,
         panelClass: "gap-5 sm:max-w-lg",
         content: ({ closeButton, title, description: descriptionAttributes }, h) => [

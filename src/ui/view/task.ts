@@ -7,6 +7,7 @@ import { Checkbox } from "@foldkit/ui";
 import { Check, UserRound, X } from "lucide";
 import { button } from "@/components/ui/button";
 import { input } from "@/components/ui/input";
+import { componentName } from "@/lib/component";
 import { localDateTimeText } from "@/lib/datetime";
 import { icon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
@@ -30,7 +31,11 @@ export const openTasksView = (run: Run, openRun: OpenRun, h: HtmlBuilder<Message
       onEmpty: () => h.empty,
       onNonEmpty: (tasks) =>
         h.section(
-          [h.AriaLabelledBy("open-tasks"), h.Class("flex flex-col gap-2")],
+          [
+            componentName("open-tasks"),
+            h.AriaLabelledBy("open-tasks"),
+            h.Class("flex flex-col gap-2"),
+          ],
           [
             h.h3([h.Id("open-tasks"), h.Class(eyebrowClass)], ["Open tasks"]),
             h.ul(
@@ -78,7 +83,7 @@ const isSendingAnswer = (openRun: OpenRun) => RunNotice.guards.Sending(openRun.n
 const taskView = (task: HumanTask, openRun: OpenRun, h: HtmlBuilder<Message>) =>
   h.keyed("li")(
     task.step,
-    [h.Class("flex flex-col gap-3 rounded-[10px] bg-card p-4 shadow-card")],
+    [componentName("task"), h.Class("flex flex-col gap-3 rounded-[10px] bg-card p-4 shadow-card")],
     [
       h.div(
         [h.Class("flex items-start gap-2.5")],
@@ -156,7 +161,7 @@ const inputText = (value: Schema.Json) =>
 
 const taskActionView = (action: NonNullable<HumanTask["action"]>, h: HtmlBuilder<Message>) =>
   h.div(
-    [h.Class("flex flex-col gap-1.5 pt-1")],
+    [componentName("task-action"), h.Class("flex flex-col gap-1.5 pt-1")],
     [
       h.div(
         [h.Class("flex items-center gap-2 text-xs text-muted-foreground")],
@@ -180,7 +185,10 @@ const taskActionView = (action: NonNullable<HumanTask["action"]>, h: HtmlBuilder
 
 const approversView = (approvers: NonNullable<HumanTask["approvers"]>, h: HtmlBuilder<Message>) =>
   h.span(
-    [h.Title(Array.map(approvers.members, (member) => member.email).join(", "))],
+    [
+      componentName("approvers"),
+      h.Title(Array.map(approvers.members, (member) => member.email).join(", ")),
+    ],
     [
       "Approved by ",
       h.span([h.Class(cn(chipClass, "text-foreground"))], [approvers.label]),
@@ -199,6 +207,7 @@ const taskFormView = (
 ) =>
   h.form(
     [
+      componentName("task-form"),
       h.AriaLabel(task.title),
       h.OnSubmit(Message.SubmittedTaskForm({ step: task.step })),
       h.Class("flex flex-col gap-3 pl-[34px]"),
@@ -251,6 +260,7 @@ const taskFieldView = (
           value: field.type === "datetime" ? localDateTimeText(text) : text,
           onInput: toMessage,
           className: "bg-background",
+          wrapperAttributes: [componentName("task-field")],
         },
         h,
       );
@@ -270,7 +280,7 @@ const checkboxFieldView = (
       onToggle: (checked) => toMessage(String(checked)),
       toView: (attributes) =>
         h.div(
-          [h.Class("flex items-center gap-2")],
+          [componentName("checkbox-field"), h.Class("flex items-center gap-2")],
           [
             h.button(
               [

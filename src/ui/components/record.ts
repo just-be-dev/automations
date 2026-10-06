@@ -2,6 +2,7 @@ import * as Array from "effect/Array";
 import * as Predicate from "effect/Predicate";
 import type * as Schema from "effect/Schema";
 import type { Html, HtmlBuilder } from "foldkit/html";
+import { componentName } from "@/lib/component";
 import { formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -64,7 +65,8 @@ export const formatText = (key: string, text: string) => {
   return text;
 };
 
-const noneView = <M>(h: HtmlBuilder<M>) => h.span([h.Class("text-muted-foreground")], ["None"]);
+const recordNoneView = <M>(h: HtmlBuilder<M>) =>
+  h.span([componentName("record-none"), h.Class("text-muted-foreground")], ["None"]);
 
 const isPrimitive = (value: Schema.Json) => !Predicate.isObject(value);
 
@@ -79,23 +81,27 @@ const primitiveText = (key: string, value: Schema.Json) =>
           : "No"
         : "None";
 
-const valueView = <M>(
+const recordValueView = <M>(
   key: string,
   value: Schema.Json,
   isExpanded: boolean,
   h: HtmlBuilder<M>,
 ): Html => {
   if (value === null) {
-    return noneView(h);
+    return recordNoneView(h);
   }
   if (isJsonList(value)) {
-    return listView(key, value, isExpanded, h);
+    return recordListView(key, value, isExpanded, h);
   }
   if (isJsonObject(value)) {
-    return h.div([h.Class("border-l pl-3")], [fieldsView(value, isExpanded, h)]);
+    return h.div(
+      [componentName("record-value"), h.Class("border-l pl-3")],
+      [recordFieldsView(value, isExpanded, h)],
+    );
   }
   return h.span(
     [
+      componentName("record-value"),
       h.Class(
         cn(
           "break-words whitespace-pre-wrap",
@@ -107,18 +113,18 @@ const valueView = <M>(
   );
 };
 
-const listView = <M>(
+const recordListView = <M>(
   key: string,
   items: ReadonlyArray<Schema.Json>,
   isExpanded: boolean,
   h: HtmlBuilder<M>,
 ): Html => {
   if (Array.isReadonlyArrayEmpty(items)) {
-    return noneView(h);
+    return recordNoneView(h);
   }
   if (Array.every(items, isPrimitive)) {
     return h.ul(
-      [h.Class("flex flex-wrap gap-1")],
+      [componentName("record-list"), h.Class("flex flex-wrap gap-1")],
       Array.map(items, (item) =>
         h.li(
           [h.Class("rounded-[4px] bg-chip px-1.5 py-0.5 text-xs break-all")],
@@ -128,21 +134,25 @@ const listView = <M>(
     );
   }
   return h.ol(
-    [h.Class("flex flex-col gap-2")],
+    [componentName("record-list"), h.Class("flex flex-col gap-2")],
     Array.map(items, (item) =>
-      h.li([h.Class("border-l pl-3")], [valueView(key, item, isExpanded, h)]),
+      h.li([h.Class("border-l pl-3")], [recordValueView(key, item, isExpanded, h)]),
     ),
   );
 };
 
-const fieldsView = <M>(record: JsonObject, isExpanded: boolean, h: HtmlBuilder<M>): Html =>
+const recordFieldsView = <M>(record: JsonObject, isExpanded: boolean, h: HtmlBuilder<M>): Html =>
   Array.match(
     Array.filter(Object.entries(record), ([key]) => !Array.contains(hiddenFields, key)),
     {
-      onEmpty: () => h.p([h.Class("text-muted-foreground")], ["Nothing to show"]),
+      onEmpty: () =>
+        h.p(
+          [componentName("record-fields"), h.Class("text-muted-foreground")],
+          ["Nothing to show"],
+        ),
       onNonEmpty: (fields) =>
         h.dl(
-          [h.Class("flex flex-col gap-2.5")],
+          [componentName("record-fields"), h.Class("flex flex-col gap-2.5")],
           Array.map(fields, ([key, value]) =>
             h.keyed("div")(
               key,
@@ -153,7 +163,7 @@ const fieldsView = <M>(record: JsonObject, isExpanded: boolean, h: HtmlBuilder<M
               ],
               [
                 h.dt([h.Class("text-xs text-muted-foreground sm:pt-px")], [fieldLabel(key)]),
-                h.dd([h.Class("min-w-0")], [valueView(key, value, isExpanded, h)]),
+                h.dd([h.Class("min-w-0")], [recordValueView(key, value, isExpanded, h)]),
               ],
             ),
           ),
@@ -163,4 +173,6 @@ const fieldsView = <M>(record: JsonObject, isExpanded: boolean, h: HtmlBuilder<M
 
 /** A step's record as fields and values. A bare answer, such as an agent's text, shows as is. */
 export const recordView = <M>(record: Schema.Json, isExpanded: boolean, h: HtmlBuilder<M>) =>
-  isJsonObject(record) ? fieldsView(record, isExpanded, h) : valueView("", record, isExpanded, h);
+  isJsonObject(record)
+    ? recordFieldsView(record, isExpanded, h)
+    : recordValueView("", record, isExpanded, h);

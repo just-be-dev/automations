@@ -1,5 +1,5 @@
 import { Input as FoldkitInput } from "@foldkit/ui";
-import type { Html, HtmlBuilder } from "foldkit/html";
+import type { Attribute, Html, HtmlBuilder } from "foldkit/html";
 
 import { cn } from "@/lib/utils";
 
@@ -35,6 +35,8 @@ export type InputConfig<M> = Readonly<{
   labelClass?: string;
   descriptionClass?: string;
   wrapperClass?: string;
+  /** Extra attributes merged onto the wrapper, the input's root element. */
+  wrapperAttributes?: ReadonlyArray<Attribute<M>>;
 }>;
 
 /** Styled text input with label and optional description, built on the
@@ -58,6 +60,7 @@ export const input = <M>(config: InputConfig<M>, h: HtmlBuilder<M>): Html =>
           [
             h.Class(cn(inputWrapperClass, config.wrapperClass)),
             ...(config.isDisabled ? [h.DataAttribute("disabled", "")] : []),
+            ...(config.wrapperAttributes ?? []),
           ],
           [
             h.label(

@@ -171,6 +171,8 @@ export type StyledViewInputs<M> = Readonly<{
   className?: string;
   backdropClass?: string;
   panelClass?: string;
+  /** Extra attributes merged onto the `<dialog>`, the dialog's root element. */
+  attributes?: ReadonlyArray<Attribute<M>>;
 }>;
 
 /** Build styled `Dialog.ViewInputs`. Pass your view's `h` so the content
@@ -187,6 +189,7 @@ export const styledViewInputs = <M>(
         ...dialog,
         h.DataAttribute("slot", "dialog"),
         h.Class(cn(dialogClass, viewInputs.className)),
+        ...(viewInputs.attributes ?? []),
       ],
       isVisible
         ? [

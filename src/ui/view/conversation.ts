@@ -8,6 +8,7 @@ import { button } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
 import { Message as ChatMessage } from "@/components/ui/message";
 import { textarea } from "@/components/ui/textarea";
+import { componentName } from "@/lib/component";
 import { icon } from "@/lib/icons";
 import type { PendingChat } from "../../workflow.ts";
 import { Message } from "../message.ts";
@@ -17,6 +18,7 @@ import { characterCountView, submitShortcut } from "./shared.ts";
 export const conversationView = (model: Model, h: HtmlBuilder<Message>) =>
   h.section(
     [
+      componentName("conversation"),
       h.Class("flex flex-col border-b lg:min-h-0 lg:border-r lg:border-b-0"),
       h.AriaLabel("Conversation"),
     ],
@@ -54,7 +56,10 @@ export const conversationView = (model: Model, h: HtmlBuilder<Message>) =>
 
 const emptyConversationView = (title: string, description: string, h: HtmlBuilder<Message>) =>
   Empty(
-    { className: "flex-none items-start p-0 pt-2 text-left" },
+    {
+      className: "flex-none items-start p-0 pt-2 text-left",
+      attributes: [componentName("empty-conversation")],
+    },
     [
       Empty.header(
         { className: "items-start" },
@@ -78,7 +83,7 @@ const conversationItems = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
 
 const promptView = (prompt: string, h: HtmlBuilder<Message>) =>
   ChatMessage(
-    { align: "end" },
+    { align: "end", attributes: [componentName("prompt")] },
     [
       ChatMessage.content(
         {},
@@ -97,7 +102,7 @@ const promptView = (prompt: string, h: HtmlBuilder<Message>) =>
 
 const replyView = (children: ReadonlyArray<Html | string>, h: HtmlBuilder<Message>) =>
   ChatMessage(
-    {},
+    { attributes: [componentName("reply")] },
     [
       ChatMessage.content(
         { className: "gap-1.5" },
@@ -121,7 +126,7 @@ const replyView = (children: ReadonlyArray<Html | string>, h: HtmlBuilder<Messag
 const exchangeView = (exchange: Exchange, h: HtmlBuilder<Message>) =>
   h.keyed("div")(
     String(exchange.id),
-    [h.Class("flex flex-col gap-4")],
+    [componentName("exchange"), h.Class("flex flex-col gap-4")],
     [
       promptView(exchange.prompt, h),
       replyView([h.span([h.Class("whitespace-pre-wrap")], [exchange.reply])], h),
@@ -135,7 +140,7 @@ const pendingChatView = (
 ) =>
   h.keyed("div")(
     pending.id,
-    [h.Class("flex flex-col gap-4")],
+    [componentName("pending-chat"), h.Class("flex flex-col gap-4")],
     [
       promptView(pending.prompt, h),
       replyView(
@@ -168,7 +173,7 @@ const pendingChatView = (
 
 const composerView = (model: Model, h: HtmlBuilder<Message>) =>
   h.div(
-    [h.Class("p-3")],
+    [componentName("composer"), h.Class("p-3")],
     [
       h.div(
         [
