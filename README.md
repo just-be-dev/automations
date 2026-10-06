@@ -92,6 +92,8 @@ Templates hold approved wording, such as the standard welcome email, with slots 
 | `GET /api/roles`, `PUT /api/roles/:name`                   | List or define roles (`{ "name", "label", "members": [{ "type", "id" }] }`)                                |
 | `POST /api/automations/:id/start`                          | Start a run by hand (`{ "subject": "<id>" }`)                                                              |
 | `GET /api/automations/:id/runs/:runId`                     | Inspect a run, its steps, and its tasks                                                                    |
+| `GET /api/automations/:id/trace`                           | The planner's conversation: instructions, prompts, reasoning, tool calls and results, token use            |
+| `GET /api/automations/:id/runs/:runId/trace`               | The conversation a run's agent and decide steps share, in the same shape                                   |
 | `POST /api/automations/:id/runs/:runId/tasks/:stepId`      | Answer a human step                                                                                        |
 | `GET /api/entities/types`, `PUT /api/entities/types/:type` | List or define entity types                                                                                |
 | `GET /api/entities/:type`, `GET /api/entities/:type/:id`   | Read entities                                                                                              |
@@ -102,6 +104,10 @@ Templates hold approved wording, such as the standard welcome email, with slots 
 | `GET /api/templates`, `GET /api/templates/:name`           | List or read templates                                                                                     |
 | `PUT /api/templates/:name`, `DELETE /api/templates/:name`  | Create, replace, or delete a template                                                                      |
 | `GET /api/templates/:name/automations`                     | The automations whose saved workflow or draft use a template                                               |
+
+### Agent traces
+
+`/traces` in the studio (**Debug → Agent traces** in the sidebar) shows what the agents were asked and did. Pick an automation for its planner's conversation, or one of its recent runs for the conversation its agent and decide steps share. Each trace lists system prompt changes, prompts, every model response with its reasoning, tool calls, stop reason, and token use, and every tool result, with failed ones marked. They come from pi's own records in the automation's Durable Object; a trace holds the latest 1,000 entries. The namer and the progress classifier aren't pi conversations, so they have no trace.
 
 ### Entity store
 

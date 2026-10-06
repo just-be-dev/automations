@@ -8,6 +8,7 @@ import { DurableDeferred, WorkflowEngine } from "effect/workflow";
 import { agentOutput, agentPrompt, decidePrompt, decision } from "../workflow/agent-step.ts";
 import { AutomationHost } from "./host.ts";
 import { PiAgent } from "../ai/pi.ts";
+import { emptyTrace } from "../ai/trace.ts";
 import { checkWorkflow } from "../workflow/catalog.ts";
 import { runAction } from "../connections/runner.ts";
 import { findOperation } from "../connections/registry.ts";
@@ -478,6 +479,15 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     return { ...found, subjectTitle: summary(types, found).subject };
   });
 
+  /** What the run's agent and decide steps asked and answered; empty before the first one. */
+  const runTrace = Effect.fn("Automation.runTrace")(function* (id: RunId) {
+    const found = yield* readRun(id);
+    if (found === undefined) {
+      return undefined;
+    }
+    return found.conversation === undefined ? emptyTrace : yield* pi.transcript(found.conversation);
+  });
+
   return {
     callbacks: { advance, clock, tick },
     summaries: runSummaries,
@@ -485,5 +495,6 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     entityChanged,
     respond,
     run,
+    runTrace,
   };
 });

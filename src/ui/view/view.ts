@@ -4,9 +4,15 @@ import { Monitor, Moon, Sun } from "lucide";
 import { button } from "@/components/ui/button";
 import { componentName } from "@/lib/component";
 import { icon } from "@/lib/icons";
-import { Message, toEntitiesMessage, toOverviewMessage, toTemplatesMessage } from "../message.ts";
+import {
+  Message,
+  toEntitiesMessage,
+  toOverviewMessage,
+  toTemplatesMessage,
+  toTracesMessage,
+} from "../message.ts";
 import { listedName, type Model, Page } from "../model.ts";
-import { Entities, Overview, Templates } from "../page/index.ts";
+import { Entities, Overview, Templates, Traces } from "../page/index.ts";
 import { nextTheme, type Theme } from "../theme.ts";
 import { conversationView } from "./conversation.ts";
 import { newAutomationDialogView } from "./new-automation.ts";
@@ -79,6 +85,18 @@ const pageView = (model: Model, h: HtmlBuilder<Message>) =>
           }),
         ],
       ),
+    Traces: ({ traces }) =>
+      h.main(
+        [componentName("page"), h.Class("flex min-w-0 flex-1 flex-col lg:min-h-0")],
+        [
+          h.submodel({
+            slotId: "traces",
+            model: traces,
+            view: Traces.view,
+            toParentMessage: toTracesMessage,
+          }),
+        ],
+      ),
     Studio: () =>
       h.main(
         [
@@ -106,6 +124,7 @@ const headerTitleView = (model: Model, h: HtmlBuilder<Message>) =>
     Overview: () => headerLabelView("Overview", h),
     Templates: () => headerLabelView("Templates", h),
     Entities: () => headerLabelView("Entity store", h),
+    Traces: () => headerLabelView("Agent traces", h),
     Studio: () => automationTitleView(model, h),
     Run: () => automationTitleView(model, h),
   });

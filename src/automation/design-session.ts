@@ -324,5 +324,10 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
       .pipe(Effect.catchTag("AutomationStorageError", Effect.die));
   });
 
-  return { inspect, chat, answer, setPermissions, planReply };
+  /** The planner's conversation as pi recorded it: instructions, reasoning, and tool calls. */
+  const plannerTrace = Effect.fn("Automation.plannerTrace")(function* () {
+    return yield* pi.transcript();
+  });
+
+  return { inspect, chat, answer, setPermissions, planReply, plannerTrace };
 });

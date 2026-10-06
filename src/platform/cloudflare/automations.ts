@@ -27,6 +27,8 @@ export const automationsLayer = (namespace: Effect.Success<typeof Automation>) =
             entityChanged: (...args) => remote(stub.entityChanged(...args)),
             respond: (...args) => remote(stub.respond(...args)),
             run: (...args) => remote(stub.run(...args)),
+            plannerTrace: () => remote(stub.plannerTrace()),
+            runTrace: (...args) => remote(stub.runTrace(...args)),
           };
         },
       });

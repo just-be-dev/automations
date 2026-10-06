@@ -34,6 +34,7 @@ const harness = () => {
   /** The pending schedule occurrence: one at a time, like the host's single job ID. */
   const ticks = { pending: undefined as number | undefined };
   const prompts: Array<PromptOptions> = [];
+  const transcripts: Array<number | undefined> = [];
   const recorded: Array<{ id: string; name: string }> = [];
   const lock = Semaphore.makeUnsafe(1);
   let failSchedule = false;
@@ -115,6 +116,14 @@ const harness = () => {
         createConversation: Effect.succeed(7),
         instruct: () => Effect.void,
         liveAnswer: Effect.succeed(undefined),
+        transcript: (conversation) =>
+          Effect.sync(() => {
+            transcripts.push(conversation);
+            return {
+              events: [{ _tag: "Prompt" as const, id: "1", at: 0, text: `In ${conversation}` }],
+              truncated: false,
+            };
+          }),
         prompt: (options) =>
           Effect.suspend(() => {
             prompts.push(options);
@@ -172,6 +181,7 @@ const harness = () => {
     clocks,
     ticks,
     prompts,
+    transcripts,
     recorded,
     failSchedule: () => {
       failSchedule = true;
@@ -539,6 +549,39 @@ describe("Automation application without a platform", () => {
     expect(result?.status).toBe("stopped");
     expect(result?.stopReason).toBe("Snapshot finished");
     expect(result?.steps.stop?.status).toBe("done");
+  });
+
+  test("traces read the planner's conversation and the one a run's agent steps share", async () => {
+    const h = harness();
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const app = yield* makeAutomation();
+        const records = yield* makeRunStore();
+        const run = {
+          workflow,
+          subject: null,
+          status: "completed" as const,
+          steps: {},
+          tasks: [],
+          startedAt: 0,
+        };
+        yield* records.write({ ...run, id: RunId.make("no-agents") });
+        yield* records.write({ ...run, id: RunId.make("with-agents"), conversation: 7 });
+        return {
+          planner: yield* app.plannerTrace(),
+          missing: yield* app.runTrace(RunId.make("missing")),
+          withoutAgents: yield* app.runTrace(RunId.make("no-agents")),
+          withAgents: yield* app.runTrace(RunId.make("with-agents")),
+        };
+      }).pipe(Effect.provide(h.layer)),
+    );
+    expect(h.transcripts).toEqual([undefined, 7]);
+    expect(result.planner.events).toEqual([
+      { _tag: "Prompt", id: "1", at: 0, text: "In undefined" },
+    ]);
+    expect(result.missing).toBeUndefined();
+    expect(result.withoutAgents).toEqual({ events: [], truncated: false });
+    expect(result.withAgents?.events).toEqual([{ _tag: "Prompt", id: "1", at: 0, text: "In 7" }]);
   });
 
   test("keeps a durable wait across reopen and resumes it at the scheduled time", async () => {

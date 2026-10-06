@@ -24,6 +24,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
     Overview: () => "",
     Templates: () => "",
     Entities: () => "",
+    Traces: () => "",
     Studio: (studio) => studio.automationId,
     Run: (run) => run.automationId,
   });

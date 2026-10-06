@@ -76,6 +76,32 @@ export const automationRoutes = Layer.merge(
         ),
       ),
       HttpRouter.route(
+        "GET",
+        "/:id/trace",
+        respond(
+          Effect.gen(function* () {
+            const { id } = yield* automationParams;
+            const automations = yield* Automations;
+            return yield* automations.get(id).plannerTrace();
+          }),
+        ),
+      ),
+      HttpRouter.route(
+        "GET",
+        "/:id/runs/:runId/trace",
+        respond(
+          Effect.gen(function* () {
+            const { id, runId } = yield* pathParams(RunParams);
+            const automations = yield* Automations;
+            const trace = yield* automations.get(id).runTrace(runId);
+            if (trace === undefined) {
+              return yield* new NotFound({ message: "Run not found" });
+            }
+            return trace;
+          }),
+        ),
+      ),
+      HttpRouter.route(
         "POST",
         "/:id/runs/:runId/tasks/:stepId",
         respond(

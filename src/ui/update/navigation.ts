@@ -8,9 +8,10 @@ import {
   toEntitiesMessage,
   toOverviewMessage,
   toTemplatesMessage,
+  toTracesMessage,
 } from "../message.ts";
 import { Activity, type Model, Page, RunDetail, SubjectChoices } from "../model.ts";
-import { Entities, Overview, Templates } from "../page/index.ts";
+import { Entities, Overview, Templates, Traces } from "../page/index.ts";
 import { AppRoute } from "../route.ts";
 import { modifyOpenRun, openingRun, reloadOpenRun } from "./open-run.ts";
 import { fail } from "./studio.ts";
@@ -32,6 +33,16 @@ const leaveAutomation = (model: Model, automationId: string): Model =>
     conversation: () => [],
     activity: () => Activity.Working({ notice: "Loading automation…" }),
   });
+
+/** The planner of the URL's automation, or its run's agent steps. */
+const traceSource = ({
+  maybeAutomationId,
+  maybeRunId,
+}: {
+  readonly maybeAutomationId: Option.Option<string>;
+  readonly maybeRunId: Option.Option<string>;
+}): Option.Option<Traces.Source> =>
+  Option.map(maybeAutomationId, (automationId) => ({ automationId, maybeRunId }));
 
 /** Shows the route's page on a model already set to its automation, and loads what it needs. */
 export const showPage = (model: Model, route: AppRoute): Update.Return<Model, Message> =>
@@ -62,6 +73,15 @@ export const showPage = (model: Model, route: AppRoute): Update.Return<Model, Me
             activity: () => Activity.Ready({ notice: "" }),
           }),
         toParentMessage: toEntitiesMessage,
+      }),
+    Traces: (traces) =>
+      Update.foldChildInit(Traces.init(traceSource(traces)), {
+        toParentModel: (nextTraces) =>
+          modifyFields(model, {
+            page: () => Page.Traces({ traces: nextTraces }),
+            activity: () => Activity.Ready({ notice: "" }),
+          }),
+        toParentMessage: toTracesMessage,
       }),
     Studio: ({ automationId }) => {
       const studio = modifyFields(model, { page: () => Page.Studio() });
@@ -95,6 +115,7 @@ const routeAutomationId = (route: AppRoute) =>
     Overview: () => "",
     Templates: () => "",
     Entities: () => "",
+    Traces: () => "",
     Studio: ({ automationId }) => automationId,
     Run: ({ automationId }) => automationId,
   });
@@ -105,6 +126,7 @@ const isShowing = (model: Model, route: AppRoute) =>
     Overview: () => false,
     Templates: () => false,
     Entities: () => false,
+    Traces: () => false,
     Studio: () => Page.guards.Studio(model.page),
     Run: ({ runId }) => Page.guards.Run(model.page) && model.page.openRun.runId === runId,
   });
@@ -131,6 +153,13 @@ export const followRoute = (model: Model, route: AppRoute): Update.Return<Model,
       toParentMessage: toEntitiesMessage,
     });
   }
+  if (AppRoute.guards.Traces(route) && Page.guards.Traces(model.page)) {
+    return Update.foldChildInit(Traces.reflectUrl(model.page.traces, traceSource(route)), {
+      toParentModel: (traces): Model =>
+        modifyFields(model, { page: (): Page => Page.Traces({ traces }) }),
+      toParentMessage: toTracesMessage,
+    });
+  }
   if (!isShowing(model, route)) {
     return showPage(leaveAutomation(model, routeAutomationId(route)), route);
   }
@@ -145,6 +174,7 @@ export const opensInPanel = (model: Model, route: AppRoute) =>
         Overview: () => Option.none(),
         Templates: () => Option.none(),
         Entities: () => Option.none(),
+        Traces: () => Option.none(),
         Studio: () => Option.none(),
         Run: ({ automationId, runId }) =>
           AutomationId.isValid(automationId) ? Option.some({ automationId, runId }) : Option.none(),

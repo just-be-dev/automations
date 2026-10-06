@@ -1,14 +1,21 @@
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import type { HtmlBuilder } from "foldkit/html";
-import { LayoutDashboard, Database, FileText, Plus, Workflow as WorkflowIcon } from "lucide";
+import {
+  LayoutDashboard,
+  Database,
+  FileText,
+  Plus,
+  ScrollText,
+  Workflow as WorkflowIcon,
+} from "lucide";
 import { button } from "@/components/ui/button";
 import { componentName } from "@/lib/component";
 import { icon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { Message } from "../message.ts";
 import { type AutomationSummary, Directory, type Model, Page } from "../model.ts";
-import { automationHref, entitiesHref, overviewHref, templatesHref } from "../route.ts";
+import { automationHref, entitiesHref, overviewHref, templatesHref, tracesHref } from "../route.ts";
 
 const sidebarNoteClass = "px-1.5 py-1 text-xs text-muted-foreground";
 
@@ -135,6 +142,20 @@ export const sidebarView = (model: Model, h: HtmlBuilder<Message>) =>
               ),
             ],
             [icon(h, Database, "size-4"), "Entity store"],
+          ),
+          h.a(
+            [
+              h.Href(tracesHref(Option.none(), Option.none())),
+              ...(Page.guards.Traces(model.page) ? [h.AriaCurrent("page")] : []),
+              h.Class(
+                cn(
+                  navItemClass,
+                  "items-center text-[13px] font-medium tracking-tight",
+                  Page.guards.Traces(model.page) && "bg-hover text-foreground",
+                ),
+              ),
+            ],
+            [icon(h, ScrollText, "size-4"), "Agent traces"],
           ),
         ],
       ),

@@ -7,7 +7,7 @@ import { AskedQuestions, PendingChat, Run, RunSummary, Workflow } from "../workf
 import { Role } from "../entities.ts";
 import { SubjectOption } from "./api.ts";
 import { Questionnaire, TaskAnswer } from "./domain/index.ts";
-import { Entities, Overview, Templates } from "./page/index.ts";
+import { Entities, Overview, Templates, Traces } from "./page/index.ts";
 import { ShortcutModifier } from "./platform.ts";
 import { Theme } from "./theme.ts";
 
@@ -112,6 +112,7 @@ export const Page = defineTaggedUnion({
   Overview: { overview: Overview.Model },
   Templates: { templates: Templates.Model },
   Entities: { entities: Entities.Model },
+  Traces: { traces: Traces.Model },
   Studio: {},
   Run: { openRun: OpenRun },
 });

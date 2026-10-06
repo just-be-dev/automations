@@ -1,6 +1,7 @@
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import type { Trace } from "./trace.ts";
 
 export class PiError extends Schema.TaggedError<PiError>()("PiError", {
   message: Schema.String,
@@ -55,5 +56,7 @@ export class PiAgent extends Context.Service<
     /** Sets the root's instructions for the next request; unchanged instructions aren't resent. */
     readonly instruct: (instructions: string) => Effect.Effect<void, PiError>;
     readonly liveAnswer: Effect.Effect<LiveAnswer | undefined, PiError>;
+    /** What a conversation recorded, oldest first. Defaults to the root conversation. */
+    readonly transcript: (conversation?: number) => Effect.Effect<Trace, PiError>;
   }
 >()("automations/PiAgent") {}

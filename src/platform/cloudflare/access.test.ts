@@ -33,6 +33,8 @@ test("Access identity is request-scoped and reaches the automation's approval op
         start: unused,
         entityChanged: unused,
         run: unused,
+        plannerTrace: unused,
+        runTrace: unused,
         respond: (runId, stepId, answer, email) =>
           Effect.sync(() => {
             calls.push([id, runId, stepId, answer, email]);

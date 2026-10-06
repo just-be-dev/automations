@@ -7,7 +7,7 @@ import { Role } from "../entities.ts";
 import { PendingChat, Permission, Run, RunSummary, Workflow } from "../workflow.ts";
 import { SubjectOption } from "./api.ts";
 import { AutomationSummary, Exchange, WorkflowDisplay } from "./model.ts";
-import { Entities, Overview, Templates } from "./page/index.ts";
+import { Entities, Overview, Templates, Traces } from "./page/index.ts";
 
 export const Message = defineMessageUnion({
   ClickedLink: { request: UrlRequest },
@@ -87,6 +87,7 @@ export const Message = defineMessageUnion({
   GotOverviewMessage: { message: Overview.Message },
   GotTemplatesMessage: { message: Templates.Message },
   GotEntitiesMessage: { message: Entities.Message },
+  GotTracesMessage: { message: Traces.Message },
 });
 export type Message = typeof Message.Type;
 
@@ -101,3 +102,5 @@ export const toTemplatesMessage = (message: Templates.Message) =>
 
 export const toEntitiesMessage = (message: Entities.Message) =>
   Message.GotEntitiesMessage({ message });
+
+export const toTracesMessage = (message: Traces.Message) => Message.GotTracesMessage({ message });

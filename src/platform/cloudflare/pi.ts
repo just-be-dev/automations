@@ -11,6 +11,7 @@ import {
   type ModelRef,
 } from "@earendil-works/pi-durable";
 import { openPiStorage } from "./pi-storage.ts";
+import { assistantContent, readTrace } from "./pi-trace.ts";
 import { createAI } from "agents/models/pi-ai";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
@@ -55,25 +56,6 @@ const attempt = <A>(operation: string, run: () => Promise<A>) =>
 
 // NOTE: pi brands numeric IDs; storage hands back the plain number we persisted for this conversation.
 const toConversationId = (id: number) => id as ConversationId;
-
-/** Joins an assistant message's `text` or `thinking` parts. */
-const assistantContent = (message: unknown, type: "text" | "thinking") => {
-  if (
-    typeof message !== "object" ||
-    message === null ||
-    !("role" in message) ||
-    message.role !== "assistant" ||
-    !("content" in message) ||
-    !Array.isArray(message.content)
-  ) {
-    return "";
-  }
-  return message.content
-    .map((part: { readonly type?: string; readonly text?: string; readonly thinking?: string }) =>
-      part.type === type ? (part[type] ?? "") : "",
-    )
-    .join("");
-};
 
 const objectType = (schema: unknown) =>
   typeof schema === "object" &&
@@ -233,5 +215,10 @@ export const openPiAgent = Effect.fn("PiAgent.open")(function* (options: PiAgent
     };
   }).pipe(Effect.withSpan("PiAgent.liveAnswer"));
 
-  return PiAgent.of({ createConversation, prompt, instruct, liveAnswer });
+  const transcript = Effect.fn("PiAgent.transcript")(function* (id?: number) {
+    const target = yield* conversation(id);
+    return yield* attempt("Read pi transcript", () => readTrace(target, context));
+  });
+
+  return PiAgent.of({ createConversation, prompt, instruct, liveAnswer, transcript });
 });

@@ -49,7 +49,7 @@ import {
 import { init } from "./main.ts";
 import { Message, toOverviewMessage } from "./message.ts";
 import type { Model } from "./model.ts";
-import { Entities, Overview, Templates } from "./page/index.ts";
+import { Entities, Overview, Templates, Traces } from "./page/index.ts";
 import { update } from "./update/index.ts";
 import { view } from "./view/index.ts";
 
@@ -1249,5 +1249,35 @@ test("the sidebar's templates link opens the templates page", () => {
     expect(role("link", { name: "Templates" })).toHaveAttr("href", "/templates"),
     expect(role("heading", { name: "Templates" })).toExist(),
     expect(text("No templates yet.")).toExist(),
+  );
+});
+
+test("the traces page opens the trace of the run the URL names, and keeps the run list", () => {
+  scene(
+    { update, view },
+    given(
+      applied(loaded, [
+        Message.ChangedUrl({
+          url: { ...studioUrl("automation=my-automation&run=run-9"), pathname: "/traces" },
+        }),
+        Message.GotTracesMessage({
+          message: Traces.Message.SucceededLoadTrace({
+            load: 0,
+            trace: {
+              truncated: false,
+              events: [{ _tag: "Prompt", id: "1", at: 0, text: "Write a joke about email" }],
+            },
+          }),
+        }),
+      ]),
+    ),
+    expect(role("link", { name: "Agent traces" })).toHaveAttr("aria-current", "page"),
+    expect(role("link", { name: "Agent traces" })).toHaveAttr("href", "/traces"),
+    expect(role("heading", { name: "Agent steps of run run-9" })).toExist(),
+    expect(text("Write a joke about email")).toExist(),
+    expect(role("link", { name: "Open run" })).toHaveAttr(
+      "href",
+      "/?automation=my-automation&run=run-9",
+    ),
   );
 });

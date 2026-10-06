@@ -64,6 +64,8 @@ export const makeAutomation = Effect.fn("Automation.make")(function* () {
     entityChanged: runs.entityChanged,
     respond: runs.respond,
     run: runs.run,
+    plannerTrace: design.plannerTrace,
+    runTrace: runs.runTrace,
   };
 });
 
