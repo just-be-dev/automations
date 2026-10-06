@@ -6,6 +6,7 @@ import {
   LoadOverview,
   LoadSubjects,
   Message,
+  OutMessage,
   PollOverview,
   StartRun,
   init,
@@ -180,4 +181,11 @@ test("triggers read as a plain phrase", () => {
       timezone: "Europe/London",
     }),
   ).toBe("3 days after each employee's start_date at 9:00 (Europe/London)");
+});
+
+test("New automation asks the parent to open the new automation dialog", () => {
+  const clicked = update(loaded([]), Message.ClickedNewAutomation());
+  expect(clicked.model).toEqual(loaded([]));
+  expect(clicked.commands).toBeUndefined();
+  expect(clicked.outMessage).toEqual(OutMessage.RequestedNewAutomation());
 });

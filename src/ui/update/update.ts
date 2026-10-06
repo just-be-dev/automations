@@ -82,6 +82,10 @@ const foldOverview = Update.foldChild({
   write: (model, nextOverview) =>
     modifyFields(model, { page: () => Page.Overview({ overview: nextOverview }) }),
   toParentMessage: toOverviewMessage,
+  foldOutMessage: (outMessage: Overview.OutMessage) => (model: Model) =>
+    Overview.OutMessage.match<Update.Return<Model, Message>>(outMessage, {
+      RequestedNewAutomation: () => openNewAutomation(model),
+    }),
 });
 
 export const update = (model: Model, message: Message) =>

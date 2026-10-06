@@ -125,14 +125,16 @@ test("starting a run by hand picks its employee and links to the new run", () =>
   );
 });
 
-test("an empty overview says how to make an automation", () => {
+test("an empty overview offers only a way to make an automation", () => {
   scene(
     { update, view },
     given(
       update(init(0).model, Message.SucceededLoadOverview({ session: 0, poll: 0, automations: [] }))
         .model,
     ),
-    expect(text("Nothing is running right now.")).toExist(),
     expect(text("No automations yet")).toExist(),
+    expect(role("button", { name: "New automation" })).toExist(),
+    expect(text("Nothing is running right now.")).not.toExist(),
+    expect(role("heading", { name: "Automations" })).not.toExist(),
   );
 });

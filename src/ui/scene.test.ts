@@ -44,9 +44,9 @@ import {
   summaryOf,
 } from "./fixtures.ts";
 import { init } from "./main.ts";
-import { Message } from "./message.ts";
+import { Message, toOverviewMessage } from "./message.ts";
 import type { Model } from "./model.ts";
-import { Entities } from "./page/index.ts";
+import { Entities, Overview } from "./page/index.ts";
 import { update } from "./update/index.ts";
 import { view } from "./view/index.ts";
 
@@ -264,6 +264,29 @@ test("+ opens a dialog whose description creates an automation, lists it, and op
     Mount.expectEnded(FoldkitDialog.AcquireResources),
     expect(role("heading", { name: "New automation" })).not.toExist(),
     expect(role("link", { name: /Order summaries/ })).toExist(),
+  );
+});
+
+test("the empty overview's New automation button opens the dialog", () => {
+  scene(
+    { update, view },
+    given(
+      applied(init({ theme: "System", shortcutModifier: "Meta" }, studioUrl()).model, [
+        toOverviewMessage(
+          Overview.Message.SucceededLoadOverview({ session: 0, poll: 0, automations: [] }),
+        ),
+        Message.SucceededLoadAutomations({ automations: [] }),
+      ]),
+    ),
+    expect(text("No automations yet")).toExist(),
+    click(within(role("main"), role("button", { name: "New automation" }))),
+    Command.resolveAll(
+      [FoldkitDialog.ShowDialog, Dialog.Message.SucceededShowDialog()],
+      [Animation.WaitForPaint, Animation.Message.CompletedWaitForPaint({ generation: 1 })],
+      [Animation.WaitForAnimationSettled, Animation.Message.EndedAnimation({ generation: 1 })],
+    ),
+    Mount.resolve(FoldkitDialog.AcquireResources, Dialog.Message.SucceededAcquireResources()),
+    expect(role("heading", { name: "New automation" })).toExist(),
   );
 });
 

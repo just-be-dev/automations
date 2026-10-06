@@ -4,7 +4,7 @@ import type { Update } from "foldkit";
 import { modifyFields } from "foldkit/struct";
 import { subjectType } from "../../../workflow.ts";
 import { LoadOverview, LoadSubjects, PollOverview, StartRun } from "./command.ts";
-import { Message } from "./message.ts";
+import { Message, OutMessage } from "./message.ts";
 import { type Automation, isRunning, Launch, Listing, type Model, Subjects } from "./model.ts";
 
 const pollDelayMillis = 5000;
@@ -36,7 +36,8 @@ const isStarting = (launch: Launch, automationId: string) =>
   Launch.guards.Starting(launch) && launch.automationId === automationId;
 
 export const update = (model: Model, message: Message) =>
-  Message.match<Update.Return<Model, Message>>(message, {
+  Message.match<Update.ReturnWithOutMessage<Model, Message, OutMessage>>(message, {
+    ClickedNewAutomation: () => ({ model, outMessage: OutMessage.RequestedNewAutomation() }),
     ClickedRunNow: ({ automationId }) => {
       if (Launch.guards.Starting(model.launch)) {
         return { model };
