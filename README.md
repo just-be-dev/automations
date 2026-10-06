@@ -124,3 +124,9 @@ Deployed stages sit behind Access, so send the service token as headers (`--head
 - Workflows and runs written before entity-based triggers were discarded; the Automation object drops them when it reads them.
 - Templates are managed through the API only; the studio shows which template a step uses but has no template editor yet. A run whose saved workflow no longer checks against the templates and entity types (for example, a template it uses was deleted) is recorded as failed instead of starting.
 - pi-ai, pi-durable, and Alchemy 2 are beta. Pin versions before production use.
+
+## Inspiration
+
+- [Callscript](https://github.com/vercel-labs/callscript): a model writes JavaScript that is parsed into an inert, validated JSON plan instead of being executed, so only the tools you mount can act.
+- [JEXL](https://github.com/just-be-dev/jexl): a programming language whose syntax is pure JSON.
+- [Forma](https://forma-lang.com/): a small typed Lisp where domain keywords are library code, so schemas, APIs, and policies share one source of truth.
