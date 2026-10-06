@@ -330,13 +330,13 @@ const usePlace = (user: TemplateUser) => {
 const templateUserView = (user: TemplateUser, h: HtmlBuilder<Message>) =>
   h.keyed("li")(
     user.id,
-    [componentName("template-user")],
+    [componentName("template-user"), h.Class("group/template-user")],
     [
       h.a(
         [
           h.Href(automationHref(user.id)),
           h.Class(
-            "flex items-center justify-between gap-3 px-3 py-2 text-[13px] transition-colors duration-100 outline-none hover:bg-hover focus-visible:ring-3 focus-visible:ring-ring/50",
+            "flex items-center justify-between gap-3 px-3 py-2 text-[13px] transition-colors duration-100 outline-none group-first/template-user:rounded-t-[10px] group-last/template-user:rounded-b-[10px] hover:bg-hover focus-visible:ring-3 focus-visible:ring-ring/50",
           ),
         ],
         [
