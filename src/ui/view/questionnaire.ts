@@ -11,6 +11,7 @@ import {
   SquareCheck,
 } from "lucide";
 import { button } from "@/components/ui/button";
+import { componentName } from "@/lib/component";
 import { textarea } from "@/components/ui/textarea";
 import { icon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
@@ -23,9 +24,9 @@ import { submitShortcut } from "./shared.ts";
 
 const cardClass = "mt-1 flex flex-col gap-3 rounded-xl bg-background p-3 shadow-card";
 
-const optionText = (option: QuestionOption, h: HtmlBuilder<Message>) =>
+const optionTextView = (option: QuestionOption, h: HtmlBuilder<Message>) =>
   h.span(
-    [h.Class("flex min-w-0 flex-col gap-0.5")],
+    [componentName("option-text"), h.Class("flex min-w-0 flex-col gap-0.5")],
     [
       h.span([h.Class("font-medium")], [option.label]),
       option.description === undefined
@@ -45,11 +46,11 @@ export interface QuestionnaireContext {
 
 const isSingle = (context: QuestionnaireContext) => Array.length(context.questions) === 1;
 
-const stepsView = (context: QuestionnaireContext, h: HtmlBuilder<Message>) => {
+const questionStepsView = (context: QuestionnaireContext, h: HtmlBuilder<Message>) => {
   const { chatId, questionnaire } = context;
-  const stepButton = (step: number, label: string, isDone: boolean) =>
+  const questionStepButton = (step: number, label: string, isDone: boolean) =>
     h.li(
-      [],
+      [componentName("question-step-button")],
       [
         h.button(
           [
@@ -76,19 +77,19 @@ const stepsView = (context: QuestionnaireContext, h: HtmlBuilder<Message>) => {
       ],
     );
   return h.nav(
-    [h.AriaLabel("Questions")],
+    [componentName("question-steps"), h.AriaLabel("Questions")],
     [
       h.ol(
         [h.Class("flex flex-wrap gap-1")],
         [
           ...Array.map(context.questions, (question, index) =>
-            stepButton(
+            questionStepButton(
               index,
               question.header,
               Questionnaire.isAnswered(Questionnaire.answerAt(questionnaire, index)),
             ),
           ),
-          stepButton(
+          questionStepButton(
             Array.length(context.questions),
             "Review",
             Questionnaire.hasAnyAnswer(questionnaire),
@@ -99,7 +100,7 @@ const stepsView = (context: QuestionnaireContext, h: HtmlBuilder<Message>) => {
   );
 };
 
-const optionView = (
+const questionOptionView = (
   context: QuestionnaireContext,
   question: Question,
   index: number,
@@ -119,7 +120,7 @@ const optionView = (
         ? CircleCheck
         : Circle;
   return h.li(
-    [],
+    [componentName("question-option")],
     [
       button(
         {
@@ -138,7 +139,7 @@ const optionView = (
         },
         [
           icon(h, marker, cn("mt-0.5 size-4", isChosen ? "text-signal" : "text-sand-8")),
-          optionText(option, h),
+          optionTextView(option, h),
         ],
         h,
       ),
@@ -152,6 +153,7 @@ const ownAnswerView = (context: QuestionnaireContext, index: number, h: HtmlBuil
     ? textarea(
         {
           id: ownAnswerId,
+          wrapperAttributes: [componentName("own-answer")],
           label: "Your own answer",
           labelClass: "text-xs text-muted-foreground",
           value: answer.text,
@@ -170,6 +172,7 @@ const ownAnswerView = (context: QuestionnaireContext, index: number, h: HtmlBuil
     : button(
         {
           variant: "ghost",
+          attributes: [componentName("own-answer")],
           onClick: Message.ClickedWriteOwnAnswer({
             chatId: context.chatId,
             question: index,
@@ -202,7 +205,7 @@ const questionStepView = (
     question.multiSelect === true ||
     Questionnaire.Answer.guards.Wrote(answer);
   return h.div(
-    [h.Class("flex flex-col gap-2.5")],
+    [componentName("question-step"), h.Class("flex flex-col gap-2.5")],
     [
       h.div(
         [h.Class("flex flex-col gap-0.5")],
@@ -215,7 +218,9 @@ const questionStepView = (
       ),
       h.ul(
         [h.Class("flex flex-col gap-1.5")],
-        Array.map(question.options, (option) => optionView(context, question, index, option, h)),
+        Array.map(question.options, (option) =>
+          questionOptionView(context, question, index, option, h),
+        ),
       ),
       ownAnswerView(context, index, h),
       hasNext
@@ -242,10 +247,10 @@ const questionStepView = (
   );
 };
 
-const reviewView = (context: QuestionnaireContext, h: HtmlBuilder<Message>) => {
+const answersReviewView = (context: QuestionnaireContext, h: HtmlBuilder<Message>) => {
   const unanswered = Questionnaire.unansweredHeaders(context.questionnaire, context.questions);
   return h.div(
-    [h.Class("flex flex-col gap-2.5")],
+    [componentName("answers-review"), h.Class("flex flex-col gap-2.5")],
     [
       h.p([h.Class("text-sm font-medium")], ["Review your answers"]),
       h.dl(
@@ -303,11 +308,16 @@ const reviewView = (context: QuestionnaireContext, h: HtmlBuilder<Message>) => {
  */
 export const openQuestionnaireView = (context: QuestionnaireContext, h: HtmlBuilder<Message>) =>
   h.div(
-    [h.Class(cardClass), h.Role("group"), h.AriaLabel("Questions from the agent")],
     [
-      isSingle(context) ? h.empty : stepsView(context, h),
+      componentName("open-questionnaire"),
+      h.Class(cardClass),
+      h.Role("group"),
+      h.AriaLabel("Questions from the agent"),
+    ],
+    [
+      isSingle(context) ? h.empty : questionStepsView(context, h),
       Option.match(Array.get(context.questions, context.questionnaire.step), {
-        onNone: () => reviewView(context, h),
+        onNone: () => answersReviewView(context, h),
         onSome: (question) => questionStepView(context, question, context.questionnaire.step, h),
       }),
       h.div(
@@ -339,7 +349,11 @@ export const askedQuestionsView = (
   h: HtmlBuilder<Message>,
 ): Html =>
   h.ul(
-    [h.Class(cn(cardClass, "gap-2 text-sm")), h.AriaLabel("Questions from the agent, answered")],
+    [
+      componentName("asked-questions"),
+      h.Class(cn(cardClass, "gap-2 text-sm")),
+      h.AriaLabel("Questions from the agent, answered"),
+    ],
     Array.map(questions, (question) =>
       h.li(
         [h.Class("flex items-start gap-2")],
@@ -357,14 +371,14 @@ const isSkipped = (answer: string | null | undefined) =>
 /** The person's answers, as they sent them: each question's name and answer, or their message. */
 export const answersView = (asked: AskedQuestions, h: HtmlBuilder<Message>): Html => {
   if (asked.answer.kind === "message") {
-    return h.p([h.Class("whitespace-pre-wrap")], [asked.answer.text]);
+    return h.p([componentName("answers"), h.Class("whitespace-pre-wrap")], [asked.answer.text]);
   }
   const { answers } = asked.answer;
   if (Array.every(answers, isSkipped)) {
-    return h.p([h.Class("italic")], ["Skipped the questions"]);
+    return h.p([componentName("answers"), h.Class("italic")], ["Skipped the questions"]);
   }
   return h.dl(
-    [h.Class("flex flex-col gap-1.5"), h.AriaLabel("Your answers")],
+    [componentName("answers"), h.Class("flex flex-col gap-1.5"), h.AriaLabel("Your answers")],
     Array.map(asked.questions, (question, index) => {
       const answer = answers[index];
       return h.div(

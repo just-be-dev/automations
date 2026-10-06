@@ -92,7 +92,7 @@ const conversationItems = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
 /** Something the person sent, on the right. */
 const personView = (children: ReadonlyArray<Html | string>, h: HtmlBuilder<Message>) =>
   ChatMessage(
-    { align: "end", attributes: [componentName("prompt")] },
+    { align: "end", attributes: [componentName("person")] },
     [
       ChatMessage.content(
         {},
