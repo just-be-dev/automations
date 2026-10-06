@@ -6,6 +6,14 @@ import { AutomationHost, decodeOrDrop } from "./host.ts";
 import { AutomationIndex } from "./index.ts";
 import { AutomationError } from "./model.ts";
 
+/** The entity types, templates, and roles a workflow is checked against, as they are now. */
+export const catalogOf = (entities: EntityStore["Service"]) =>
+  Effect.all({
+    types: entities.listTypes,
+    templates: entities.listTemplates,
+    roles: entities.listRoles,
+  });
+
 /** Draft and saved snapshots share the same storage and current catalog. */
 export const makeWorkflowStore = Effect.fn("Automation.makeWorkflowStore")(function* () {
   const { storage } = yield* AutomationHost;
@@ -13,11 +21,7 @@ export const makeWorkflowStore = Effect.fn("Automation.makeWorkflowStore")(funct
   const index = yield* AutomationIndex;
   const read = (key: "draft" | "saved") =>
     storage.get(key).pipe(Effect.flatMap(decodeOrDrop(Workflow)));
-  const catalog = Effect.all({
-    types: entities.listTypes,
-    templates: entities.listTemplates,
-    roles: entities.listRoles,
-  });
+  const catalog = catalogOf(entities);
 
   /**
    * Save is complete only after the trigger subscription is updated. These stores cannot share

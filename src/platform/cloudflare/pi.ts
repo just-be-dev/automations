@@ -2,6 +2,8 @@ import { createModels } from "@earendil-works/pi-ai/models";
 import {
   AssistantEntry,
   createRegistry,
+  defineExtension,
+  defineTool,
   Harness,
   LiveDoc,
   type Conversation,
@@ -11,7 +13,14 @@ import {
 import { openPiStorage } from "./pi-storage.ts";
 import { createAI } from "agents/models/pi-ai";
 import * as Effect from "effect/Effect";
-import { PiAgent, PiError, type LiveAnswer, type PromptOptions } from "../../ai/pi.ts";
+import * as Result from "effect/Result";
+import {
+  PiAgent,
+  PiError,
+  type AgentTool,
+  type LiveAnswer,
+  type PromptOptions,
+} from "../../ai/pi.ts";
 
 /**
  * pi-durable hosted in an automation's Durable Object. pi keeps conversations, model turns, and
@@ -23,6 +32,8 @@ export interface PiAgentOptions {
   readonly storage: DurableObjectStorage;
   readonly ai: Ai;
   readonly model: string;
+  /** Offered to the root conversation only. */
+  readonly tools: ReadonlyArray<AgentTool>;
 }
 
 // pi takes a chord `Context` on every call without re-exporting chord. This is chord's
@@ -64,6 +75,60 @@ const assistantContent = (message: unknown, type: "text" | "thinking") => {
     .join("");
 };
 
+const objectType = (schema: unknown) =>
+  typeof schema === "object" &&
+  schema !== null &&
+  "type" in schema &&
+  (schema.type === "object" || schema.type === "array");
+
+/** Models sometimes send a nested argument as a JSON string; this parses it back. */
+const parseStringArguments = (parameters: AgentTool["parameters"], args: unknown) => {
+  const properties = parameters["properties"];
+  if (typeof args !== "object" || args === null || typeof properties !== "object") {
+    return args;
+  }
+  return Object.fromEntries(
+    Object.entries(args).map(([name, value]) => {
+      if (typeof value !== "string" || !objectType(Reflect.get(properties ?? {}, name))) {
+        return [name, value];
+      }
+      try {
+        return [name, JSON.parse(value) as unknown];
+      } catch {
+        return [name, value];
+      }
+    }),
+  );
+};
+
+/**
+ * Every tool runs alone, so edits never interleave, and may run again after a restart, which the
+ * tools allow by being idempotent. A tool's failure reaches the model as an error result.
+ */
+const toolExtension = (tools: ReadonlyArray<AgentTool>) =>
+  defineExtension({
+    name: "automation",
+    tools: tools.map((tool) =>
+      defineTool({
+        name: tool.name,
+        description: tool.description,
+        // TypeBox 1 validates plain JSON Schema.
+        parameters: tool.parameters,
+        replay: "safe",
+        executionMode: "sequential",
+        // pi validates what this returns against `parameters`.
+        prepareArguments: (args) => parseStringArguments(tool.parameters, args),
+        execute: async (args) => {
+          const result = await Effect.runPromise(Effect.result(tool.execute(args)));
+          if (Result.isFailure(result)) {
+            throw new Error(result.failure.message);
+          }
+          return { content: [{ type: "text", text: result.success }] };
+        },
+      }),
+    ),
+  });
+
 const assistantText = (entry: { readonly model?: ReadonlyArray<unknown> } | undefined) =>
   assistantContent(entry?.model?.[0], "text");
 
@@ -76,8 +141,18 @@ export const openPiAgent = Effect.fn("PiAgent.open")(function* (options: PiAgent
     const models = createModels();
     models.setProvider(ai.provider);
     const storage = await openPiStorage(options.storage);
-    const opened = await Harness.open(storage, { models, registry: createRegistry() }, context);
+    const registry = createRegistry();
+    const tools = toolExtension(options.tools);
+    registry.install(tools);
+    // Conversations select no extension unless they ask, so agent steps never see the tools.
+    const opened = await Harness.open(
+      storage,
+      { models, registry, settings: { extensions: [] } },
+      context,
+    );
     const root = await opened.root(context, { agent });
+    // Before resuming, so an answer interrupted mid-run keeps its tools.
+    await root.configure({ extensions: [tools] }, context);
     opened.resume();
     return { harness: opened, rootId: root.id };
   });
@@ -152,6 +227,7 @@ export const openPiAgent = Effect.fn("PiAgent.open")(function* (options: PiAgent
       ...(requestId === undefined ? {} : { requestId }),
       thinking: assistantContent(message, "thinking"),
       text: assistantContent(message, "text"),
+      tools: (live?.tools ?? []).flatMap((slot) => (slot.status === "done" ? [] : [slot.name])),
     };
   }).pipe(Effect.withSpan("PiAgent.liveAnswer"));
 

@@ -14,6 +14,7 @@ import { RunId } from "../workflow/run.ts";
 import { makeAutomation } from "./application.ts";
 import { AutomationHost } from "./host.ts";
 import { AutomationIndex, AutomationIndexError } from "./index.ts";
+import { makePlanning } from "./planning.ts";
 import { makeRunStore, StoredRun } from "./run-store.ts";
 
 const workflow: Workflow = {
@@ -74,24 +75,42 @@ const harness = () => {
         Effect.sync(() => void clocks.push({ executionId, deferredName, at })),
     },
   });
-  const layer = Layer.mergeAll(
-    Layer.succeed(AutomationHost, host),
-    Layer.succeed(
-      PiAgent,
-      PiAgent.of({
+  type Call = (name: string, args?: unknown) => Effect.Effect<string>;
+  // By default the planner renames the workflow through its tools.
+  let answer = (call: Call) =>
+    Effect.gen(function* () {
+      yield* call("set_workflow", {
+        name: "New draft",
+        trigger: workflow.trigger,
+        steps: ["stop"],
+      });
+      yield* call("put_steps", { steps: workflow.steps });
+      return "Designed";
+    });
+  const planner = Layer.effect(
+    PiAgent,
+    Effect.gen(function* () {
+      const { tools } = yield* makePlanning();
+      const call: Call = (name, args = {}) =>
+        Effect.suspend(() => {
+          const tool = tools.find((candidate) => candidate.name === name);
+          return tool === undefined
+            ? Effect.die(`No tool ${name}`)
+            : Effect.orDie(tool.execute(args));
+        });
+      return PiAgent.of({
         createConversation: Effect.succeed(7),
         instruct: () => Effect.void,
         liveAnswer: Effect.succeed(undefined),
         prompt: (options) =>
-          Effect.sync(() => {
+          Effect.suspend(() => {
             prompts.push(options);
-            return JSON.stringify({
-              reply: "Designed",
-              workflow: { ...workflow, name: "New draft" },
-            });
+            return answer(call);
           }),
-      }),
-    ),
+      });
+    }),
+  );
+  const services = Layer.mergeAll(
     Layer.succeed(
       ProgressClassifier,
       ProgressClassifier.of({ classify: () => Effect.die("No reasoning to classify") }),
@@ -126,7 +145,8 @@ const harness = () => {
       ],
       roles: [{ name: "ops", label: "Ops", members: [{ type: "person", id: "sam" }] }],
     }),
-  );
+  ).pipe(Layer.provideMerge(Layer.succeed(AutomationHost, host)));
+  const layer = planner.pipe(Layer.provideMerge(services));
   return {
     host,
     layer,
@@ -137,6 +157,9 @@ const harness = () => {
     recorded,
     failSchedule: () => {
       failSchedule = true;
+    },
+    answerWith: (next: typeof answer) => {
+      answer = next;
     },
   };
 };
@@ -166,11 +189,55 @@ describe("Automation application without a platform", () => {
       { prompt: "  Keep my wording  ", reply: "Designed" },
     ]);
     expect(h.prompts).toHaveLength(1);
-    expect(h.prompts[0]).toMatchObject({
-      requestId: `chat:${result.pendingChat.id}`,
-      text: "  Keep my wording  ",
-    });
+    expect(h.prompts[0]?.requestId).toBe(`chat:${result.pendingChat.id}`);
+    expect(h.prompts[0]?.text).toEndWith("The person's message:\n\n  Keep my wording  ");
     expect(h.recorded).toEqual([{ id: "a1", name: "New draft" }]);
+    expect(await Effect.runPromise(h.host.storage.get("plan"))).toBeUndefined();
+  });
+
+  test("an answer that changes nothing keeps the draft and records the exchange", async () => {
+    const h = harness();
+    h.answerWith(() => Effect.succeed("What should start it?"));
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const app = yield* makeAutomation();
+        const { pendingChat } = yield* app.chat("a1", "Onboard people");
+        yield* app.callbacks.planReply({ automationId: "a1", chatId: pendingChat.id });
+        return yield* app.inspectWorkflow();
+      }).pipe(Effect.provide(h.layer)),
+    );
+    expect(result.draft).toBeUndefined();
+    expect(result.pendingChat).toBeUndefined();
+    expect(result.conversation).toEqual([
+      { prompt: "Onboard people", reply: "What should start it?" },
+    ]);
+    expect(h.recorded).toEqual([]);
+  });
+
+  test("a redelivered reply keeps the edits the interrupted delivery made", async () => {
+    const h = harness();
+    h.answerWith((call) =>
+      Effect.gen(function* () {
+        yield* call("set_workflow", { name: "Edited", trigger: workflow.trigger, steps: ["stop"] });
+        yield* call("put_steps", { steps: workflow.steps });
+        return yield* Effect.die("Restarted mid-answer");
+      }),
+    );
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const app = yield* makeAutomation();
+        const { pendingChat } = yield* app.chat("a1", "Design");
+        const reply = { automationId: "a1", chatId: pendingChat.id };
+        const interrupted = yield* Effect.exit(app.callbacks.planReply(reply));
+        // pi finishes the original answer; this delivery only waits for it.
+        h.answerWith(() => Effect.succeed("Designed"));
+        yield* (yield* makeAutomation()).callbacks.planReply(reply);
+        return { interrupted, finished: yield* app.inspectWorkflow() };
+      }).pipe(Effect.provide(h.layer)),
+    );
+    expect(Exit.isFailure(result.interrupted)).toBe(true);
+    expect(result.finished.draft?.name).toBe("Edited");
+    expect(result.finished.conversation).toEqual([{ prompt: "Design", reply: "Designed" }]);
   });
 
   test("doesn't leave a pending message behind when durable scheduling fails", async () => {

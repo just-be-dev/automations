@@ -35,8 +35,8 @@ export const isPublicHttpsUrl = (value: string) => {
   );
 };
 
-const StepId = Identifier(/^[a-zA-Z0-9_-]{1,40}$/, "Step IDs must be unique identifiers");
-const StepTitle = NonBlank("A step title is required", 120);
+export const StepId = Identifier(/^[a-zA-Z0-9_-]{1,40}$/, "Step IDs must be unique identifiers");
+export const StepTitle = NonBlank("A step title is required", 120);
 
 const durationMessage = 'Durations look like "30 minutes", "3 days", or "2 weeks"';
 const durationSyntax = /^(-?\d{1,4}) (minute|hour|day|week)s?$/;

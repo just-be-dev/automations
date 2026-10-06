@@ -6,6 +6,23 @@ export class PiError extends Schema.TaggedError<PiError>()("PiError", {
   message: Schema.String,
 }) {}
 
+/** A tool call the agent should correct, shown to it as an error result. */
+export class AgentToolError extends Schema.TaggedError<AgentToolError>()("AgentToolError", {
+  message: Schema.String,
+}) {}
+
+/**
+ * A tool the root conversation can call. pi may run a call again after a restart, so `execute`
+ * must be idempotent. It decodes its own arguments; `parameters` is the JSON Schema the model sees.
+ */
+export interface AgentTool {
+  readonly name: string;
+  readonly description: string;
+  readonly parameters: Schema.JsonObject;
+  /** Resolves with the text the model reads. */
+  readonly execute: (args: unknown) => Effect.Effect<string, AgentToolError>;
+}
+
 export interface PromptOptions {
   /** Defaults to the root conversation. */
   readonly conversation?: number;
@@ -19,6 +36,8 @@ export interface LiveAnswer {
   readonly requestId?: string;
   readonly thinking: string;
   readonly text: string;
+  /** The tools of the current round that haven't finished, in call order. */
+  readonly tools: ReadonlyArray<string>;
 }
 
 export class PiAgent extends Context.Service<

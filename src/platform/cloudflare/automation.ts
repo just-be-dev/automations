@@ -7,6 +7,7 @@ import { PiAgent } from "../../ai/pi.ts";
 import { ClassifierError, ProgressClassifier } from "../../agents/planner/progress-classifier.ts";
 import { makeAutomation } from "../../automation/application.ts";
 import { AutomationHost, AutomationStorageError } from "../../automation/host.ts";
+import { makePlanning } from "../../automation/planning.ts";
 import { ExecutionId } from "../../workflow/execution.ts";
 import { AutomationIndexD1 } from "./automation-index-d1.ts";
 import { EntityStoreD1 } from "./entity-store-d1.ts";
@@ -35,11 +36,6 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
       const withRuntime = <A, E, R>(effect: Effect.Effect<A, E, R | Alchemy.RuntimeContext>) =>
         Effect.provideService(effect, Alchemy.RuntimeContext, runtime);
       const aiBinding = yield* ai.raw;
-      const pi = yield* openPiAgent({
-        storage: state.raw.storage,
-        ai: aiBinding,
-        model: MODEL,
-      }).pipe(Effect.orDie);
 
       const host = AutomationHost.of({
         storage: {
@@ -76,6 +72,14 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
             ).pipe(Effect.orDie),
         },
       });
+      // The planner's tools edit its working copy through the host, so pi opens with them.
+      const { tools } = yield* makePlanning().pipe(Effect.provideService(AutomationHost, host));
+      const pi = yield* openPiAgent({
+        storage: state.raw.storage,
+        ai: aiBinding,
+        model: MODEL,
+        tools,
+      }).pipe(Effect.orDie);
       const classifier = ProgressClassifier.of({
         classify: (request) =>
           Effect.tryPromise({

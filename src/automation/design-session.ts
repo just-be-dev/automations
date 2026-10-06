@@ -18,6 +18,7 @@ import type { Permissions, Workflow } from "../workflow/model.ts";
 import { AutomationHost } from "./host.ts";
 import { AutomationIndex } from "./index.ts";
 import { AutomationError, Exchange, PendingChat } from "./model.ts";
+import { makePlanning } from "./planning.ts";
 import type { WorkflowStore } from "./workflow-store.ts";
 
 // How much more reasoning the planner writes before the classifier looks again.
@@ -49,6 +50,7 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
   const index = yield* AutomationIndex;
   const pi = yield* PiAgent;
   const { classify } = yield* ProgressClassifier;
+  const planning = yield* makePlanning();
   const { read: readWorkflow, catalog } = workflows;
 
   const readConversation = storage.list({ prefix: exchangePrefix }).pipe(
@@ -75,6 +77,10 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
         return;
       }
       const fixed = fixedProgress(answer);
+      // Each tool round starts a new model request, which mustn't read as starting over.
+      if (fixed === "reading" && (yield* Ref.get(progress))?.chatId === chatId) {
+        return;
+      }
       if (fixed !== undefined) {
         return yield* Ref.set(progress, { chatId, phrase: fixed });
       }
@@ -109,9 +115,9 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
   const isWorking = (pending: PendingChat | undefined, chatId: string) =>
     pending?.id === chatId && pending.status === "working";
 
-  // Delivery is at least once. A redelivered reply reuses the pi request IDs, so the agent answers
-  // each message (and its one retry) once, and only the delivery that still finds the message
-  // pending writes it.
+  // Delivery is at least once. A redelivered reply keeps the working copy the first delivery
+  // started and reuses the pi request IDs, so the agent answers each message (and its one retry)
+  // once, and only the delivery that still finds the message pending writes it.
   const planReply = Effect.fn("Automation.planReply")(function* ({
     automationId,
     chatId,
@@ -121,9 +127,11 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
       return;
     }
     const draft = yield* readWorkflow("draft");
-    const permissions = draft?.permissions ?? {};
+    yield* planning.start(chatId, draft);
     const reply = yield* catalog.pipe(
-      Effect.flatMap((current) => planDraft(pi, current, permissions, chatId, pending.prompt)),
+      Effect.flatMap((current) =>
+        planDraft(pi, planning.plan, current, draft, chatId, pending.prompt),
+      ),
       Effect.result,
       Effect.raceFirst(trackProgress(chatId)),
     );
@@ -143,30 +151,36 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
             yield* storage.put("pendingChat", failed);
             return false;
           }
-          // The planner may leave out permissions it isn't changing.
-          const previous = yield* readWorkflow("draft");
-          const designed: Workflow = {
-            ...reply.success.workflow,
-            permissions: { ...previous?.permissions, ...reply.success.workflow.permissions },
-          };
+          const { workflow } = reply.success;
+          if (workflow !== undefined) {
+            // The working copy started from the draft, so its permissions win; this only adds the
+            // ones the person set for other operations while the planner worked.
+            const previous = yield* readWorkflow("draft");
+            const designed: Workflow = {
+              ...workflow,
+              permissions: { ...previous?.permissions, ...workflow.permissions },
+            };
+            yield* storage.put("draft", designed);
+          }
           const exchangeCount =
             (yield* storage
               .get("exchangeCount")
               .pipe(Effect.flatMap(decodeStoredExchangeCount), Effect.orDie)) ?? 0;
-          yield* storage.put("draft", designed);
           yield* storage.put(exchangeKey(exchangeCount), {
             prompt: pending.prompt,
             reply: reply.success.reply,
           });
           yield* storage.put("exchangeCount", exchangeCount + 1);
           yield* storage.delete("pendingChat");
+          yield* storage.delete("plan");
           return true;
         }),
       )
       .pipe(Effect.orDie);
-    if (wrote && Result.isSuccess(reply)) {
+    const designed = Result.isSuccess(reply) ? reply.success.workflow : undefined;
+    if (wrote && designed !== undefined) {
       // The index only feeds the studio's list, so a failure to update it must not fail the reply.
-      yield* index.record(automationId, reply.success.workflow.name).pipe(Effect.ignore);
+      yield* index.record(automationId, designed.name).pipe(Effect.ignore);
     }
   });
 

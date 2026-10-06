@@ -1,6 +1,6 @@
 # Workflow DSL
 
-An automation is a JSON `Workflow`: a name, a trigger, and a tree of steps. The planner agent writes it, and runs execute the saved copy. The pieces:
+An automation is a JSON `Workflow`: a name, a trigger, and a tree of steps. The planner agent builds it with its tools, and runs execute the saved copy. The pieces:
 
 - **Entities** are the records a workflow is about, such as an `employee`. The `EntityStore` service keeps their types and records; its D1 layer is the implementation in use. A run's **subject** is the entity it's about.
 - **Capabilities** are what the interpreter does itself: run an agent, wait, branch, run branches in parallel, decide, ask a person, and stop the run.
@@ -19,8 +19,9 @@ Values don't have to be declared up front. A step reads what the run knows when 
 | `src/connections/registry.ts`                | The connections and their operations                                   |
 | `src/entities/templates.ts`                  | Templates, their checks, and expanding them before a run               |
 | `src/workflow/catalog.ts`                    | Checks a workflow against the entity types and connections             |
-| `src/agents/planner/planner.ts`              | The planner agent's prompt                                             |
-| `src/agents/planner/draft.ts`                | Planner replies and their decoding                                     |
+| `src/agents/planner/planner.ts`              | The planner agent's prompt, and how its answer becomes a draft         |
+| `src/agents/planner/plan.ts`                 | The working copy the planner's tools edit, and its YAML                |
+| `src/agents/planner/tools.ts`                | The planner's tools                                                    |
 | `src/workflow/interpreter.ts`                | `RunAutomation`, which executes a workflow                             |
 | `src/workflow/durable-engine.ts`             | The `effect/workflow` engine journaled in the Durable Object's storage |
 | `src/connections/runner.ts`                  | How operations execute                                                 |
@@ -161,7 +162,7 @@ Decoding checks the shape. Before a draft is accepted, on save, and again when a
 - Templates exist and still check against the entity types, every slot is filled, and an entity slot gets exactly one `{{ref}}` to an entity of its type. A template only fills `text` inputs.
 - A human step's `assignee` is a person.
 
-The planner gets every problem back and retries once.
+The planner can check its working copy with `check_workflow` while it works. When it answers, every problem left goes back to it and it retries once.
 
 ## Triggers
 
@@ -392,7 +393,7 @@ Email, Slack, and Calendar are **simulated**: there are no credentials yet, so t
 
 ### Permissions
 
-`permissions` maps each operation the workflow uses to `"auto"` (the run performs it on its own) or `{ "ask": "<role>" }` (each run waits until a member of that [role](#roles) approves it). The studio shows them as allow and ask first, with the role beside it. The planner sets one for every operation and is told the current ones on every turn. The person can change any of them in the studio, or with `POST /api/automations/:id/permissions` and `{ "permissions": { "email.send": { "ask": "people_ops" } } }`, which merges into the draft. A planner reply merges into the draft's permissions too, so leaving one out keeps it. `checkWorkflow` rejects a workflow that leaves an operation it uses without a permission, names an unknown operation, or asks an unknown role. Runs follow the saved copy.
+`permissions` maps each operation the workflow uses to `"auto"` (the run performs it on its own) or `{ "ask": "<role>" }` (each run waits until a member of that [role](#roles) approves it). The studio shows them as allow and ask first, with the role beside it. The planner sets one for every operation, and reads the current ones with the draft on every turn. The person can change any of them in the studio, or with `POST /api/automations/:id/permissions` and `{ "permissions": { "email.send": { "ask": "people_ops" } } }`, which merges into the draft. The planner's edits start from the draft's permissions, and a permission the person sets for another operation while the planner works is kept. `checkWorkflow` rejects a workflow that leaves an operation it uses without a permission, names an unknown operation, or asks an unknown role. Runs follow the saved copy.
 
 When an action asks first, the run resolves its inputs and opens an approval task that shows the operation, those inputs, and the role with its members at that moment. The step waits as `waiting`. Answer it like a human step's task with `{ "approved": boolean }`. When the studio knows who is answering (Cloudflare Access's authenticated email, on deployed stages), only the role's members may answer, and the answer records them as `respondedBy`. Under `alchemy dev` there's no Access, so anyone can answer. Approving performs the operation with the inputs shown. Declining marks the step `declined`, and it records nothing. Every later step that reads its record is then `skipped`, as are the steps that read theirs; the rest of the run carries on. Use a [`stop`](#stop) step to end the run instead. A human step's `notify` doesn't ask.
 
