@@ -9,8 +9,8 @@ import {
   type Conversation,
   type ConversationId,
   type ModelRef,
+  type Storage,
 } from "@earendil-works/pi-durable";
-import { openPiStorage } from "./pi-storage.ts";
 import { assistantContent, readTrace } from "./pi-trace.ts";
 import { createAI } from "agents/models/pi-ai";
 import * as Effect from "effect/Effect";
@@ -25,12 +25,12 @@ import {
 
 /**
  * pi-durable hosted in an automation's Durable Object. pi keeps conversations, model turns, and
- * submissions in its own `pi_*` tables in the object's SQLite database, so an interrupted turn
- * resumes when the object reopens pi.
+ * submissions in its own `pi_*` tables in the object's SQLite database (`openPiStorage`), so an
+ * interrupted turn resumes when the object reopens pi. The evals open it over memory instead.
  */
 
 export interface PiAgentOptions {
-  readonly storage: DurableObjectStorage;
+  readonly storage: () => Promise<Storage>;
   readonly ai: Ai;
   readonly model: string;
   /** Offered to the root conversation only. */
@@ -124,7 +124,7 @@ export const openPiAgent = Effect.fn("PiAgent.open")(function* (options: PiAgent
   const { harness, rootId } = yield* attempt("Open pi", async () => {
     const models = createModels();
     models.setProvider(ai.provider);
-    const storage = await openPiStorage(options.storage);
+    const storage = await options.storage();
     const registry = createRegistry();
     const tools = toolExtension(options.tools);
     registry.install(tools);

@@ -23,6 +23,18 @@ run = "bun run format"
 [tasks.test]
 run = "bun run test"
 
+[tasks.format-check]
+run = "bun run format:check"
+
+[tasks.eval]
+description = "Evals of every LLM call against Workers AI; arguments pass through"
+run = "bun run eval"
+
+[tasks.check]
+description = "Every check, the evals included, after the fast ones pass"
+depends = ["typecheck", "lint", "test", "format-check"]
+run = "bun run eval"
+
 [tasks.dev]
 run = "bun run dev"
 

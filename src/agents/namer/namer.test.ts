@@ -7,6 +7,7 @@ import {
   nameAutomation,
   nameFromReply,
   NamerError,
+  nameRequest,
 } from "./namer.ts";
 
 test("a reply's name drops the labels, quotes, and markup small models add", () => {
@@ -19,6 +20,32 @@ test("a reply's name drops the labels, quotes, and markup small models add", () 
     Option.some(`Word ${"word ".repeat(14)}word`),
   );
   expect(nameFromReply('  ""  ')).toEqual(Option.none());
+});
+
+test("a Title Case name becomes sentence case, keeping the capitals of names", () => {
+  expect(nameFromReply("Daily Sales Report")).toEqual(Option.some("Daily sales report"));
+  expect(nameFromReply("Update Roadmap Every Monday")).toEqual(
+    Option.some("Update roadmap every Monday"),
+  );
+  expect(nameFromReply("Sync HR Records To GitHub")).toEqual(
+    Option.some("Sync HR records to GitHub"),
+  );
+  expect(nameFromReply("Post Slack Reminders")).toEqual(Option.some("Post Slack reminders"));
+  expect(nameFromReply("Remind managers in Slack")).toEqual(
+    Option.some("Remind managers in Slack"),
+  );
+  expect(nameFromReply("Quarterly Review Reminders sent to Managers")).toEqual(
+    Option.some("Quarterly review reminders sent to managers"),
+  );
+  expect(nameFromReply("Remind Acme about renewals")).toEqual(
+    Option.some("Remind Acme about renewals"),
+  );
+});
+
+test("the description is marked as text to name, not instructions", () => {
+  expect(nameRequest("expense approvals").messages.at(-1)?.content).toBe(
+    "<description>\nexpense approvals\n</description>",
+  );
 });
 
 test("without an answer, the name is the description's opening words", () => {

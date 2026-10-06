@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { PiAgent } from "../../ai/pi.ts";
-import { ClassifierError, ProgressClassifier } from "../../agents/planner/progress-classifier.ts";
+import { ProgressClassifier } from "../../agents/planner/progress-classifier.ts";
 import { AnswerHub, makeAnswerHub } from "../../ai/ask-question/answer-hub.ts";
 import { makeAutomation } from "../../automation/application.ts";
 import { AutomationHost, AutomationStorageError } from "../../automation/host.ts";
@@ -13,9 +13,8 @@ import { ExecutionId } from "../../workflow/execution.ts";
 import { AutomationIndexD1 } from "./automation-index-d1.ts";
 import { EntityStoreD1 } from "./entity-store-d1.ts";
 import { openPiAgent } from "./pi.ts";
-
-const MODEL = "@cf/moonshotai/kimi-k2.7-code";
-const PROGRESS_MODEL = "@cf/cloudflare/clef-flash";
+import { openPiStorage } from "./pi-storage.ts";
+import { PLANNER_MODEL, workersAiClassifier } from "./workers-ai.ts";
 
 // Callback names, payloads, and schedule keys are persisted contracts.
 const PlanReply = Schema.Struct({ automationId: Schema.String, chatId: Schema.String });
@@ -87,19 +86,12 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         Effect.provideService(AnswerHub, answers),
       );
       const pi = yield* openPiAgent({
-        storage: state.raw.storage,
+        storage: () => openPiStorage(state.raw.storage),
         ai: aiBinding,
-        model: MODEL,
+        model: PLANNER_MODEL,
         tools,
       }).pipe(Effect.orDie);
-      const classifier = ProgressClassifier.of({
-        classify: (request) =>
-          Effect.tryPromise({
-            try: () => aiBinding.run(PROGRESS_MODEL, { model: "clef-flash", ...request }),
-            catch: (cause) =>
-              new ClassifierError({ message: `Progress classifier: ${String(cause)}` }),
-          }),
-      });
+      const classifier = workersAiClassifier(aiBinding);
       const { callbacks, ...operations } = yield* makeAutomation().pipe(
         Effect.provideService(AutomationHost, host),
         Effect.provideService(AnswerHub, answers),

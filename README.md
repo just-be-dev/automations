@@ -39,6 +39,46 @@ Runs have three distinct representations:
 
 The workflow format is described in [`docs/workflow-dsl.md`](docs/workflow-dsl.md). Agent instructions are in `AGENTS.md` and `src/ui/AGENTS.md`.
 
+### Evals
+
+The tests script every model. The evals in `evals/` call the real ones, on Workers AI, to measure how well each LLM call does its job: the planner, the namer, the progress classifier, and agent and decide steps. The calls run in an Evals Worker that `mise run eval` starts locally with `alchemy dev` on its own stage (`eval_$USER`), so Workers AI is reached through Alchemy's binding with the same Cloudflare profile as `mise run dev`, and no API token:
+
+```sh
+mise run eval                                                            # every eval
+mise run eval planner --case onboarding --trials 3                       # one eval, matching cases, three tries each
+mise run eval --list                                                     # the evals and their cases, without running them
+EVAL_PLANNER_MODEL=@cf/… mise run eval planner agent decide              # try another model for pi
+mise run check                                                           # typecheck, lint, tests, format, then the evals
+```
+
+An eval is a file, `evals/<name>.eval.ts`, that holds only cases and assertions. Each case gives an input and checks by name, written like tests with `expect` from `bun:test`; checks in `every` apply to every case, and `judged` asks an LLM judge for what code can't check, such as whether a reply reads plainly:
+
+```ts
+export default defineEval({
+  call: decide,
+  minimum: 0.9,
+  every: { "answers with a decision": (output) => expect(output.problem).toBeUndefined() },
+  cases: {
+    ticket: {
+      input: {
+        question: "Which team should handle this ticket?",
+        options: { billing: "…", technical: "…" },
+        state,
+      },
+      checks: { "picks billing": (output) => expect(output.choice).toBe("billing") },
+    },
+  },
+});
+```
+
+- `evals/calls/` holds one call per LLM call site: it runs the production code for an input (`planDraft` with the real tools, the namer, a step's prompt) and returns what the checks read, with helpers for reading it.
+- `evals/framework/` runs them. In Bun: `cli.ts` is `mise run eval`, which finds every `*.eval.ts` itself; `client.ts` starts the Evals Worker and sends it each case's input; `eval.ts` defines and scores evals and runs their checks; `report.ts` prints and saves results. In the Worker (`worker.ts`, its own stack in `stack.ts`): `models.ts` gives the calls the Workers AI binding and opens pi on in-memory storage, and `judge.ts` is the judge (`EVAL_JUDGE_MODEL` changes its model, the planner's by default). Each call's input and output have Schemas, which decode them on both sides of the Worker.
+- `evals/fixtures.ts` holds what the evals work with: a People Ops entity store, a new hire, and drafts for the planner to edit.
+
+Models vary between runs, so use `--trials` before trusting a change. The report lists failed checks and compares each case with the last saved run in `evals/results/` (ignored by git).
+
+Each eval has a `minimum`: the share of its checks that must pass across every case and trial. Below it, the run fails, so a prompt or model change that makes things worse fails `mise run eval` and `mise run check`. Keep each minimum a little under what the models reach, and raise it as they improve. The evals stay out of `mise run test`, which has to be fast and give the same answer every time; `evals/fixtures.test.ts` and `evals/framework/eval.test.ts` check the fixtures and the framework there without a model. Run `mise run check` before merging, and the affected evals whenever you change a prompt, the planner's tools, or a model.
+
 ## Deploy
 
 Requires Cloudflare Zero Trust, Workers AI, and an Alchemy profile that can manage Workers and Access.

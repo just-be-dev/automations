@@ -25,6 +25,7 @@
               "src/ui/page/entities/command.ts",
               "src/http/**/*.ts",
               "src/platform/cloudflare/api.ts",
+              "evals/framework/worker.ts",
               "src/platform/cloudflare/access.ts",
               "src/platform/cloudflare/access.test.ts",
               "src/connections/runner.ts"
@@ -48,5 +49,11 @@
       }
     ]
   },
-  "include": ["src/**/*.ts", "alchemy.run.ts", "oxlint.config.ts", "vite.config.ts"]
+  "include": [
+    "src/**/*.ts",
+    "evals/**/*.ts",
+    "alchemy.run.ts",
+    "oxlint.config.ts",
+    "vite.config.ts"
+  ]
 }
