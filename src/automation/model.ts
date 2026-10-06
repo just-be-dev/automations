@@ -10,7 +10,7 @@ export class AutomationError extends Schema.TaggedError<AutomationError>()("Auto
 export const Exchange = Schema.Struct({ prompt: Schema.String, reply: Schema.String });
 export interface Exchange extends Schema.Schema.Type<typeof Exchange> {}
 
-/** A design message waiting for a reply, or the last one the designer couldn't answer. */
+/** A design message waiting for a reply, or the last one the planner couldn't answer. */
 export const PendingChat = Schema.Union([
   Schema.Struct({ id: Schema.String, prompt: Schema.String, status: Schema.Literal("working") }),
   Schema.Struct({

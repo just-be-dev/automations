@@ -4,7 +4,7 @@ import type { Permission, Workflow } from "../workflow/model.ts";
  * Connections are the outside services a workflow can act through, and each one offers
  * operations. An `action` step names an operation (`use: "slack.sendMessage"`) and fills its
  * inputs (`with`). This module is the registry: what each operation accepts and records. It is
- * pure, so the designer prompt, the workflow checker, and the studio UI all read it. How the
+ * pure, so the planner prompt, the workflow checker, and the studio UI all read it. How the
  * operations execute lives in `src/connections/runner.ts`.
  */
 
@@ -34,7 +34,7 @@ export interface Operation {
   readonly title: string;
   readonly description: string;
   readonly inputs: ReadonlyArray<OperationInput>;
-  /** What the step records under `steps.<id>`, for the designer. */
+  /** What the step records under `steps.<id>`, for the planner. */
   readonly records: string;
   /** The fields of that record a later step may read. */
   readonly recordFields: ReadonlyArray<string>;

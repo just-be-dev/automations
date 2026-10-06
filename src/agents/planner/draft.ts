@@ -1,6 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { InvalidWorkflow, Workflow } from "../workflow/model.ts";
+import { InvalidWorkflow, Workflow } from "../../workflow/model.ts";
 
 export const Draft = Schema.Struct({
   reply: Schema.String.check(
@@ -66,7 +66,7 @@ const parseJson = (json: string) =>
     catch: (error) => (error instanceof Error ? error.message : String(error)),
   });
 
-/** Quotes the text at the problem so the designer can fix the JSON on its one retry. */
+/** Quotes the text at the problem so the planner can fix the JSON on its one retry. */
 const invalidJson = (error: string, json: string, scan: BracketScan) => {
   const { mismatch } = scan;
   const problem = scan.endsInString
@@ -85,7 +85,7 @@ const invalidJson = (error: string, json: string, scan: BracketScan) => {
   });
 };
 
-/** Decodes the designer's reply, tolerating a code fence and repairable closing-bracket slips. */
+/** Decodes the planner's reply, tolerating a code fence and repairable closing-bracket slips. */
 export const decodeDraft = (text: string) => {
   const json = text.trim().replace(/^```(?:json)?\s*|\s*```$/g, "");
   return parseJson(json).pipe(

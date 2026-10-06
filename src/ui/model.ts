@@ -76,7 +76,7 @@ export type OpenRun = typeof OpenRun.Type;
 
 /**
  * The overview of every automation, the studio that edits the one in `automationId`, or one of its
- * runs. A run page shows what the run did without the designer: it ran a saved snapshot, not the
+ * runs. A run page shows what the run did without the planner: it ran a saved snapshot, not the
  * draft.
  */
 export const Page = defineTaggedUnion({

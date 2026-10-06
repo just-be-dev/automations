@@ -10,7 +10,7 @@ import { BadRequest, limitedBody, NotFound, pathParams, respond } from "./respon
 const RoleParams = Schema.Struct({ role: EntityName });
 const TemplateParams = Schema.Struct({ name: EntityName });
 
-/** Roles and approved wording available to the designer and new runs. */
+/** Roles and approved wording available to the planner and new runs. */
 export const catalogRoutes = Layer.merge(
   HttpRouter.addAll(
     [

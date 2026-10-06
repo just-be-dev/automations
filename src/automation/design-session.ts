@@ -3,24 +3,24 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import {
+  fixedProgress,
+  pickProgress,
+  planDraft,
+  progressPhrases,
+  type ProgressPhrase,
+} from "../agents/planner/planner.ts";
+import { ProgressClassifier } from "../agents/planner/progress-classifier.ts";
 import { PiAgent } from "../ai/pi.ts";
 import { findOperation } from "../connections/registry.ts";
 import { EntityStore } from "../entities/store.ts";
 import type { Permissions, Workflow } from "../workflow/model.ts";
-import {
-  designDraft,
-  fixedProgress,
-  pickProgress,
-  progressPhrases,
-  type ProgressPhrase,
-} from "./design.ts";
 import { AutomationHost } from "./host.ts";
 import { AutomationIndex } from "./index.ts";
 import { AutomationError, Exchange, PendingChat } from "./model.ts";
-import { ProgressClassifier } from "./progress-classifier.ts";
 import type { WorkflowStore } from "./workflow-store.ts";
 
-// How much more reasoning the designer writes before the classifier looks again.
+// How much more reasoning the planner writes before the classifier looks again.
 const PICK_EVERY_CHARS = 300;
 
 // Storage holds only values this automation wrote, so a decoding failure is a defect.
@@ -33,13 +33,13 @@ const decodeStoredExchanges = Schema.decodeUnknownEffect(Schema.Array(Exchange))
 const exchangePrefix = "exchange:";
 const exchangeKey = (index: number) => `${exchangePrefix}${String(index).padStart(6, "0")}`;
 
-/** Payload of the `designReply` callback: a persisted contract, so keep it compatible. */
-interface DesignReply {
+/** Payload of the `planReply` callback: a persisted contract, so keep it compatible. */
+interface PlanReply {
   readonly automationId: string;
   readonly chatId: string;
 }
 
-/** The designer's conversation, pending reply, progress, and edits to one automation's draft. */
+/** The planner's conversation, pending reply, progress, and edits to one automation's draft. */
 export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(function* (
   workflows: WorkflowStore,
 ) {
@@ -64,7 +64,7 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
     { readonly chatId: string; readonly phrase: ProgressPhrase } | undefined
   >(undefined);
 
-  // Polls the designer's answer while it works. The classifier only runs once the reasoning has
+  // Polls the planner's answer while it works. The classifier only runs once the reasoning has
   // grown, and one call at a time, however many tabs are watching. Between attempts, and when the
   // classifier fails or isn't sure, the last phrase stays.
   const trackProgress = Effect.fn("Automation.trackProgress")(function* (chatId: string) {
@@ -112,10 +112,10 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
   // Delivery is at least once. A redelivered reply reuses the pi request IDs, so the agent answers
   // each message (and its one retry) once, and only the delivery that still finds the message
   // pending writes it.
-  const designReply = Effect.fn("Automation.designReply")(function* ({
+  const planReply = Effect.fn("Automation.planReply")(function* ({
     automationId,
     chatId,
-  }: DesignReply) {
+  }: PlanReply) {
     const pending = yield* readPendingChat;
     if (pending === undefined || !isWorking(pending, chatId)) {
       return;
@@ -123,7 +123,7 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
     const draft = yield* readWorkflow("draft");
     const permissions = draft?.permissions ?? {};
     const reply = yield* catalog.pipe(
-      Effect.flatMap((current) => designDraft(pi, current, permissions, chatId, pending.prompt)),
+      Effect.flatMap((current) => planDraft(pi, current, permissions, chatId, pending.prompt)),
       Effect.result,
       Effect.raceFirst(trackProgress(chatId)),
     );
@@ -143,7 +143,7 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
             yield* storage.put("pendingChat", failed);
             return false;
           }
-          // The designer may leave out permissions it isn't changing.
+          // The planner may leave out permissions it isn't changing.
           const previous = yield* readWorkflow("draft");
           const designed: Workflow = {
             ...reply.success.workflow,
@@ -186,7 +186,7 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
             return false;
           }
           yield* storage.put("pendingChat", pending);
-          yield* host.jobs.designReply(automationId, pending.id);
+          yield* host.jobs.planReply(automationId, pending.id);
           return true;
         }),
       )
@@ -199,7 +199,7 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
     return { pendingChat: pending };
   });
 
-  /** Sets permissions over the designer's suggestions. Saving applies them. */
+  /** Sets permissions over the planner's suggestions. Saving applies them. */
   const setPermissions = Effect.fn("Automation.setPermissions")(function* (
     permissions: Permissions,
   ) {
@@ -236,5 +236,5 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
       .pipe(Effect.catchTag("AutomationStorageError", Effect.die));
   });
 
-  return { inspect, chat, setPermissions, designReply };
+  return { inspect, chat, setPermissions, planReply };
 });

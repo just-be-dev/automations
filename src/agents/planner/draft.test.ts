@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import { decodeDraft, scanBrackets } from "./draft.ts";
 
-describe("designer draft", () => {
+describe("planner draft", () => {
   test("parses a fenced draft and rejects one without a reply", () => {
     const workflow = {
       name: "Welcome new hires",

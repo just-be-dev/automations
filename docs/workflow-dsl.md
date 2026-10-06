@@ -1,6 +1,6 @@
 # Workflow DSL
 
-An automation is a JSON `Workflow`: a name, a trigger, and a tree of steps. The designer agent writes it, and runs execute the saved copy. The pieces:
+An automation is a JSON `Workflow`: a name, a trigger, and a tree of steps. The planner agent writes it, and runs execute the saved copy. The pieces:
 
 - **Entities** are the records a workflow is about, such as an `employee`. The `EntityStore` service keeps their types and records; its D1 layer is the implementation in use. A run's **subject** is the entity it's about.
 - **Capabilities** are what the interpreter does itself: run an agent, wait, branch, run branches in parallel, decide, ask a person, and stop the run.
@@ -19,8 +19,8 @@ Values don't have to be declared up front. A step reads what the run knows when 
 | `src/connections/registry.ts`                | The connections and their operations                                   |
 | `src/entities/templates.ts`                  | Templates, their checks, and expanding them before a run               |
 | `src/workflow/catalog.ts`                    | Checks a workflow against the entity types and connections             |
-| `src/automation/design.ts`                   | The designer agent's prompt                                            |
-| `src/automation/draft.ts`                    | Designer replies and their decoding                                    |
+| `src/agents/planner/planner.ts`              | The planner agent's prompt                                             |
+| `src/agents/planner/draft.ts`                | Planner replies and their decoding                                     |
 | `src/workflow/interpreter.ts`                | `RunAutomation`, which executes a workflow                             |
 | `src/workflow/durable-engine.ts`             | The `effect/workflow` engine journaled in the Durable Object's storage |
 | `src/connections/runner.ts`                  | How operations execute                                                 |
@@ -161,7 +161,7 @@ Decoding checks the shape. Before a draft is accepted, on save, and again when a
 - Templates exist and still check against the entity types, every slot is filled, and an entity slot gets exactly one `{{ref}}` to an entity of its type. A template only fills `text` inputs.
 - A human step's `assignee` is a person.
 
-The designer gets every problem back and retries once.
+The planner gets every problem back and retries once.
 
 ## Triggers
 
@@ -295,7 +295,7 @@ Runs the steps of the first of its 1–8 cases whose condition holds. If none ho
 
 A model reads the run so far, picks one of 2–8 options, and the run continues with that option's steps. The question can be up to 2000 characters. Option IDs follow the step ID pattern and are unique within the step, and each description is up to 500 characters.
 
-`model` is `clef-flash` (simple routing), `clef` (nuanced calls), or `jev`. The schema accepts `jev`, but the designer is never told about it. For now, every decision is made by the automation's pi agent, whatever `model` says.
+`model` is `clef-flash` (simple routing), `clef` (nuanced calls), or `jev`. The schema accepts `jev`, but the planner is never told about it. For now, every decision is made by the automation's pi agent, whatever `model` says.
 
 It records `{ "choice": optionId, "confidence": number, "probabilities": { optionId: number } }`. The step fails if the model names an option that doesn't exist.
 
@@ -309,7 +309,7 @@ It records `{ "choice": optionId, "confidence": number, "probabilities": { optio
 Pauses the run until a person responds.
 
 - `prompt` is up to 4000 characters.
-- `assignee` is a ref to a person: an entity with a text field named `email`. The schema allows leaving it out, but the designer is told to always set it.
+- `assignee` is a ref to a person: an entity with a text field named `email`. The schema allows leaving it out, but the planner is told to always set it.
 - `notify` (`slack` or `email`) also sends the request through that connection. Both are simulated today, so the task records the channel and sends nothing.
 - `response` is `"approval"` (approve or reject), or a form of at least one field. Field types are `text`, `number`, `boolean`, `date`, and `datetime`, and a field's `default` is a template that prefills the answer.
 - `timeout` is an optional duration. When it passes first, the step finishes with `timedOut: true`, and a form keeps its defaults, so a proposal nobody objects to goes ahead.
@@ -392,7 +392,7 @@ Email, Slack, and Calendar are **simulated**: there are no credentials yet, so t
 
 ### Permissions
 
-`permissions` maps each operation the workflow uses to `"auto"` (the run performs it on its own) or `{ "ask": "<role>" }` (each run waits until a member of that [role](#roles) approves it). The studio shows them as allow and ask first, with the role beside it. The designer sets one for every operation and is told the current ones on every turn. The person can change any of them in the studio, or with `POST /api/automations/:id/permissions` and `{ "permissions": { "email.send": { "ask": "people_ops" } } }`, which merges into the draft. A designer reply merges into the draft's permissions too, so leaving one out keeps it. `checkWorkflow` rejects a workflow that leaves an operation it uses without a permission, names an unknown operation, or asks an unknown role. Runs follow the saved copy.
+`permissions` maps each operation the workflow uses to `"auto"` (the run performs it on its own) or `{ "ask": "<role>" }` (each run waits until a member of that [role](#roles) approves it). The studio shows them as allow and ask first, with the role beside it. The planner sets one for every operation and is told the current ones on every turn. The person can change any of them in the studio, or with `POST /api/automations/:id/permissions` and `{ "permissions": { "email.send": { "ask": "people_ops" } } }`, which merges into the draft. A planner reply merges into the draft's permissions too, so leaving one out keeps it. `checkWorkflow` rejects a workflow that leaves an operation it uses without a permission, names an unknown operation, or asks an unknown role. Runs follow the saved copy.
 
 When an action asks first, the run resolves its inputs and opens an approval task that shows the operation, those inputs, and the role with its members at that moment. The step waits as `waiting`. Answer it like a human step's task with `{ "approved": boolean }`. When the studio knows who is answering (Cloudflare Access's authenticated email, on deployed stages), only the role's members may answer, and the answer records them as `respondedBy`. Under `alchemy dev` there's no Access, so anyone can answer. Approving performs the operation with the inputs shown. Declining marks the step `declined`, and it records nothing. Every later step that reads its record is then `skipped`, as are the steps that read theirs; the rest of the run carries on. Use a [`stop`](#stop) step to end the run instead. A human step's `notify` doesn't ask.
 
@@ -433,7 +433,7 @@ A template is approved wording an action fills its inputs with, stored next to t
 }
 ```
 
-- `name` is snake_case. `label` and `description` (up to 500 characters) tell the designer who and what it's for; it reads them to decide when the template fits.
+- `name` is snake_case. `label` and `description` (up to 500 characters) tell the planner who and what it's for; it reads them to decide when the template fits.
 - `slots` are its insertion points, declared like an entity type's fields. A `ref` slot (`hire → employee`) takes an entity; any other slot takes text.
 - `content` fills the action inputs of the same names, up to 4000 characters each. Its `{{refs}}` start at a slot and follow `ref` fields like any ref: `{{hire.name}}`, `{{hire.manager.email}}`. A text slot is read whole: `{{note}}`.
 - A template is checked against the entity types when it's written.
@@ -443,7 +443,7 @@ An action uses one with `"template": { "use": "engineering_welcome_email", "with
 - An entity slot takes exactly one `{{ref}}` that starts at the subject's type and leads to an entity of the slot's type. The content's refs read through it, so `{{manager.name}}` reads `employee.manager.name`.
 - A text slot takes text that may contain `{{refs}}`, such as `"{{steps.draft.output}}"`.
 
-The designer prefers templates to writing text itself or adding an agent step to write it, and uses a `match` when the right template depends on the subject.
+The planner prefers templates to writing text itself or adding an agent step to write it, and uses a `match` when the right template depends on the subject.
 
 When a run starts, `expandTemplates` replaces each use with the inputs its content fills, so the run's workflow carries plain text and replays the same wording after a template changes. Editing a template changes the runs that start afterwards. If a template a saved workflow uses is deleted, or no longer fits it, the next run is recorded as `failed` with the problems instead of starting.
 

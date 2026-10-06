@@ -405,7 +405,7 @@ describe("workflowProblems", () => {
   });
 });
 
-test("describes object types and operations for the designer", () => {
+test("describes object types and operations for the planner", () => {
   const description = describeCatalog(catalog);
   expect(description).toContain(
     "- employee (Employee; shown as its name): name text, email text, start_date date, manager → employee, id",

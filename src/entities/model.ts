@@ -179,7 +179,7 @@ export type PathTarget =
   | { readonly kind: "error"; readonly message: string };
 
 /**
- * What a dotted path from an entity type leads to, so the designer's references can be checked
+ * What a dotted path from an entity type leads to, so the planner's references can be checked
  * before a run. `id` is every entity's ID. A `ref` field with more segments after it continues in
  * the type it points to.
  */

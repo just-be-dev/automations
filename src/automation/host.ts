@@ -36,7 +36,7 @@ export class AutomationHost extends Context.Service<
       ) => Effect.Effect<A, E | AutomationStorageError, R>;
     };
     readonly jobs: {
-      readonly designReply: (automationId: string, chatId: string) => Effect.Effect<void>;
+      readonly planReply: (automationId: string, chatId: string) => Effect.Effect<void>;
       readonly advance: (executionId: ExecutionId) => Effect.Effect<void>;
       readonly clock: (
         executionId: ExecutionId,

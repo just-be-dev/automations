@@ -5,8 +5,8 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { TestClock } from "effect/testing";
+import { ProgressClassifier } from "../agents/planner/progress-classifier.ts";
 import { PiAgent, type PromptOptions } from "../ai/pi.ts";
-import { ProgressClassifier } from "./progress-classifier.ts";
 import { EntityStore, EntityStoreError, layerMemory } from "../entities/store.ts";
 import type { Workflow } from "../workflow/model.ts";
 import { ExecutionId, ExecutionValues } from "../workflow/execution.ts";
@@ -64,7 +64,7 @@ const harness = () => {
         ),
     },
     jobs: {
-      designReply: (automationId, chatId) =>
+      planReply: (automationId, chatId) =>
         Effect.suspend(() => {
           if (failSchedule) return Effect.die("Scheduling failed");
           return Effect.sync(() => void replies.push({ automationId, chatId }));
@@ -151,9 +151,9 @@ describe("Automation application without a platform", () => {
         const busy = yield* app.chat("a1", "Another message").pipe(Effect.flip);
         const reopened = yield* makeAutomation();
         const pending = yield* reopened.inspectWorkflow();
-        yield* reopened.callbacks.designReply({ automationId: "a1", chatId: "different" });
-        yield* reopened.callbacks.designReply({ automationId: "a1", chatId: pendingChat.id });
-        yield* reopened.callbacks.designReply({ automationId: "a1", chatId: pendingChat.id });
+        yield* reopened.callbacks.planReply({ automationId: "a1", chatId: "different" });
+        yield* reopened.callbacks.planReply({ automationId: "a1", chatId: pendingChat.id });
+        yield* reopened.callbacks.planReply({ automationId: "a1", chatId: pendingChat.id });
         return { pendingChat, busy, pending, finished: yield* reopened.inspectWorkflow() };
       }).pipe(Effect.provide(h.layer)),
     );

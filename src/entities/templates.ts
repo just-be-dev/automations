@@ -38,7 +38,7 @@ const NonBlank = (message: string, maxLength: number) =>
 export const Template = Schema.Struct({
   name: EntityName,
   label: NonBlank("A template needs a label (maximum 120 characters)", 120),
-  /** Who and what it's for. The designer reads it to decide when the template fits. */
+  /** Who and what it's for. The planner reads it to decide when the template fits. */
   description: NonBlank("A template needs a description (maximum 500 characters)", 500),
   slots: Schema.Array(EntityField).check(
     Schema.makeFilter(

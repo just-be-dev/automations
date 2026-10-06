@@ -1,12 +1,12 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { checkWorkflow, describeCatalog, type Catalog } from "../workflow/catalog.ts";
-import type { LiveAnswer, PiAgent } from "../ai/pi.ts";
-import type { InvalidWorkflow, Permissions } from "../workflow/model.ts";
+import { checkWorkflow, describeCatalog, type Catalog } from "../../workflow/catalog.ts";
+import type { LiveAnswer, PiAgent } from "../../ai/pi.ts";
+import type { InvalidWorkflow, Permissions } from "../../workflow/model.ts";
 import { decodeDraft } from "./draft.ts";
 
 /**
- * The designer agent: its system prompt instructions, how its reply becomes a draft, and the
+ * The planner agent: its system prompt instructions, how its reply becomes a draft, and the
  * progress lines shown while it works.
  */
 
@@ -20,7 +20,7 @@ const describePermissions = (permissions: Permissions) => {
 };
 
 /** `permissions` are the current draft's, which the person may have changed in the studio. */
-export const designInstructions = (
+export const plannerInstructions = (
   catalog: Catalog,
   permissions: Permissions,
 ) => `You design executable automations. Always respond with ONLY JSON: {"reply":"brief helpful explanation or question","workflow":Workflow}. Include the COMPLETE revised workflow on every turn.
@@ -70,23 +70,23 @@ export const retryInstructions = (error: string) =>
   `Your last response was rejected because it is not a valid design:\n${error}\n\nFix the problem and respond again with ONLY JSON: {"reply":"...","workflow":Workflow}, including the COMPLETE revised workflow.`;
 
 /**
- * Asks the designer agent to answer a chat message. The instructions, which describe the current
+ * Asks the planner agent to answer a chat message. The instructions, which describe the current
  * catalog, are the conversation's system prompt, so the message goes as the user wrote it; pi only
  * sends the system prompt again when it changes. A reply that doesn't decode, or doesn't check
  * against the catalog, gets one retry in the same conversation with the problems. Each attempt has
  * its own pi request ID, so a redelivered callback waits for the original submissions instead of
  * prompting again. pi failures aren't the agent's mistake, so they aren't retried.
  */
-export const designDraft = Effect.fn("Design.draft")(function* (
-  designer: Pick<PiAgent["Service"], "instruct" | "prompt">,
+export const planDraft = Effect.fn("Planner.draft")(function* (
+  planner: Pick<PiAgent["Service"], "instruct" | "prompt">,
   catalog: Catalog,
   permissions: Permissions,
   chatId: string,
   message: string,
 ) {
-  yield* designer.instruct(designInstructions(catalog, permissions));
+  yield* planner.instruct(plannerInstructions(catalog, permissions));
   const ask = (requestId: string, text: string) =>
-    designer.prompt({ requestId, text }).pipe(
+    planner.prompt({ requestId, text }).pipe(
       Effect.flatMap(decodeDraft),
       Effect.tap((draft) => checkWorkflow(catalog, draft.workflow)),
     );
@@ -98,7 +98,7 @@ export const designDraft = Effect.fn("Design.draft")(function* (
 });
 
 /**
- * The lines the studio shows while the designer works. The people reading them don't build
+ * The lines the studio shows while the planner works. The people reading them don't build
  * software, so they stay plain and none of them hints at a problem.
  */
 export const progressPhrases = {
@@ -116,7 +116,7 @@ export const progressPhrases = {
 export type ProgressPhrase = keyof typeof progressPhrases;
 
 /**
- * The phrase that follows from how far the answer has got, or `undefined` while the designer is
+ * The phrase that follows from how far the answer has got, or `undefined` while the planner is
  * reasoning and the picker should choose. The retry after a rejected reply reads as a final check.
  */
 export const fixedProgress = (answer: LiveAnswer): ProgressPhrase | undefined => {
@@ -132,7 +132,7 @@ export const fixedProgress = (answer: LiveAnswer): ProgressPhrase | undefined =>
   return undefined;
 };
 
-/** The phrases the classifier may choose from the designer's reasoning. */
+/** The phrases the classifier may choose from the planner's reasoning. */
 const PickedPhrase = Schema.Literals([
   "understanding",
   "planning",
@@ -144,7 +144,7 @@ const PickedPhrase = Schema.Literals([
   "checking",
 ]);
 
-/** The choice question the classifier answers about the designer's latest reasoning. */
+/** The choice question the classifier answers about the planner's latest reasoning. */
 export const progressQuestion = {
   type: "choice",
   instructions:
@@ -187,7 +187,7 @@ export class UnsurePick extends Schema.TaggedError<UnsurePick>()("UnsurePick", {
 }) {}
 
 /**
- * Asks a classifier which phrase fits the designer's latest reasoning. `classify` sends the request
+ * Asks a classifier which phrase fits the planner's latest reasoning. `classify` sends the request
  * and resolves with the classifier's raw response. A response that doesn't decode, or a pick it
  * isn't sure of, fails.
  */
@@ -205,5 +205,5 @@ export const pickProgress = <E>(
         ? Effect.fail(new UnsurePick({ confidence: progress.confidence }))
         : Effect.succeed(progress.choice),
     ),
-    Effect.withSpan("Design.pickProgress"),
+    Effect.withSpan("Planner.pickProgress"),
   );

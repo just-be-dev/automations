@@ -589,7 +589,7 @@ test("picking an employee and running the saved version links to the new run", (
   );
 });
 
-test("a run page shows each step's outcome without the designer, and links to the editor", () => {
+test("a run page shows each step's outcome without the planner, and links to the editor", () => {
   const completed = runOf({
     status: "completed",
     steps: {

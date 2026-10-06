@@ -27,7 +27,7 @@ export const makeAutomation = Effect.fn("Automation.make")(function* () {
   });
 
   return {
-    callbacks: { ...runs.callbacks, designReply: design.designReply },
+    callbacks: { ...runs.callbacks, planReply: design.planReply },
     inspectWorkflow,
     overview,
     chat: design.chat,

@@ -67,7 +67,7 @@ const refSource = "[a-z][a-z0-9_]{0,39}(?:\\.[a-zA-Z0-9_$-]{1,40}){0,5}";
 const refSyntax = new RegExp(`^${refSource}$`);
 const wrappedRef = /^\{\{\s*(.*?)\s*\}\}$/;
 
-/** The designer sometimes writes a ref the way it writes templates (`{{employee.email}}`). */
+/** The planner sometimes writes a ref the way it writes templates (`{{employee.email}}`). */
 const unwrapRef = (value: string) => {
   const trimmed = value.trim();
   return wrappedRef.exec(trimmed)?.[1] ?? trimmed;
@@ -670,7 +670,7 @@ export const Permission = Schema.Union([
 export type Permission = typeof Permission.Type;
 
 /**
- * Permissions by operation ID. Every operation a workflow uses needs one. The designer suggests
+ * Permissions by operation ID. Every operation a workflow uses needs one. The planner suggests
  * them and the person can change them in the studio.
  */
 export const Permissions = Schema.Record(OperationId, Permission);

@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { PiAgent } from "../../ai/pi.ts";
-import { ClassifierError, ProgressClassifier } from "../../automation/progress-classifier.ts";
+import { ClassifierError, ProgressClassifier } from "../../agents/planner/progress-classifier.ts";
 import { makeAutomation } from "../../automation/application.ts";
 import { AutomationHost, AutomationStorageError } from "../../automation/host.ts";
 import { ExecutionId } from "../../workflow/execution.ts";
@@ -16,7 +16,7 @@ const MODEL = "@cf/moonshotai/kimi-k2.7-code";
 const PROGRESS_MODEL = "@cf/cloudflare/clef-flash";
 
 // Callback names, payloads, and schedule keys are persisted contracts.
-const DesignReply = Schema.Struct({ automationId: Schema.String, chatId: Schema.String });
+const PlanReply = Schema.Struct({ automationId: Schema.String, chatId: Schema.String });
 const Advance = Schema.Struct({ executionId: Schema.optionalKey(ExecutionId) });
 const ClockFired = Schema.Struct({ executionId: ExecutionId, deferredName: Schema.String });
 
@@ -59,9 +59,9 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         // Closures are invoked after callback registration. Scheduling stays inside the same
         // native storage transaction as the application's writes, including the alarm tables.
         jobs: {
-          designReply: (automationId, chatId) =>
+          planReply: (automationId, chatId) =>
             withRuntime(
-              designReply.schedule(chatId, { after: 0, payload: { automationId, chatId } }),
+              planReply.schedule(chatId, { after: 0, payload: { automationId, chatId } }),
             ).pipe(Effect.orDie),
           advance: (executionId) =>
             withRuntime(advance.schedule(executionId, { after: 0, payload: { executionId } })).pipe(
@@ -89,10 +89,10 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         Effect.provideService(PiAgent, pi),
         Effect.provideService(ProgressClassifier, classifier),
       );
-      const designReply = yield* Alchemy.makeCallback("designReply", (payload: unknown) =>
-        Schema.decodeUnknownEffect(DesignReply)(payload).pipe(
+      const planReply = yield* Alchemy.makeCallback("planReply", (payload: unknown) =>
+        Schema.decodeUnknownEffect(PlanReply)(payload).pipe(
           Effect.orDie,
-          Effect.flatMap(callbacks.designReply),
+          Effect.flatMap(callbacks.planReply),
         ),
       );
       const advance = yield* Alchemy.makeCallback("advance", (payload: unknown) =>

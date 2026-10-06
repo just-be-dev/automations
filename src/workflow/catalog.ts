@@ -31,7 +31,7 @@ import {
  * What a workflow can draw on beyond its own steps: the entity types and templates in the store.
  * The connections are static (`src/connections.ts`). The schema in `src/workflow.ts` checks a
  * workflow's shape; this module checks that it makes sense against the catalog, and describes the
- * catalog to the designer agent.
+ * catalog to the planner agent.
  */
 export interface Catalog {
   readonly types: ReadonlyArray<EntityType>;
@@ -509,7 +509,7 @@ const describeTemplate = (template: Template) => {
   }. Fills ${Object.keys(template.content).join(", ")}${fits.length === 0 ? "" : `; fits ${fits.join(", ")}`}.`;
 };
 
-/** The catalog as the designer agent reads it. */
+/** The catalog as the planner agent reads it. */
 export const describeCatalog = (catalog: Catalog) =>
   [
     "Entity types (stored records; a field marked → points to another entity, and an entity with a text field named email is a person who can be contacted or assigned):",
