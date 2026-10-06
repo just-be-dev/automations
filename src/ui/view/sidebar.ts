@@ -60,11 +60,11 @@ export const sidebarView = (model: Model, h: HtmlBuilder<Message>) =>
             {
               onClick: Message.ClickedNewAutomation(),
               variant: "ghost",
-              size: "icon-xs",
-              className: "text-sand-10",
+              size: "icon-sm",
+              className: "-my-1 text-muted-foreground hover:text-foreground",
               attributes: [h.AriaLabel("New automation"), h.Title("New automation")],
             },
-            [icon(h, Plus, "size-3.5")],
+            [icon(h, Plus, "size-4")],
             h,
           ),
         ],
@@ -81,8 +81,7 @@ export const sidebarView = (model: Model, h: HtmlBuilder<Message>) =>
               ),
             Ready: ({ automations }) =>
               Array.match(automations, {
-                onEmpty: () =>
-                  h.p([h.Class(sidebarNoteClass)], ["No automations yet. Create one with +."]),
+                onEmpty: () => h.empty,
                 onNonEmpty: (listed) =>
                   h.ul(
                     [h.Class("flex flex-col")],

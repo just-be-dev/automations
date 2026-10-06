@@ -4,6 +4,7 @@ import { SubjectOption } from "../../api.ts";
 import { Automation } from "./model.ts";
 
 export const Message = defineMessageUnion({
+  ClickedNewAutomation: {},
   ClickedRunNow: { automationId: Schema.String },
   SelectedSubject: { subjectId: Schema.String },
   ClickedStart: {},
@@ -29,3 +30,8 @@ export const Message = defineMessageUnion({
   FailedStartRun: { automationId: Schema.String, error: Schema.String },
 });
 export type Message = typeof Message.Type;
+
+export const OutMessage = defineMessageUnion({
+  RequestedNewAutomation: {},
+});
+export type OutMessage = typeof OutMessage.Type;

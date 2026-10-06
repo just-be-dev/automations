@@ -4,7 +4,14 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import { Submodel } from "foldkit";
 import type { Html, HtmlBuilder } from "foldkit/html";
-import { CircleAlert, CircleCheck, LoaderCircle, Play, Workflow as WorkflowIcon } from "lucide";
+import {
+  CircleAlert,
+  CircleCheck,
+  LoaderCircle,
+  Play,
+  Plus,
+  Workflow as WorkflowIcon,
+} from "lucide";
 import { badge } from "@/components/ui/badge";
 import { button, buttonClass } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
@@ -46,10 +53,6 @@ export const view = Submodel.defineView<Model, Message>((model, h) =>
             [
               h.div([h.Class(eyebrowClass)], ["Overview"]),
               h.h1([h.Class("text-xl font-semibold")], ["Runs and automations"]),
-              h.p(
-                [h.Class(noteClass)],
-                ["What's in flight right now, and every automation you can start by hand."],
-              ),
             ],
           ),
           ...Listing.match(model.listing, {
@@ -60,10 +63,14 @@ export const view = Submodel.defineView<Model, Message>((model, h) =>
                 [icon(h, CircleAlert, "size-3.5"), `Couldn't load the overview: ${error}`],
               ),
             ],
-            Ready: ({ automations }) => [
-              activeRunsView(automations, h),
-              automationsView(automations, model.launch, h),
-            ],
+            Ready: ({ automations }) =>
+              Array.match(automations, {
+                onEmpty: () => [noAutomationsView(h)],
+                onNonEmpty: (listed) => [
+                  activeRunsView(listed, h),
+                  automationsView(listed, model.launch, h),
+                ],
+              }),
           }),
         ],
       ),
@@ -145,6 +152,27 @@ const activeRunView = ({ automation, run }: ActiveRun, h: HtmlBuilder<Message>) 
     ],
   );
 
+const noAutomationsView = (h: HtmlBuilder<Message>) =>
+  Empty(
+    { className: "items-start rounded-[10px] bg-card p-6 text-left shadow-card" },
+    [
+      Empty.header(
+        { className: "items-start" },
+        [
+          Empty.media({ className: "icon-tile" }, [icon(h, WorkflowIcon, "size-3.5")], h),
+          Empty.title({}, ["No automations yet"], h),
+        ],
+        h,
+      ),
+      button(
+        { onClick: Message.ClickedNewAutomation(), size: "sm" },
+        [icon(h, Plus, "size-3.5", "inline-start"), "New automation"],
+        h,
+      ),
+    ],
+    h,
+  );
+
 const automationsView = (
   automations: ReadonlyArray<Automation>,
   launch: Launch,
@@ -154,38 +182,13 @@ const automationsView = (
     [componentName("automations"), h.AriaLabelledBy("automations"), h.Class("flex flex-col gap-2")],
     [
       h.h2([h.Id("automations"), h.Class(eyebrowClass)], ["Automations"]),
-      Array.match(automations, {
-        onEmpty: () =>
-          Empty(
-            { className: "items-start rounded-[10px] bg-card p-6 text-left shadow-card" },
-            [
-              Empty.header(
-                { className: "items-start" },
-                [
-                  Empty.media({ className: "icon-tile" }, [icon(h, WorkflowIcon, "size-3.5")], h),
-                  Empty.title({}, ["No automations yet"], h),
-                  Empty.description(
-                    {},
-                    [
-                      "Create one with + in the sidebar. Once it's saved, you can start it from here.",
-                    ],
-                    h,
-                  ),
-                ],
-                h,
-              ),
-            ],
-            h,
-          ),
-        onNonEmpty: (listed) =>
-          h.ul(
-            [
-              h.AriaLabelledBy("automations"),
-              h.Class("flex flex-col divide-y rounded-[10px] bg-card shadow-card"),
-            ],
-            Array.map(listed, (automation) => automationView(automation, launch, h)),
-          ),
-      }),
+      h.ul(
+        [
+          h.AriaLabelledBy("automations"),
+          h.Class("flex flex-col divide-y rounded-[10px] bg-card shadow-card"),
+        ],
+        Array.map(automations, (automation) => automationView(automation, launch, h)),
+      ),
     ],
   );
 
