@@ -304,6 +304,16 @@ describe("the planner's tools", () => {
   });
 });
 
+test("the instructions offer every kind of trigger", () => {
+  const instructions = plannerInstructions(catalog);
+  for (const kind of ["manual", "entity", "schedule", "date"]) {
+    expect(instructions).toContain(`{"kind":"${kind}"`);
+  }
+  expect(instructions).toContain(
+    "Use a manual trigger when a person starts the process themselves",
+  );
+});
+
 test("the instructions push automation around every human step", () => {
   const instructions = plannerInstructions(catalog);
   expect(instructions).toContain("Automate everything that can be automated");

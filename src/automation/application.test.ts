@@ -286,7 +286,12 @@ describe("Automation application without a platform", () => {
     });
     expect(result.parked.conversation).toEqual([]);
     expect(result.wrongCount.message).toBe("Give one answer for each of the 1 questions");
-    expect(result.resumed.pendingChat.status).toBe("working");
+    expect(result.resumed.pendingChat).toEqual({
+      id: result.pendingChat.id,
+      prompt: "Email new people",
+      status: "working",
+      asked: [{ questions, answer: { kind: "answers", answers: ["Ops"] } }],
+    });
     expect(result.again.message).toBe("The agent isn't waiting for answers");
     expect(h.replies).toHaveLength(2);
     expect(h.prompts.map((prompt) => prompt.requestId)).toEqual([
@@ -333,7 +338,16 @@ describe("Automation application without a platform", () => {
         return { pendingChat, sent, finished: yield* app.inspectWorkflow() };
       }).pipe(Effect.provide(h.layer)),
     );
-    expect(result.sent.pendingChat).toEqual(result.pendingChat);
+    expect(result.sent).toEqual({
+      pendingChat: {
+        id: result.pendingChat.id,
+        prompt: "Write a greeting",
+        status: "working",
+        asked: [
+          { questions, answer: { kind: "message", text: "Somewhere in between, and short" } },
+        ],
+      },
+    });
     expect(results[0]).toContain(
       "Instead of picking answers, the person wrote:\n\nSomewhere in between, and short",
     );

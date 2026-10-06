@@ -16,6 +16,7 @@ import {
   Mount,
   role,
   scene,
+  selector,
   submit,
   text,
   type,
@@ -204,13 +205,21 @@ const askedWith = (questions: ReadonlyArray<Question>) =>
 const answered = (answers: ReadonlyArray<string | null>) =>
   SendAnswers({ ...requestArgs, chatId: "chat-1", answer: { kind: "answers", answers } });
 
-const resumed = Command.resolve(
-  SendAnswers,
-  Message.SucceededSendAnswers({
-    revision: 0,
-    pendingChat: { id: "chat-1", prompt: "Email new hires", status: "working" },
-  }),
-);
+const resumedWith = (questions: ReadonlyArray<Question>, answers: ReadonlyArray<string | null>) =>
+  Command.resolve(
+    SendAnswers,
+    Message.SucceededSendAnswers({
+      revision: 0,
+      pendingChat: {
+        id: "chat-1",
+        prompt: "Email new hires",
+        status: "working",
+        asked: [{ questions, answer: { kind: "answers", answers } }],
+      },
+    }),
+  );
+
+const yourAnswers = selector('[aria-label="Your answers"]');
 
 test("picking an answer to the agent's only question sends it and resumes the reply", () => {
   const managers = role("button", { name: /Managers/ });
@@ -227,8 +236,13 @@ test("picking an answer to the agent's only question sends it and resumes the re
     click(managers),
     Command.expectExact(answered(["Managers"])),
     expect(managers).toBeDisabled(),
-    resumed,
+    resumedWith([approver], ["Managers"]),
     expect(managers).not.toExist(),
+    expect(role("list", { name: "Questions from the agent, answered" })).toContainText(
+      approver.question,
+    ),
+    expect(yourAnswers).toContainText("Approver"),
+    expect(yourAnswers).toContainText("Managers"),
     expect(text("Thinking…")).toExist(),
     Command.resolve(PollAutomation, Message.FailedRequest({ revision: 0, error: "Offline" })),
   );
@@ -240,7 +254,8 @@ test("the person can skip the agent's questions", () => {
     given(askedWith([approver])),
     click(role("button", { name: "Skip questions" })),
     Command.expectExact(answered([null])),
-    resumed,
+    resumedWith([approver], [null]),
+    expect(text("Skipped the questions")).toExist(),
     Command.resolve(PollAutomation, Message.FailedRequest({ revision: 0, error: "Offline" })),
   );
 });
@@ -276,9 +291,8 @@ test("a finished reply shows the questions it asked and how they were answered",
       ).model,
     ),
     expect(conversation).toContainText(approver.question),
-    expect(conversation).toContainText("HR"),
-    expect(conversation).toContainText("Skipped"),
-    expect(conversation).toContainText("You answered in your own words"),
+    expect(yourAnswers).toContainText("HR"),
+    expect(yourAnswers).toContainText("Skipped"),
     expect(conversation).toContainText("Whatever HR uses"),
     expect(conversation).toContainText("Done."),
     expect(role("group", { name: "Questions from the agent" })).not.toExist(),
@@ -297,7 +311,8 @@ test("the person can answer a question in their own words", () => {
     type(ownAnswer, "  The People Ops lead  "),
     click(role("button", { name: "Send answer" })),
     Command.expectExact(answered(["The People Ops lead"])),
-    resumed,
+    resumedWith([approver], ["The People Ops lead"]),
+    expect(yourAnswers).toContainText("The People Ops lead"),
     expect(ownAnswer).not.toExist(),
     Command.resolve(PollAutomation, Message.FailedRequest({ revision: 0, error: "Offline" })),
   );
@@ -343,7 +358,9 @@ test("several questions are answered one at a time, reviewed, and sent together"
     click(step("Review")),
     click(role("button", { name: "Send answers" })),
     Command.expectExact(answered(["HR", "London, Tokyo", null])),
-    resumed,
+    resumedWith([approver, timeZones, channel], ["HR", "London, Tokyo", null]),
+    expect(yourAnswers).toContainText("London, Tokyo"),
+    expect(yourAnswers).toContainText("Skipped"),
     expect(questions).not.toExist(),
     Command.resolve(PollAutomation, Message.FailedRequest({ revision: 0, error: "Offline" })),
   );

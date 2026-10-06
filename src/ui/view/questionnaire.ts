@@ -1,7 +1,15 @@
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import type { Html, HtmlBuilder } from "foldkit/html";
-import { Check, Circle, CircleCheck, Pencil, Square, SquareCheck } from "lucide";
+import {
+  Check,
+  Circle,
+  CircleCheck,
+  MessageCircleQuestionMark,
+  Pencil,
+  Square,
+  SquareCheck,
+} from "lucide";
 import { button } from "@/components/ui/button";
 import { textarea } from "@/components/ui/textarea";
 import { icon } from "@/lib/icons";
@@ -325,45 +333,50 @@ export const openQuestionnaireView = (context: QuestionnaireContext, h: HtmlBuil
     ],
   );
 
-/** Questions the agent asked while it answered, and how the person answered them. */
-export const answeredQuestionsView = (asked: AskedQuestions, h: HtmlBuilder<Message>): Html =>
-  h.div(
-    [h.Class(cn(cardClass, "gap-2.5 text-sm"))],
-    asked.answer.kind === "message"
-      ? [
-          h.ul(
-            [h.Class("flex flex-col gap-1 text-muted-foreground")],
-            Array.map(asked.questions, (question) => h.li([], [question.question])),
-          ),
-          h.div(
-            [h.Class("flex flex-col gap-0.5")],
-            [
-              h.span(
-                [h.Class("text-xs text-muted-foreground")],
-                ["You answered in your own words"],
-              ),
-              h.p([h.Class("whitespace-pre-wrap")], [asked.answer.text]),
-            ],
-          ),
-        ]
-      : [
-          h.dl(
-            [h.Class("flex flex-col gap-2")],
-            Array.map(asked.questions, (question, index) => {
-              const answer = asked.answer.kind === "answers" ? asked.answer.answers[index] : null;
-              return h.div(
-                [h.Class("flex flex-col gap-0.5")],
-                [
-                  h.dt([h.Class("text-xs text-muted-foreground")], [question.question]),
-                  h.dd(
-                    [h.Class("flex items-start gap-1.5 whitespace-pre-wrap")],
-                    answer === null || answer === undefined || answer.trim() === ""
-                      ? [h.span([h.Class("text-muted-foreground")], ["Skipped"])]
-                      : [icon(h, CircleCheck, "mt-0.5 size-3.5 shrink-0 text-success"), answer],
-                  ),
-                ],
-              );
-            }),
+/** Questions the agent asked and the person has answered, which their answers follow. */
+export const askedQuestionsView = (
+  questions: ReadonlyArray<Question>,
+  h: HtmlBuilder<Message>,
+): Html =>
+  h.ul(
+    [h.Class(cn(cardClass, "gap-2 text-sm")), h.AriaLabel("Questions from the agent, answered")],
+    Array.map(questions, (question) =>
+      h.li(
+        [h.Class("flex items-start gap-2")],
+        [
+          icon(h, MessageCircleQuestionMark, "mt-0.5 size-3.5 shrink-0 text-sand-9"),
+          question.question,
+        ],
+      ),
+    ),
+  );
+
+const isSkipped = (answer: string | null | undefined) =>
+  answer === null || answer === undefined || answer.trim() === "";
+
+/** The person's answers, as they sent them: each question's name and answer, or their message. */
+export const answersView = (asked: AskedQuestions, h: HtmlBuilder<Message>): Html => {
+  if (asked.answer.kind === "message") {
+    return h.p([h.Class("whitespace-pre-wrap")], [asked.answer.text]);
+  }
+  const { answers } = asked.answer;
+  if (Array.every(answers, isSkipped)) {
+    return h.p([h.Class("italic")], ["Skipped the questions"]);
+  }
+  return h.dl(
+    [h.Class("flex flex-col gap-1.5"), h.AriaLabel("Your answers")],
+    Array.map(asked.questions, (question, index) => {
+      const answer = answers[index];
+      return h.div(
+        [h.Class("flex flex-col")],
+        [
+          h.dt([h.Class("text-xs text-muted-foreground")], [question.header]),
+          h.dd(
+            [h.Class("whitespace-pre-wrap")],
+            [isSkipped(answer) ? h.span([h.Class("italic")], ["Skipped"]) : (answer ?? "")],
           ),
         ],
+      );
+    }),
   );
+};

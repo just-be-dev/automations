@@ -11,7 +11,7 @@ import { Message as ChatMessage } from "@/components/ui/message";
 import { textarea } from "@/components/ui/textarea";
 import { componentName } from "@/lib/component";
 import { icon } from "@/lib/icons";
-import type { PendingChat } from "../../workflow.ts";
+import type { AskedQuestions, PendingChat } from "../../workflow.ts";
 import { Message } from "../message.ts";
 import {
   Activity,
@@ -20,7 +20,7 @@ import {
   type Model,
   openQuestionnaire,
 } from "../model.ts";
-import { answeredQuestionsView, openQuestionnaireView } from "./questionnaire.ts";
+import { answersView, askedQuestionsView, openQuestionnaireView } from "./questionnaire.ts";
 import { characterCountView, submitShortcut } from "./shared.ts";
 
 export const conversationView = (model: Model, h: HtmlBuilder<Message>) =>
@@ -89,24 +89,22 @@ const conversationItems = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
   }),
 ];
 
-const promptView = (prompt: string, h: HtmlBuilder<Message>) =>
+/** Something the person sent, on the right. */
+const personView = (children: ReadonlyArray<Html | string>, h: HtmlBuilder<Message>) =>
   ChatMessage(
     { align: "end", attributes: [componentName("prompt")] },
     [
       ChatMessage.content(
         {},
-        [
-          Bubble(
-            { variant: "secondary", align: "end" },
-            [Bubble.content({ className: "whitespace-pre-wrap" }, [prompt], h)],
-            h,
-          ),
-        ],
+        [Bubble({ variant: "secondary", align: "end" }, [Bubble.content({}, children, h)], h)],
         h,
       ),
     ],
     h,
   );
+
+const promptView = (prompt: string, h: HtmlBuilder<Message>) =>
+  personView([h.span([h.Class("whitespace-pre-wrap")], [prompt])], h);
 
 const replyView = (children: ReadonlyArray<Html | string>, h: HtmlBuilder<Message>) =>
   ChatMessage(
@@ -131,26 +129,25 @@ const replyView = (children: ReadonlyArray<Html | string>, h: HtmlBuilder<Messag
     h,
   );
 
+/** Questions the agent asked while it answered, then the person's answers to them. */
+const askedView = (asked: AskedQuestions, h: HtmlBuilder<Message>) => [
+  replyView([askedQuestionsView(asked.questions, h)], h),
+  personView([answersView(asked, h)], h),
+];
+
 const exchangeView = (exchange: Exchange, h: HtmlBuilder<Message>) =>
   h.keyed("div")(
     String(exchange.id),
     [componentName("exchange"), h.Class("flex flex-col gap-4")],
     [
       promptView(exchange.prompt, h),
-      replyView(
-        [
-          h.div(
-            [h.Class("flex flex-col gap-3")],
-            [
-              ...Array.map(exchange.asked, (asked) => answeredQuestionsView(asked, h)),
-              markdown(exchange.reply, h),
-            ],
-          ),
-        ],
-        h,
-      ),
+      ...Array.flatMap(exchange.asked, (asked) => askedView(asked, h)),
+      replyView([markdown(exchange.reply, h)], h),
     ],
   );
+
+const answeredSoFar = (pending: PendingChat): ReadonlyArray<AskedQuestions> =>
+  pending.status === "failed" ? [] : (pending.asked ?? []);
 
 const pendingChatView = (model: Model, pending: PendingChat, h: HtmlBuilder<Message>) =>
   h.keyed("div")(
@@ -158,6 +155,7 @@ const pendingChatView = (model: Model, pending: PendingChat, h: HtmlBuilder<Mess
     [componentName("pending-chat"), h.Class("flex flex-col gap-4")],
     [
       promptView(pending.prompt, h),
+      ...Array.flatMap(answeredSoFar(pending), (asked) => askedView(asked, h)),
       replyView(
         Match.value(pending).pipe(
           Match.discriminatorsExhaustive("status")({

@@ -103,17 +103,34 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
       ),
     );
 
+  /** A pending message with the questions its turn asked so far, and those it's waiting on. */
+  const present = (stored: StoredPendingChat) =>
+    Effect.gen(function* () {
+      if (stored.status !== "working") {
+        return stored;
+      }
+      const asked = yield* planning.asked(stored.id);
+      const open = yield* planning.openQuestions(stored.id);
+      const withAsked = asked.length === 0 ? {} : { asked };
+      const pending: PendingChat =
+        open === undefined
+          ? { ...stored, ...withAsked }
+          : {
+              id: stored.id,
+              prompt: stored.prompt,
+              status: "asking",
+              ...withAsked,
+              questions: open.questions,
+            };
+      return pending;
+    });
+
   const inspect = Effect.fn("Automation.inspectDesign")(function* () {
     const draft = yield* readWorkflow("draft");
     const saved = yield* readWorkflow("saved");
     const conversation = yield* readConversation;
     const stored = yield* readPendingChat;
-    const open =
-      stored?.status === "working" ? yield* planning.openQuestions(stored.id) : undefined;
-    const pendingChat: PendingChat | undefined =
-      stored !== undefined && open !== undefined
-        ? { id: stored.id, prompt: stored.prompt, status: "asking", questions: open.questions }
-        : stored;
+    const pendingChat = stored === undefined ? undefined : yield* present(stored);
     const progress =
       pendingChat?.status === "working" ? yield* readProgress(pendingChat.id) : undefined;
     return { draft, saved, conversation, pendingChat, progress };
@@ -230,7 +247,7 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
       )
       .pipe(Effect.catchTag("AutomationStorageError", Effect.die));
     yield* planning.deliver(resumed.callId, given);
-    return { pendingChat: resumed.pending };
+    return { pendingChat: yield* present(resumed.pending) };
   });
 
   const chat = Effect.fn("Automation.chat")(function* (automationId: string, message: string) {

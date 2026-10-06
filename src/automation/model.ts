@@ -36,15 +36,20 @@ export const StoredPendingChat = Schema.Union([WorkingChat, FailedChat]);
 export type StoredPendingChat = typeof StoredPendingChat.Type;
 
 /**
- * A design message as callers see it: `asking` while the planner's turn waits for answers to
- * `questions`, which the studio derives from the working copy rather than storing.
+ * A design message as callers see it, derived from the working copy rather than stored: `asked`
+ * holds the questions the planner's turn has asked and the person has answered so far, and the
+ * status is `asking` while it waits for answers to `questions`.
  */
 export const PendingChat = Schema.Union([
-  WorkingChat,
+  Schema.Struct({
+    ...WorkingChat.fields,
+    asked: Schema.optionalKey(Schema.Array(AskedQuestions)),
+  }),
   Schema.Struct({
     id: Schema.String,
     prompt: Schema.String,
     status: Schema.Literal("asking"),
+    asked: Schema.optionalKey(Schema.Array(AskedQuestions)),
     questions: Schema.Array(Question),
   }),
   FailedChat,
