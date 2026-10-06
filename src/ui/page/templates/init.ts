@@ -38,6 +38,16 @@ export const reflectUrl = (
   if (Equal.equals(model.maybeTemplateName, maybeTemplateName)) {
     return { model };
   }
+  if (model.editor._tag !== "Closed" || model.activity._tag === "Working") {
+    return {
+      model: modifyFields(model, {
+        activity: () =>
+          Activity.Failed({
+            error: "Save or cancel your open form before selecting another template.",
+          }),
+      }),
+    };
+  }
   return {
     model: modifyFields(model, {
       maybeTemplateName: () => maybeTemplateName,

@@ -3,6 +3,9 @@ import { expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import { Command, given, message, model, story } from "foldkit/story";
 import { ada, employee, employeesOpen } from "./fixtures.ts";
+import * as Change from "../../change/index.ts";
+import { proposalOf } from "../../change/fixtures.ts";
+import { openedResolvers, closedResolvers } from "../../change/test-resolvers.test.ts";
 import {
   DeleteEntity,
   LoadEntities,
@@ -66,18 +69,42 @@ test("a new type needs a ref target, saves, and opens", () => {
     ),
     Command.resolve(
       SaveType,
-      Message.SucceededSaveType({
-        type: {
-          name: "team",
-          label: "Team",
-          title: "name",
-          fields: [{ name: "name", label: "Name", type: "text" }],
-        },
-        isNew: true,
+      Message.GotChangeMessage({
+        message: Change.Message.SucceededPrepare({
+          proposal: proposalOf({
+            kind: "putType",
+            type: {
+              name: "team",
+              label: "Team",
+              title: "name",
+              fields: [{ name: "name", label: "Name", type: "text" }],
+            },
+          }),
+        }),
       }),
     ),
-    Command.expectExact(NavigateToEntities({ url: "/entities?type=team" })),
+    Command.resolveAll(...openedResolvers()),
+    message(
+      Message.GotChangeMessage({ message: Change.Message.ClickedDecision({ approved: true }) }),
+    ),
+    Command.resolve(
+      Change.DecideChange,
+      Change.Message.SucceededDecision({
+        proposalId: "proposal-1",
+        decision: {
+          status: "applied",
+          result: {
+            name: "team",
+            label: "Team",
+            title: "name",
+            fields: [{ name: "name", label: "Name", type: "text" }],
+          },
+        },
+      }),
+    ),
+    Command.expectHas(NavigateToEntities({ url: "/entities?type=team" })),
     Command.resolve(NavigateToEntities, Message.CompletedNavigateToEntities()),
+    Command.resolveAll(...closedResolvers()),
     model((current) => {
       expect(current.typeEditor._tag).toBe("Closed");
       expect(current.types).toEqual(
@@ -107,12 +134,31 @@ test("renaming the title field keeps it the title", () => {
         isNew: false,
       }),
     ),
-    Command.resolve(SaveType, Message.SucceededSaveType({ type: employee, isNew: false })),
-    Command.expectExact(LoadEntities({ type: "employee" })),
+    Command.resolve(
+      SaveType,
+      Message.GotChangeMessage({
+        message: Change.Message.SucceededPrepare({
+          proposal: proposalOf({ kind: "putType", type: employee }),
+        }),
+      }),
+    ),
+    Command.resolveAll(...openedResolvers()),
+    message(
+      Message.GotChangeMessage({ message: Change.Message.ClickedDecision({ approved: true }) }),
+    ),
+    Command.resolve(
+      Change.DecideChange,
+      Change.Message.SucceededDecision({
+        proposalId: "proposal-1",
+        decision: { status: "applied", result: employee },
+      }),
+    ),
+    Command.expectHas(LoadEntities({ type: "employee" })),
     Command.resolve(
       LoadEntities,
       Message.SucceededLoadEntities({ type: "employee", entities: [ada] }),
     ),
+    Command.resolveAll(...closedResolvers()),
   );
 });
 
@@ -144,19 +190,38 @@ test("editing an entity sends every field, clearing the empty ones, and reports 
     ),
     Command.resolve(
       SaveEntity,
-      Message.SucceededSaveEntity({
-        entity: { type: "employee", id: "ada", data: {} },
-        triggered: [
-          { automation: "onboarding", runId: "run-1", error: null },
-          { automation: "offboarding", runId: null, error: null },
-        ],
+      Message.GotChangeMessage({
+        message: Change.Message.SucceededPrepare({
+          proposal: proposalOf({ kind: "putEntity", type: "employee", id: "ada", data: {} }),
+        }),
       }),
     ),
-    Command.expectExact(LoadEntities({ type: "employee" })),
+    Command.resolveAll(...openedResolvers()),
+    message(
+      Message.GotChangeMessage({ message: Change.Message.ClickedDecision({ approved: true }) }),
+    ),
+    Command.resolve(
+      Change.DecideChange,
+      Change.Message.SucceededDecision({
+        proposalId: "proposal-1",
+        decision: {
+          status: "applied",
+          result: {
+            entity: { type: "employee", id: "ada", data: {} },
+            triggered: [
+              { automation: "onboarding", runId: "run-1", error: null },
+              { automation: "offboarding", runId: null, error: null },
+            ],
+          },
+        },
+      }),
+    ),
+    Command.expectHas(LoadEntities({ type: "employee" })),
     Command.resolve(
       LoadEntities,
       Message.SucceededLoadEntities({ type: "employee", entities: [ada] }),
     ),
+    Command.resolveAll(...closedResolvers()),
     model((current) => {
       expect(current.entityEditor._tag).toBe("Closed");
       expect(current.activity).toEqual(
@@ -199,17 +264,104 @@ test("deleting an entity waits for confirmation", () => {
     update,
     given(employeesOpen),
     message(Message.ClickedDeleteEntity({ id: "ada" })),
-    Command.expectNone(),
-    message(Message.ClickedCancelDelete()),
-    message(Message.ClickedConfirmDelete()),
-    Command.expectNone(),
-    message(Message.ClickedDeleteEntity({ id: "ada" })),
-    message(Message.ClickedConfirmDelete()),
     Command.expectExact(DeleteEntity({ type: "employee", id: "ada" })),
-    Command.resolve(DeleteEntity, Message.SucceededDeleteEntity({ type: "employee", id: "ada" })),
+    Command.resolve(
+      DeleteEntity,
+      Message.GotChangeMessage({
+        message: Change.Message.SucceededPrepare({
+          proposal: proposalOf({ kind: "deleteEntity", type: "employee", id: "ada" }),
+        }),
+      }),
+    ),
+    Command.resolveAll(...openedResolvers()),
+    message(
+      Message.GotChangeMessage({ message: Change.Message.ClickedDecision({ approved: true }) }),
+    ),
+    Command.resolve(
+      Change.DecideChange,
+      Change.Message.SucceededDecision({
+        proposalId: "proposal-1",
+        decision: { status: "applied", result: { deleted: true } },
+      }),
+    ),
+    Command.resolveAll(...closedResolvers()),
     model((current) => {
       expect(current.records).toEqual(expect.objectContaining({ _tag: "Ready", entities: [] }));
       expect(current.confirmation._tag).toBe("None");
     }),
+  );
+});
+
+test("failed and cancelled manual changes keep the draft, and late receipts cannot close a later edit", () => {
+  story(
+    update,
+    given(employeesOpen),
+    message(Message.ClickedEditEntity({ id: "ada" })),
+    message(Message.UpdatedEntityField({ field: "name", value: "Ada updated" })),
+    message(Message.SubmittedEntity()),
+    Command.resolve(
+      SaveEntity,
+      Message.GotChangeMessage({
+        message: Change.Message.SucceededPrepare({
+          proposal: proposalOf({
+            kind: "putEntity",
+            type: "employee",
+            id: "ada",
+            data: { name: "Ada updated" },
+          }),
+        }),
+      }),
+    ),
+    Command.resolveAll(...openedResolvers()),
+    message(
+      Message.GotChangeMessage({ message: Change.Message.ClickedDecision({ approved: true }) }),
+    ),
+    Command.resolve(
+      Change.DecideChange,
+      Change.Message.FailedDecision({
+        proposalId: "proposal-1",
+        error: "Resource changed; review again",
+      }),
+    ),
+    model((current) => {
+      expect(current.entityEditor._tag).toBe("Editing");
+      expect(Option.getOrThrow(current.change.maybeError)).toBe("Resource changed; review again");
+      expect(current.records).toEqual(employeesOpen.records);
+    }),
+    message(
+      Message.GotChangeMessage({ message: Change.Message.ClickedDecision({ approved: false }) }),
+    ),
+    Command.expectExact(Change.DecideChange({ proposalId: "proposal-1", approved: false })),
+    Command.resolve(
+      Change.DecideChange,
+      Change.Message.SucceededDecision({
+        proposalId: "proposal-1",
+        decision: { status: "cancelled", result: null },
+      }),
+    ),
+    Command.resolveAll(...closedResolvers()),
+    message(Message.UpdatedEntityField({ field: "name", value: "A later draft" })),
+    message(
+      Message.GotChangeMessage({
+        message: Change.Message.SucceededDecision({
+          proposalId: "proposal-1",
+          decision: {
+            status: "applied",
+            result: { entity: { type: "employee", id: "ada", data: {} }, triggered: [] },
+          },
+        }),
+      }),
+    ),
+    model((current) => {
+      expect(current.entityEditor).toEqual(
+        expect.objectContaining({
+          draft: expect.objectContaining({
+            values: expect.objectContaining({ name: "A later draft" }),
+          }),
+        }),
+      );
+      expect(current.records).toEqual(employeesOpen.records);
+    }),
+    Command.expectNone(),
   );
 });

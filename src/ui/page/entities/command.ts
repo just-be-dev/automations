@@ -3,10 +3,10 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Command, Http } from "foldkit";
 import { pushUrl } from "foldkit/navigation";
-import { EntityRecord, EntityType, Subject } from "../../../entities.ts";
-import { errorText, requestJson, sendJson } from "../../api.ts";
-import { Message } from "./message.ts";
-import { Triggered } from "./model.ts";
+import { EntityRecord, EntityType } from "../../../entities.ts";
+import { errorText, requestJson } from "../../api.ts";
+import { Message, toChangeMessage } from "./message.ts";
+import * as Change from "../../change/index.ts";
 
 const recoverRequest = Effect.catch((error: unknown) =>
   Effect.succeed(Message.FailedRequest({ error: errorText(error) })),
@@ -36,10 +36,10 @@ export const LoadEntities = Command.define("LoadEntities", {
 
 export const SaveType = Command.define("SaveType", {
   args: { type: EntityType, isNew: Schema.Boolean },
-  messages: [Message.SucceededSaveType, Message.FailedRequest],
-  execute: ({ type, isNew }) =>
-    sendJson("PUT", `/api/entities/types/${type.name}`, EntityType, type).pipe(
-      Effect.map((saved) => Message.SucceededSaveType({ type: saved, isNew })),
+  messages: [Message.GotChangeMessage, Message.FailedRequest],
+  execute: ({ type }) =>
+    Change.prepare({ kind: "putType", type }).pipe(
+      Effect.map(toChangeMessage),
       recoverRequest,
       Effect.provide(Http.layer),
     ),
@@ -47,23 +47,21 @@ export const SaveType = Command.define("SaveType", {
 
 export const DeleteType = Command.define("DeleteType", {
   args: { type: Schema.String },
-  messages: [Message.SucceededDeleteType, Message.FailedRequest],
+  messages: [Message.GotChangeMessage, Message.FailedRequest],
   execute: ({ type }) =>
-    sendJson("DELETE", `/api/entities/types/${type}`, Schema.Unknown).pipe(
-      Effect.as(Message.SucceededDeleteType({ type })),
+    Change.prepare({ kind: "deleteType", name: type }).pipe(
+      Effect.map(toChangeMessage),
       recoverRequest,
       Effect.provide(Http.layer),
     ),
 });
 
-const SavedEntity = Schema.Struct({ entity: Subject, triggered: Schema.Array(Triggered) });
-
 export const SaveEntity = Command.define("SaveEntity", {
   args: { type: Schema.String, id: Schema.String, data: Schema.Record(Schema.String, Schema.Json) },
-  messages: [Message.SucceededSaveEntity, Message.FailedRequest],
+  messages: [Message.GotChangeMessage, Message.FailedRequest],
   execute: ({ type, id, data }) =>
-    sendJson("PUT", `/api/entities/${type}/${encodeURIComponent(id)}`, SavedEntity, { data }).pipe(
-      Effect.map((saved) => Message.SucceededSaveEntity(saved)),
+    Change.prepare({ kind: "putEntity", type, id, data }).pipe(
+      Effect.map(toChangeMessage),
       recoverRequest,
       Effect.provide(Http.layer),
     ),
@@ -71,10 +69,10 @@ export const SaveEntity = Command.define("SaveEntity", {
 
 export const DeleteEntity = Command.define("DeleteEntity", {
   args: { type: Schema.String, id: Schema.String },
-  messages: [Message.SucceededDeleteEntity, Message.FailedRequest],
+  messages: [Message.GotChangeMessage, Message.FailedRequest],
   execute: ({ type, id }) =>
-    sendJson("DELETE", `/api/entities/${type}/${encodeURIComponent(id)}`, Schema.Unknown).pipe(
-      Effect.as(Message.SucceededDeleteEntity({ type, id })),
+    Change.prepare({ kind: "deleteEntity", type, id }).pipe(
+      Effect.map(toChangeMessage),
       recoverRequest,
       Effect.provide(Http.layer),
     ),

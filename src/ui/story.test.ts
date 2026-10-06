@@ -613,6 +613,7 @@ test("the URL picks which automation opens and loads it with the automation list
     "LoadAutomation",
     "LoadAutomations",
     "LoadRoles",
+    "RestoreAssistant",
   ]);
 
   const overview = init({ theme: "System", shortcutModifier: "Meta" }, studioUrl());
@@ -621,6 +622,7 @@ test("the URL picks which automation opens and loads it with the automation list
     "LoadOverview",
     "LoadAutomations",
     "LoadRoles",
+    "RestoreAssistant",
   ]);
   expect(
     init({ theme: "System", shortcutModifier: "Meta" }, studioUrl("automation=bad%2Fid")).model

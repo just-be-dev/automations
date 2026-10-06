@@ -5,13 +5,14 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import type { Update } from "foldkit";
+import { Update } from "foldkit";
 import { modifyFields } from "foldkit/struct";
-import { FieldType, type Template } from "../../../entities.ts";
+import { FieldType, Template } from "../../../entities.ts";
+import * as Change from "../../change/index.ts";
 import { templatesHref, templatesPath } from "../../route.ts";
 import { DeleteTemplate, NavigateToTemplates, SaveTemplate } from "./command.ts";
 import { newTemplateDraft, templateDraftOf, templateFromDraft } from "./draft.ts";
-import { Message } from "./message.ts";
+import { Message, toChangeMessage } from "./message.ts";
 import {
   Activity,
   Catalog,
@@ -77,7 +78,7 @@ const submitTemplate = (model: Model, draft: TemplateDraft, isNew: boolean): Upd
       isNew && Array.some(loadedTemplates(model), (existing) => existing.name === template.name)
         ? fail(model, `There is already a template named ${template.name}`)
         : {
-            model: working(model, `Saving ${template.name}…`),
+            model: working(model, `Preparing changes to ${template.name}…`),
             commands: [SaveTemplate({ template, isNew })],
           },
   });
@@ -91,8 +92,21 @@ const withTemplates = (
     ? Catalog.Ready({ templates: change(model.catalog.templates), types: model.catalog.types })
     : model.catalog;
 
-export const update = (model: Model, message: Message): UpdateReturn =>
-  Message.match<UpdateReturn>(message, {
+export const update = (model: Model, message: Message): UpdateReturn => {
+  if (
+    isWorking(model) &&
+    /^(Updated|Selected|Clicked(New|Edit|Cancel|Add|Remove|Delete))/.test(message._tag)
+  ) {
+    return { model };
+  }
+  if (/^Clicked(New|Edit)/.test(message._tag) && model.editor._tag !== "Closed") {
+    return fail(model, "Save or cancel your open form before opening another.");
+  }
+  return Message.match<UpdateReturn>(message, {
+    GotChangeMessage: ({ message }) =>
+      message._tag === "SucceededPrepare" && !isWorking(model)
+        ? { model }
+        : foldChange(model, message),
     ClickedNewTemplate: () => ({
       model: modifyFields(model, {
         editor: () => Editor.Creating({ draft: newTemplateDraft }),
@@ -122,13 +136,21 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       withDraft(model, (draft) =>
         modifyFields(draft, {
           slots: (slots) =>
-            Array.append(slots, { key: draft.nextKey, name: "", label: "", type: "ref", to: "" }),
+            Array.append(slots, {
+              key: draft.nextKey,
+              name: "",
+              label: "",
+              type: "ref",
+              to: "",
+            }),
           nextKey: (key) => key + 1,
         }),
       ),
     ClickedRemoveSlot: ({ key }) =>
       withDraft(model, (draft) =>
-        modifyFields(draft, { slots: (slots) => Array.filter(slots, (slot) => slot.key !== key) }),
+        modifyFields(draft, {
+          slots: (slots) => Array.filter(slots, (slot) => slot.key !== key),
+        }),
       ),
     UpdatedSlotName: ({ key, value }) =>
       withSlot(model, key, (slot) => modifyFields(slot, { name: () => value })),
@@ -169,9 +191,8 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       Option.match(selectedTemplate(model), {
         onNone: () => ({ model }),
         onSome: (template) => ({
-          model: modifyFields(model, {
-            confirmation: () => Confirmation.Delete({ name: template.name }),
-          }),
+          model: working(model, "Preparing change…"),
+          commands: [DeleteTemplate({ name: template.name })],
         }),
       }),
     ClickedConfirmDelete: () => {
@@ -223,7 +244,9 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         activity: () => Activity.Ready({ notice: `Saved ${template.name}` }),
       }),
       ...(isNew
-        ? { commands: [NavigateToTemplates({ url: templatesHref(Option.some(template.name)) })] }
+        ? {
+            commands: [NavigateToTemplates({ url: templatesHref(Option.some(template.name)) })],
+          }
         : {}),
     }),
     SucceededDeleteTemplate: ({ name }) => ({
@@ -239,3 +262,48 @@ export const update = (model: Model, message: Message): UpdateReturn =>
     FailedRequest: ({ error }) => fail(model, error),
     CompletedNavigateToTemplates: () => ({ model }),
   });
+};
+
+const foldChange = Update.foldChild({
+  update: Change.update,
+  read: (model: Model) => Option.some(model.change),
+  write: (model: Model, nextChange: Change.Model) =>
+    modifyFields(model, { change: () => nextChange }),
+  toParentMessage: toChangeMessage,
+  foldOutMessage:
+    (outMessage: Change.OutMessage) =>
+    (model: Model): UpdateReturn =>
+      Change.OutMessage.match(outMessage, {
+        Cancelled: () => ({ model: modifyFields(model, { activity: () => Activity.Idle() }) }),
+        Applied: ({ proposal, result }) => {
+          const action = proposal.action;
+          if (action.kind === "putTemplate") {
+            return Option.match(Schema.decodeUnknownOption(Template)(result), {
+              onNone: () =>
+                fail(
+                  model,
+                  "The applied change returned an invalid result. Your draft has been kept.",
+                ),
+              onSome: (template) =>
+                update(
+                  model,
+                  Message.SucceededSaveTemplate({
+                    template,
+                    isNew: Editor.guards.Creating(model.editor),
+                  }),
+                ),
+            });
+          }
+          if (action.kind === "deleteTemplate") {
+            return Option.match(
+              Schema.decodeUnknownOption(Schema.Struct({ deleted: Schema.String }))(result),
+              {
+                onNone: () => fail(model, "The applied change returned an invalid result."),
+                onSome: () => update(model, Message.SucceededDeleteTemplate({ name: action.name })),
+              },
+            );
+          }
+          return fail(model, "This change belongs to another page.");
+        },
+      }),
+});

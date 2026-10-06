@@ -251,12 +251,33 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
     return { pendingChat: yield* present(resumed.pending) };
   });
 
-  const chat = Effect.fn("Automation.chat")(function* (automationId: string, message: string) {
+  const chat = Effect.fn("Automation.chat")(function* (
+    automationId: string,
+    message: string,
+    requestId?: string,
+  ) {
     if (!message.trim() || message.length > 10_000) {
       return yield* new AutomationError({ message: "Message must be 1–10,000 characters" });
     }
     // A message sent while the planner waits for answers answers its questions in other words.
     const current = yield* readPendingChat;
+    if (requestId !== undefined) {
+      const previous = yield* storage.get(`chatRequest:${requestId}`);
+      if (previous !== undefined) {
+        const pendingChat = yield* decodeStoredPendingChat(previous).pipe(Effect.orDie);
+        if (pendingChat === undefined) {
+          return yield* new AutomationError({ message: "Invalid stored chat request" });
+        }
+        const presented: PendingChat =
+          current?.id === requestId ? yield* present(current) : pendingChat;
+        return { pendingChat: presented };
+      }
+      if (current?.status === "working") {
+        return yield* new AutomationError({
+          message: "The agent is still answering the previous message",
+        });
+      }
+    }
     if (
       current?.status === "working" &&
       (yield* planning.openQuestions(current.id)) !== undefined
@@ -264,17 +285,23 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
       return yield* answer(automationId, current.id, { kind: "message", text: message });
     }
     const pending: StoredPendingChat = {
-      id: crypto.randomUUID(),
+      id: requestId ?? crypto.randomUUID(),
       prompt: message,
       status: "working",
     };
     const accepted = yield* storage
       .transaction(
         Effect.gen(function* () {
+          if (requestId !== undefined && (yield* readPendingChat)?.id === requestId) {
+            return true;
+          }
           if ((yield* readPendingChat)?.status === "working") {
             return false;
           }
           yield* storage.put("pendingChat", pending);
+          if (requestId !== undefined) {
+            yield* storage.put(`chatRequest:${requestId}`, pending);
+          }
           yield* host.jobs.planReply(automationId, pending.id);
           return true;
         }),

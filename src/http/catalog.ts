@@ -10,7 +10,6 @@ import type { TemplateUsage } from "../automation/model.ts";
 import { Automations } from "../automation/service.ts";
 import { EntityName, Role } from "../entities/model.ts";
 import { EntityStore } from "../entities/store.ts";
-import { Template } from "../entities/templates.ts";
 import { messageOf } from "../error.ts";
 import { BadRequest, limitedBody, NotFound, pathParams, respond } from "./response.ts";
 
@@ -104,34 +103,6 @@ export const catalogRoutes = Layer.merge(
           Effect.gen(function* () {
             const { name } = yield* pathParams(TemplateParams);
             return yield* templateUsage(name);
-          }),
-        ),
-      ),
-      // Saved workflows pick up replacement wording on their next run.
-      HttpRouter.route(
-        "PUT",
-        "/:name",
-        respond(
-          Effect.gen(function* () {
-            const { name } = yield* pathParams(TemplateParams);
-            const body = yield* limitedBody(Template);
-            if (body.name !== name) {
-              return yield* new BadRequest({ message: "The template's name must match the URL" });
-            }
-            const entities = yield* EntityStore;
-            return yield* entities.putTemplate(body);
-          }),
-        ),
-      ),
-      HttpRouter.route(
-        "DELETE",
-        "/:name",
-        respond(
-          Effect.gen(function* () {
-            const { name } = yield* pathParams(TemplateParams);
-            const entities = yield* EntityStore;
-            yield* entities.deleteTemplate(name);
-            return { ok: true };
           }),
         ),
       ),

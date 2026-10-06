@@ -12,6 +12,7 @@ import { Questionnaire, TaskAnswer } from "./domain/index.ts";
 import { Entities, Overview, Templates, Traces } from "./page/index.ts";
 import { ShortcutModifier } from "./platform.ts";
 import { Theme } from "./theme.ts";
+import * as Assistant from "./assistant/index.ts";
 
 export const Activity = defineTaggedUnion({
   Ready: { notice: Schema.String },
@@ -121,6 +122,10 @@ export const Page = defineTaggedUnion({
 export type Page = typeof Page.Type;
 
 export const Model = Schema.Struct({
+  assistant: Assistant.Model,
+  maybeFollowHref: Schema.Option(Schema.String),
+  plannerHistoryOpen: Schema.Boolean,
+  maybeNavigationNotice: Schema.Option(Schema.String),
   page: Page,
   automationId: Schema.String,
   directory: Directory,

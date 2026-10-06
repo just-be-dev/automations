@@ -1,9 +1,11 @@
 /** Tracks the entity store's selected type, loaded records, editable forms, and pending deletion or save. */
 import * as Array from "effect/Array";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { defineTaggedUnion } from "foldkit/schema";
 import { EntityRecord, EntityType, FieldType } from "../../../entities.ts";
+import * as Change from "../../change/index.ts";
 
 export const Types = defineTaggedUnion({
   Loading: {},
@@ -78,6 +80,7 @@ export const Triggered = Schema.Struct({
 export type Triggered = typeof Triggered.Type;
 
 export const Model = Schema.Struct({
+  change: Change.Model.pipe(Schema.withConstructorDefault(Effect.succeed(Change.initial))),
   maybeTypeName: Schema.Option(Schema.String),
   types: Types,
   records: Records,

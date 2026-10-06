@@ -16,11 +16,11 @@ import { type EntityField, FieldType, type Template } from "../../../entities.ts
 import { templateParts, type TemplateUser, type TemplateUsage } from "../../../workflow.ts";
 import { automationHref, templatesHref } from "../../route.ts";
 import { textInputs } from "./draft.ts";
-import { Message } from "./message.ts";
+import { Message, toChangeMessage } from "./message.ts";
+import * as Change from "../../change/index.ts";
 import {
   Activity,
   Catalog,
-  Confirmation,
   type ContentDraft,
   Editor,
   isWorking,
@@ -57,6 +57,12 @@ export const view = Submodel.defineView<Model, Message>((model, h) =>
         [h.Class("flex min-h-12 items-center gap-4 border-t px-6 py-3")],
         [statusView(model, h)],
       ),
+      h.submodel({
+        slotId: "change",
+        model: model.change,
+        view: Change.view,
+        toParentMessage: toChangeMessage,
+      }),
     ],
   ),
 );
@@ -202,40 +208,6 @@ const noTemplateView = (model: Model, h: HtmlBuilder<Message>) => {
   );
 };
 
-const usedByCount = (model: Model) =>
-  Usage.guards.Ready(model.usage) ? model.usage.usage.automations.length : 0;
-
-const deleteQuestion = (template: Template, model: Model) => {
-  const users = usedByCount(model);
-  return users === 0
-    ? `Delete ${template.name}?`
-    : `Delete ${template.name}? ${plural(users, "automation uses", "automations use")} it, and their runs will fail until they stop.`;
-};
-
-const confirmView = (question: string, model: Model, h: HtmlBuilder<Message>) =>
-  h.div(
-    [
-      componentName("confirm"),
-      h.Class("flex items-center gap-2"),
-      h.Role("group"),
-      h.AriaLabel(question),
-    ],
-    [
-      h.span([h.Class("max-w-72 text-xs text-destructive")], [question]),
-      button(
-        {
-          onClick: Message.ClickedConfirmDelete(),
-          variant: "destructive",
-          size: "xs",
-          isDisabled: isWorking(model),
-        },
-        "Delete",
-        h,
-      ),
-      button({ onClick: Message.ClickedCancelDelete(), variant: "ghost", size: "xs" }, "Keep", h),
-    ],
-  );
-
 const templateDetailView = (template: Template, model: Model, h: HtmlBuilder<Message>) =>
   h.div(
     [componentName("template-detail"), h.Class("flex max-w-3xl flex-col gap-8")],
@@ -265,13 +237,11 @@ const templateDetailView = (template: Template, model: Model, h: HtmlBuilder<Mes
                 [icon(h, Pencil, "size-3.5", "inline-start"), "Edit template"],
                 h,
               ),
-              Confirmation.guards.Delete(model.confirmation)
-                ? confirmView(deleteQuestion(template, model), model, h)
-                : button(
-                    { onClick: Message.ClickedDeleteTemplate(), variant: "ghost", size: "sm" },
-                    [icon(h, Trash2, "size-3.5", "inline-start"), "Delete"],
-                    h,
-                  ),
+              button(
+                { onClick: Message.ClickedDeleteTemplate(), variant: "ghost", size: "sm" },
+                [icon(h, Trash2, "size-3.5", "inline-start"), "Delete"],
+                h,
+              ),
             ],
           ),
         ],
@@ -457,14 +427,12 @@ const formActionsView = (saveLabel: string, model: Model, h: HtmlBuilder<Message
   );
 
 const editingNoteView = (model: Model, h: HtmlBuilder<Message>) => {
-  const users = usedByCount(model);
+  const users = Usage.guards.Ready(model.usage) ? model.usage.usage.automations.length : 0;
   return users === 0
     ? h.empty
     : h.p(
         [componentName("editing-note"), h.Class("text-xs text-muted-foreground")],
-        [
-          `${plural(users, "automation uses", "automations use")} this template. Runs that start after you save use the new wording; runs already going keep theirs.`,
-        ],
+        [`${plural(users, "automation uses", "automations use")} this template.`],
       );
 };
 

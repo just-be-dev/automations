@@ -3,8 +3,10 @@ import * as Schema from "effect/Schema";
 import { defineMessageUnion } from "foldkit/message";
 import { EntityType, Template } from "../../../entities.ts";
 import { TemplateUsage } from "../../../workflow.ts";
+import * as Change from "../../change/index.ts";
 
 export const Message = defineMessageUnion({
+  GotChangeMessage: { message: Change.Message },
   ClickedNewTemplate: {},
   ClickedEditTemplate: {},
   ClickedCancelTemplate: {},
@@ -35,3 +37,5 @@ export const Message = defineMessageUnion({
   CompletedNavigateToTemplates: {},
 });
 export type Message = typeof Message.Type;
+
+export const toChangeMessage = (message: Change.Message) => Message.GotChangeMessage({ message });

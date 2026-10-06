@@ -5,10 +5,12 @@ import * as Option from "effect/Option";
 import * as Order from "effect/Order";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import type { Update } from "foldkit";
+import { Update } from "foldkit";
 import { modifyFields } from "foldkit/struct";
 import { plural, withArticle } from "@/lib/format";
-import { type EntityType, FieldType } from "../../../entities.ts";
+import { EntityType, FieldType, Subject } from "../../../entities.ts";
+import * as Change from "../../change/index.ts";
+import type { ChangeProposal } from "../../../changes/model.ts";
 import { entitiesHref, entitiesPath } from "../../route.ts";
 import { DeleteEntity, DeleteType, NavigateToEntities, SaveEntity, SaveType } from "./command.ts";
 import {
@@ -19,7 +21,7 @@ import {
   typeFromDraft,
 } from "./draft.ts";
 import { loadRecords } from "./init.ts";
-import { Message } from "./message.ts";
+import { Message, toChangeMessage } from "./message.ts";
 import {
   Activity,
   Confirmation,
@@ -31,7 +33,7 @@ import {
   type Model,
   Records,
   selectedType,
-  type Triggered,
+  Triggered,
   type TypeDraft,
   TypeEditor,
   Types,
@@ -101,7 +103,7 @@ const submitType = (model: Model, draft: TypeDraft, isNew: boolean): UpdateRetur
       isNew && Array.some(loadedTypes(model), (existing) => existing.name === type.name)
         ? fail(model, `There is already a type named ${type.name}`)
         : {
-            model: working(model, `Saving ${type.name}…`),
+            model: working(model, `Preparing changes to ${type.name}…`),
             commands: [SaveType({ type, isNew })],
           },
   });
@@ -128,7 +130,7 @@ const submitEntity = (model: Model, draft: EntityDraft, isNew: boolean): UpdateR
       return Result.match(entityDataFromDraft(type, draft), {
         onFailure: (error) => fail(model, error),
         onSuccess: (data) => ({
-          model: working(model, `Saving ${id}…`),
+          model: working(model, `Preparing changes to ${id}…`),
           commands: [SaveEntity({ type: type.name, id, data })],
         }),
       });
@@ -136,8 +138,24 @@ const submitEntity = (model: Model, draft: EntityDraft, isNew: boolean): UpdateR
   });
 };
 
-export const update = (model: Model, message: Message): UpdateReturn =>
-  Message.match<UpdateReturn>(message, {
+export const update = (model: Model, message: Message): UpdateReturn => {
+  if (
+    isWorking(model) &&
+    /^(Updated|Selected|Clicked(New|Edit|Cancel|Add|Remove|Delete))/.test(message._tag)
+  ) {
+    return { model };
+  }
+  if (
+    /^Clicked(New|Edit)/.test(message._tag) &&
+    (model.typeEditor._tag !== "Closed" || model.entityEditor._tag !== "Closed")
+  ) {
+    return fail(model, "Save or cancel your open form before opening another.");
+  }
+  return Message.match<UpdateReturn>(message, {
+    GotChangeMessage: ({ message }) =>
+      message._tag === "SucceededPrepare" && !isWorking(model)
+        ? { model }
+        : foldChange(model, message),
     ClickedNewType: () => ({
       model: modifyFields(model, {
         typeEditor: () => TypeEditor.Creating({ draft: newTypeDraft }),
@@ -207,9 +225,8 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       Option.match(selectedType(model), {
         onNone: () => ({ model }),
         onSome: (type) => ({
-          model: modifyFields(model, {
-            confirmation: () => Confirmation.DeleteType({ type: type.name }),
-          }),
+          model: working(model, "Preparing change…"),
+          commands: [DeleteType({ type: type.name })],
         }),
       }),
     ClickedNewEntity: () =>
@@ -260,9 +277,8 @@ export const update = (model: Model, message: Message): UpdateReturn =>
       Option.match(model.maybeTypeName, {
         onNone: () => ({ model }),
         onSome: (type) => ({
-          model: modifyFields(model, {
-            confirmation: () => Confirmation.DeleteEntity({ type, id }),
-          }),
+          model: working(model, "Preparing change…"),
+          commands: [DeleteEntity({ type, id })],
         }),
       }),
     ClickedConfirmDelete: () => {
@@ -300,7 +316,9 @@ export const update = (model: Model, message: Message): UpdateReturn =>
         : { model },
     FailedLoadEntities: ({ type, error }) =>
       Option.contains(model.maybeTypeName, type)
-        ? { model: modifyFields(model, { records: () => Records.Unavailable({ type, error }) }) }
+        ? {
+            model: modifyFields(model, { records: () => Records.Unavailable({ type, error }) }),
+          }
         : { model },
     SucceededSaveType: ({ type, isNew }) => ({
       model: modifyFields(model, {
@@ -363,3 +381,59 @@ export const update = (model: Model, message: Message): UpdateReturn =>
     FailedRequest: ({ error }) => fail(model, error),
     CompletedNavigateToEntities: () => ({ model }),
   });
+};
+
+const decodeApplied = <T, E>(
+  model: Model,
+  schema: Schema.Codec<T, E>,
+  result: Schema.Json,
+  message: (value: T) => Message,
+): UpdateReturn =>
+  Option.match(Schema.decodeUnknownOption(schema)(result), {
+    onNone: () =>
+      fail(model, "The applied change returned an invalid result. Your draft has been kept."),
+    onSome: (value) => update(model, message(value)),
+  });
+
+const applied = (model: Model, proposal: ChangeProposal, result: Schema.Json): UpdateReturn => {
+  const action = proposal.action;
+  if (action.kind === "putType") {
+    return decodeApplied(model, EntityType, result, (type) =>
+      Message.SucceededSaveType({ type, isNew: TypeEditor.guards.Creating(model.typeEditor) }),
+    );
+  }
+  if (action.kind === "putEntity") {
+    return decodeApplied(
+      model,
+      Schema.Struct({ entity: Subject, triggered: Schema.Array(Triggered) }),
+      result,
+      Message.SucceededSaveEntity,
+    );
+  }
+  if (action.kind === "deleteType") {
+    return decodeApplied(model, Schema.Struct({ deleted: Schema.String }), result, () =>
+      Message.SucceededDeleteType({ type: action.name }),
+    );
+  }
+  if (action.kind === "deleteEntity") {
+    return decodeApplied(model, Schema.Struct({ deleted: Schema.Boolean }), result, () =>
+      Message.SucceededDeleteEntity({ type: action.type, id: action.id }),
+    );
+  }
+  return fail(model, "This change belongs to another page.");
+};
+
+const foldChange = Update.foldChild({
+  update: Change.update,
+  read: (model: Model) => Option.some(model.change),
+  write: (model: Model, nextChange: Change.Model) =>
+    modifyFields(model, { change: () => nextChange }),
+  toParentMessage: toChangeMessage,
+  foldOutMessage:
+    (outMessage: Change.OutMessage) =>
+    (model: Model): UpdateReturn =>
+      Change.OutMessage.match(outMessage, {
+        Applied: ({ proposal, result }) => applied(model, proposal, result),
+        Cancelled: () => ({ model: modifyFields(model, { activity: () => Activity.Idle() }) }),
+      }),
+});

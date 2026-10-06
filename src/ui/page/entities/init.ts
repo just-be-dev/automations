@@ -44,6 +44,20 @@ export const reflectUrl = (model: Model, maybeTypeName: Option.Option<string>): 
   if (Equal.equals(model.maybeTypeName, maybeTypeName)) {
     return { model };
   }
+  if (
+    model.typeEditor._tag !== "Closed" ||
+    model.entityEditor._tag !== "Closed" ||
+    model.activity._tag === "Working"
+  ) {
+    return {
+      model: modifyFields(model, {
+        activity: () =>
+          Activity.Failed({
+            error: "Save or cancel your open form before selecting another type.",
+          }),
+      }),
+    };
+  }
   return {
     model: modifyFields(model, {
       maybeTypeName: () => maybeTypeName,

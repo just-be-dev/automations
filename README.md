@@ -16,6 +16,8 @@ Infrastructure and server code share one [Alchemy 2](https://alchemy.run) Effect
 - `src/platform/cloudflare/` owns the Workers, Durable Object host, D1 adapters, Workers AI and pi SQLite implementation, Access identity, resource bindings, and deployment configuration. It composes domain services per request or per Durable Object instance and captures their runtime dependencies.
 - `src/http/api.ts` composes platform-independent routes. Handlers use `Automations`, `EntityStore`, `AutomationIndex`, `EntitySubscribers`, and `RequestIdentity`, never Cloudflare bindings.
 - `src/automation/` owns designing, saving, and running an automation. `application.ts` composes a design session (`design-session.ts`) and run coordinator (`runs.ts`) over shared workflow snapshots and catalog access (`workflow-store.ts`), and returns public operations plus job handlers. Neither lifecycle depends on the other. `service.ts` lets callers address automations without knowing where they live. `AutomationHost` provides persistence and durable jobs together so scheduling and writes share a transaction.
+- `src/assistant/` owns the durable studio-wide assistant, its typed tools, confirmations, and delegation to the automation planner. `src/platform/cloudflare/assistant.ts` hosts one session per Access identity and browser session ID.
+- `src/changes/` prepares validated mutations and readable consequences, persists owner-bound proposals, rejects stale approvals, and keeps replay-safe receipts. `src/platform/cloudflare/changes.ts` hosts one coordinator for the tenant so manual and assistant changes share the same gate.
 - `src/agents/planner/` owns the planner agent: its instructions, the tools it edits the draft with, and the progress shown while it works.
 - `src/workflow/` owns the workflow DSL, run models, catalog checks, interpreter, and durable engine.
 - `src/entities/` owns entity models, approved templates, the `EntityStore` service and memory layer, and subscriber notifications shared by HTTP and MCP writes.
@@ -100,50 +102,68 @@ Deploys also create a 30-day Access service token for machine testing. Send it a
 
 Open the Studio URL, describe a process, review the steps, and save. The agent's replies are formatted (lists, bold, links). When it needs you to choose, such as which role approves an email, it stops and asks up to four questions. Answer them one at a time by picking an option or writing your own answer, review them, and send them together; the agent then carries on where it stopped. You can also skip them, or answer in the message box. Runs always use the last saved snapshot, not the current draft.
 
+The **Assistant** panel on the right is available on every page. Its conversation and pending work survive navigation, collapse, and reload; the browser stores its session ID, and Access identity isolates people using the same browser. Ask it to create or edit entities and templates, or chain work such as "Create an onboarding email template, then draft an automation using it." It delegates workflow design to the existing planner and never saves or runs the draft automatically. The automation's original conversation remains under **Automation conversation and planner**.
+
+**Follow along** opens the resource the assistant is working on. Manual navigation pauses following, and open forms or unsent planner messages prevent automatic navigation. Collapsing hides the conversation without stopping work. On smaller screens, the assistant opens as a drawer.
+
+Entity, type, and template mutations require review of the exact proposed change and its consequences. Manual actions show a confirmation dialog; assistant actions show the same proposal inline. Cancel leaves the data and your form untouched. Approval applies only that proposal, not later changes. If data or dependencies changed while awaiting approval, prepare a fresh proposal. Retrying an applied decision returns its receipt; entity notifications use a stable key so a resumed decision does not start the same run twice. Consequence checks currently snapshot the tenant catalog, so unrelated edits can also invalidate a proposal.
+
 Under **Permissions**, the draft lists every connection operation it uses. Each one is set to allow (it runs automatically) or ask first, with the role whose members approve it, such as the seeded People Ops. The agent suggests these, and you can change any of them. An operation that asks first makes every run wait on an approval task that shows exactly what it will send and who can approve it. Rejecting the task skips that step and every step that needs its result; the rest of the run carries on. When the process must not go on, the agent adds a stop step. Save the draft to apply permission changes to new runs.
 
 The studio opens on the **Overview**: the runs in flight across every automation, and every automation with how it starts and how its last run went. Start a saved automation from there with **Run**. If it is about an entity, such as an employee, pick which one first. Draft-only automations are listed but can't run until they are saved. The page refreshes every 5 seconds while a run is in flight.
 
 The open automation's ID is in the URL (`/?automation=onboarding`), so a reload, a new tab, or a shared link opens the same automation. Clicking a run on the overview or in the studio opens it in a panel on the right, so it can play out while you keep editing or watching the overview. The panel follows the run step by step and lets people answer its open tasks; its expand button opens the run's own page (`/?automation=onboarding&run=<runId>`), and a modified click on a run opens that page in a new tab. The run page shows the saved version the run started with, not the draft, so it leaves out the planner chat; **Edit automation** goes back to it. The sidebar lists every automation. Its **+** button opens a dialog where you describe what the automation should do. Creating it asks a fast Workers AI model for a short name, lists the automation in the sidebar straight away, opens it, and sends your description as the first chat message, so the conversation is never lost by navigating away. The ID comes from that name (`Onboard new hires` opens `/?automation=onboard-new-hires`, with a random suffix if that ID is taken). The planner renames the automation when it drafts the workflow; the ID stays. An unknown ID in the URL starts an empty automation, which joins the sidebar once the agent drafts it.
 
-A saved automation with an entity trigger starts when a matching entity changes. For example, giving the seeded `ada` a start date starts an onboarding automation that watches `employee.start_date`:
+A saved automation with an entity trigger starts when a matching entity changes. For example, prepare a change to the seeded `ada`'s start date:
 
 ```sh
-curl -X PUT "$STUDIO_URL/api/entities/employee/ada" \
+curl -X POST "$STUDIO_URL/api/changes" \
   -H "Cookie: CF_Authorization=$CF_ACCESS_JWT" -H "Content-Type: application/json" \
-  -d '{"data":{"start_date":"2026-11-02"}}'
+  -d '{"action":{"kind":"putEntity","type":"employee","id":"ada","data":{"start_date":"2026-11-02"}}}'
 ```
 
-The response lists the runs the change `triggered`. People answer human steps from the run in the studio, or with `POST .../tasks/:stepId`.
+Read the returned proposal's fields and consequences before confirming its `id`:
+
+```sh
+curl -X POST "$STUDIO_URL/api/changes/<proposal-id>/decision" \
+  -H "Cookie: CF_Authorization=$CF_ACCESS_JWT" -H "Content-Type: application/json" \
+  -d '{"approved":true}'
+```
+
+Only the confirmed decision writes the entity. Its `result.triggered` lists the runs or subscriber errors. Send `approved:false` to cancel. People answer human steps from the run in the studio, or with `POST .../tasks/:stepId`.
 
 A saved automation with a schedule trigger runs on a cron schedule in a time zone, such as every weekday at 9:00 in London. It can start one run each time, or one for every entity of a type that meets a condition, such as each employee who starts in the coming week. The overview shows the schedule in words and when it next runs (see [Triggers](docs/workflow-dsl.md#schedule)). A date trigger starts a run on, before, or after a date each entity holds, such as three days after each employee's start date, and follows the date if it changes (see [`date`](docs/workflow-dsl.md#date)). One occurrence starts at most 50 runs; one that matches more starts none and records a failed run saying so, and a save that already matches more is refused.
 
-Templates hold approved wording, such as the standard welcome email, with slots the automation fills (`hire → employee`). The planner uses a template whenever one fits instead of writing the text, and picks one per case with a `match`, for example a different welcome email by role. Manage them on the studio's **Templates** page (`/templates`), which also lists the automations whose saved workflow or draft uses each one, or write them with `PUT /api/templates/:name` (see [Templates](docs/workflow-dsl.md#templates)). Editing a template changes runs that start afterwards; runs already going keep the wording they started with.
+Templates hold approved wording, such as the standard welcome email, with slots the automation fills (`hire → employee`). The planner uses a template whenever one fits instead of writing the text, and picks one per case with a `match`, for example a different welcome email by role. Manage them on the studio's **Templates** page (`/templates`), which also lists the automations whose saved workflow or draft uses each one, or prepare a `putTemplate` or `deleteTemplate` action through `/api/changes` (see [Templates](docs/workflow-dsl.md#templates)). Editing a template changes runs that start afterwards; runs already going keep the wording they started with. Deleting a referenced template prevents new runs from validating until the references are fixed.
 
-| Endpoint                                                   | Purpose                                                                                                    |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `GET /api/overview`                                        | Each automation's trigger, its next scheduled run, and runs in flight                                      |
-| `GET /api/automations`                                     | List automations                                                                                           |
-| `POST /api/automations`                                    | Create an automation from a description, which becomes its first chat message (`{ "description": "…" }`)   |
-| `GET /api/automations/:id`                                 | Inspect an automation and its recent runs                                                                  |
-| `POST /api/automations/:id/chat`                           | Send a design message                                                                                      |
-| `POST /api/automations/:id/save`                           | Save the draft, subscribe to its trigger, and book its schedule                                            |
-| `POST /api/automations/:id/permissions`                    | Set which operations ask which role first (`{ "permissions": { "email.send": { "ask": "people_ops" } } }`) |
-| `GET /api/roles`, `PUT /api/roles/:name`                   | List or define roles (`{ "name", "label", "members": [{ "type", "id" }] }`)                                |
-| `POST /api/automations/:id/start`                          | Start a run by hand (`{ "subject": "<id>" }`)                                                              |
-| `GET /api/automations/:id/runs/:runId`                     | Inspect a run, its steps, and its tasks                                                                    |
-| `GET /api/automations/:id/trace`                           | The planner's conversation: instructions, prompts, reasoning, tool calls and results, token use            |
-| `GET /api/automations/:id/runs/:runId/trace`               | The conversation a run's agent and decide steps share, in the same shape                                   |
-| `POST /api/automations/:id/runs/:runId/tasks/:stepId`      | Answer a human step                                                                                        |
-| `GET /api/entities/types`, `PUT /api/entities/types/:type` | List or define entity types                                                                                |
-| `GET /api/entities/:type`, `GET /api/entities/:type/:id`   | Read entities                                                                                              |
-| `PUT /api/entities/:type/:id`                              | Create or update an entity and start its runs                                                              |
-| `DELETE /api/entities/types/:type`                         | Delete a type nothing depends on                                                                           |
-| `DELETE /api/entities/:type/:id`                           | Delete an entity that no role lists (starts no runs)                                                       |
-| `POST /api/mcp`                                            | The entity store as an MCP server                                                                          |
-| `GET /api/templates`, `GET /api/templates/:name`           | List or read templates                                                                                     |
-| `PUT /api/templates/:name`, `DELETE /api/templates/:name`  | Create, replace, or delete a template                                                                      |
-| `GET /api/templates/:name/automations`                     | The automations whose saved workflow or draft use a template                                               |
+| Endpoint                                                 | Purpose                                                                                                               |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/overview`                                      | Each automation's trigger, its next scheduled run, and runs in flight                                                 |
+| `GET /api/automations`                                   | List automations                                                                                                      |
+| `POST /api/automations`                                  | Create an automation from a description, which becomes its first chat message (`{ "description": "…" }`)              |
+| `GET /api/automations/:id`                               | Inspect an automation and its recent runs                                                                             |
+| `POST /api/automations/:id/chat`                         | Send a design message                                                                                                 |
+| `POST /api/automations/:id/save`                         | Save the draft, subscribe to its trigger, and book its schedule                                                       |
+| `POST /api/automations/:id/permissions`                  | Set which operations ask which role first (`{ "permissions": { "email.send": { "ask": "people_ops" } } }`)            |
+| `GET /api/roles`, `PUT /api/roles/:name`                 | List or define roles (`{ "name", "label", "members": [{ "type", "id" }] }`)                                           |
+| `POST /api/automations/:id/start`                        | Start a run by hand (`{ "subject": "<id>" }`)                                                                         |
+| `GET /api/automations/:id/runs/:runId`                   | Inspect a run, its steps, and its tasks                                                                               |
+| `GET /api/automations/:id/trace`                         | The planner's conversation: instructions, prompts, reasoning, tool calls and results, token use                       |
+| `GET /api/automations/:id/runs/:runId/trace`             | The conversation a run's agent and decide steps share, in the same shape                                              |
+| `POST /api/automations/:id/runs/:runId/tasks/:stepId`    | Answer a human step                                                                                                   |
+| `GET /api/entities/types`                                | List entity types                                                                                                     |
+| `GET /api/entities/:type`, `GET /api/entities/:type/:id` | Read entities                                                                                                         |
+| `POST /api/changes`                                      | Prepare `{ "action": ... }`: `putEntity`, `deleteEntity`, `putType`, `deleteType`, `putTemplate`, or `deleteTemplate` |
+| `POST /api/changes/:id/decision`                         | Confirm or cancel the stored proposal with `{ "approved": true }` or `false`                                          |
+| `POST /api/mcp`                                          | The entity store as an MCP server                                                                                     |
+| `GET /api/templates`, `GET /api/templates/:name`         | List or read templates                                                                                                |
+| `GET /api/templates/:name/automations`                   | The automations whose saved workflow or draft use a template                                                          |
+| `GET /api/assistant/:sessionId`                          | Read a UUID-named assistant session and its pending work                                                              |
+| `POST /api/assistant/:sessionId/chat`                    | Submit `{ "message": "…", "context": { "pathname": "/templates", "template": "welcome_email" } }`                     |
+| `POST /api/assistant/:sessionId/confirmation`            | Answer the inline proposal with `{ "proposalId": "…", "approved": true }`                                             |
+| `POST /api/assistant/:sessionId/answers`                 | Answer pending questions with `{ "callId": "…", "answer": { "kind": "answers", "answers": ["…", null] } }`            |
+
+Each assistant response is an `AssistantState`; while it is `working`, poll its GET route. `confirming` and `asking` wait for explicit UI answers, and `failed` permits a new message.
 
 ### Agent traces
 
@@ -153,7 +173,7 @@ Templates hold approved wording, such as the standard welcome email, with slots 
 
 `/entities` in the studio (**Debug → Entity store** in the sidebar) is a debug page for the entity store. Define entity types field by field, then create, edit, and delete their entities. Saving an entity is an ordinary entity write, so it starts the saved automations that watch its type.
 
-`/api/mcp` serves the same store to agents over MCP's Streamable HTTP transport. Its tools are `list_entity_types`, `define_entity_type`, `delete_entity_type`, `list_entities`, `get_entity`, `put_entity`, `delete_entity`, `list_roles`, and `define_role`. The server is stateless: it assigns no session, answers in JSON, and supports protocol revisions 2024-11-05 through 2025-11-25. With `mise run dev`:
+`/api/mcp` serves the same store to agents over MCP's Streamable HTTP transport. Its tools are `list_entity_types`, `define_entity_type`, `delete_entity_type`, `list_entities`, `get_entity`, `put_entity`, `delete_entity`, `list_roles`, `define_role`, and `decide_change`. Entity/type mutation tools return a proposal without writing. Present it to the person before calling `decide_change` with its `proposalId` and `approved` decision. Role tools write directly. The built-in assistant uses application tools directly, not MCP. The server is stateless: it assigns no session, answers in JSON, and supports protocol revisions 2024-11-05 through 2025-11-25. With `mise run dev`:
 
 ```sh
 claude mcp add --transport http entity-store "$STUDIO_URL/api/mcp"

@@ -11,6 +11,10 @@ import { catalogRoutes } from "./catalog.ts";
 import { entityRoutes } from "./entities.ts";
 import { mcpRoutes } from "./mcp.ts";
 import { json } from "./response.ts";
+import { Changes } from "../changes/service.ts";
+import { makeChanges } from "../changes/application.ts";
+import { changeRoutes } from "./changes.ts";
+import { RequestIdentity } from "./identity.ts";
 
 const unused = () => Effect.die("Unexpected operation");
 
@@ -37,7 +41,7 @@ const automationsLayer = Layer.merge(
   Layer.succeed(Automations, {
     get: (id) => ({
       inspectWorkflow: unused,
-      overview: unused,
+      overview: () => Effect.succeed({ activeRuns: [] }),
       answer: unused,
       templateUses: () => {
         const uses = templateUses[id];
@@ -65,49 +69,89 @@ const app = () =>
       entityRoutes,
       catalogRoutes,
       mcpRoutes,
+      changeRoutes,
       HttpRouter.add("*", "*", json({ error: "Not found" }, 404)),
     ).pipe(
       Layer.provideMerge(
-        Layer.mergeAll(
-          automationsLayer,
-          layerMemory({
-            types: [
-              {
-                name: "employee",
-                label: "Employee",
-                title: "name",
-                fields: [{ name: "name", label: "Name", type: "text" }],
-              },
-            ],
-            entities: [{ type: "employee", id: "ada", data: { name: "Ada" }, updatedAt: 0 }],
+        Layer.effect(
+          Changes,
+          Effect.suspend(() => {
+            const data = new Map<string, unknown>();
+            return makeChanges({
+              get: (key) => Effect.sync(() => data.get(key)),
+              put: (key, value) => Effect.sync(() => void data.set(key, value)),
+              list: (prefix) =>
+                Effect.sync(() =>
+                  [...data].filter(([key]) => key.startsWith(prefix)).map(([, value]) => value),
+                ),
+              transaction: (effect) => effect,
+            });
           }),
-          Layer.succeed(EntitySubscribers, {
-            notify: (change) =>
-              Effect.succeed([
-                { automation: `watching-${change.after.type}`, runId: "run-1", error: null },
-              ]),
-          }),
+        ).pipe(
+          Layer.provideMerge(
+            Layer.mergeAll(
+              automationsLayer,
+              Layer.succeed(RequestIdentity, { email: "owner@example.com" }),
+              layerMemory({
+                types: [
+                  {
+                    name: "employee",
+                    label: "Employee",
+                    title: "name",
+                    fields: [{ name: "name", label: "Name", type: "text" }],
+                  },
+                ],
+                entities: [{ type: "employee", id: "ada", data: { name: "Ada" }, updatedAt: 0 }],
+              }),
+              Layer.succeed(EntitySubscribers, {
+                notify: (change) =>
+                  Effect.succeed([
+                    { automation: `watching-${change.after.type}`, runId: "run-1", error: null },
+                  ]),
+              }),
+            ),
+          ),
         ),
       ),
     ),
     { disableLogger: true },
   );
 
-test("HTTP and MCP use the same store and return entity-write notifications", async () => {
+test("approved changes preserve entity-write notifications", async () => {
   const { handler, dispose } = app();
   try {
-    const written = await handler(
-      new Request("http://studio/api/entities/employee/ada", {
-        method: "PUT",
+    const proposed = await handler(
+      new Request("http://studio/api/changes", {
+        method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ data: { name: "Ada Lovelace" } }),
+        body: JSON.stringify({
+          owner: "forged",
+          action: {
+            kind: "putEntity",
+            type: "employee",
+            id: "ada",
+            data: { name: "Ada Lovelace" },
+          },
+        }),
       }),
     );
-    expect(written.status).toBe(200);
-    expect(written.headers.get("cache-control")).toBe("no-store");
-    expect(await written.json()).toMatchObject({
-      entity: { type: "employee", id: "ada", data: { name: "Ada Lovelace" } },
-      triggered: [{ automation: "watching-employee", runId: "run-1", error: null }],
+    expect(proposed.status).toBe(200);
+    expect(proposed.headers.get("cache-control")).toBe("no-store");
+    const proposal = (await proposed.json()) as { id: string };
+    const decision = await handler(
+      new Request(`http://studio/api/changes/${proposal.id}/decision`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ approved: true }),
+      }),
+    );
+    expect(decision.status).toBe(200);
+    expect(await decision.json()).toMatchObject({
+      status: "applied",
+      result: {
+        entity: { type: "employee", id: "ada", data: { name: "Ada Lovelace" } },
+        triggered: [{ automation: "watching-employee", runId: "run-1", error: null }],
+      },
     });
     const read = await handler(
       new Request("http://studio/api/mcp", {
@@ -147,14 +191,16 @@ test("static type routes take precedence, and missing or invalid resources keep 
       expect(await response.json()).toMatchObject({ error: expect.any(String) });
     }
     const invalid = await handler(
-      new Request("http://studio/api/entities/employee/ada", {
-        method: "PUT",
+      new Request("http://studio/api/changes", {
+        method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ data: { name: 42 } }),
+        body: JSON.stringify({
+          action: { kind: "putEntity", type: "employee", id: "ada", data: { name: 42 } },
+        }),
       }),
     );
     expect(invalid.status).toBe(400);
-    expect(await invalid.json()).toMatchObject({ error: "employee.name must be a text" });
+    expect(await invalid.json()).toMatchObject({ error: expect.any(String) });
   } finally {
     await dispose();
   }
@@ -182,15 +228,17 @@ test("a template's usage lists the automations whose saved workflow or draft use
   }
 });
 
-test("entity bodies at the 32 KB limit decode; bodies above it return 413", async () => {
+test("change bodies at the 32 KB limit decode; bodies above it return 413", async () => {
   const { handler, dispose } = app();
   try {
     for (const size of [32_000, 32_001]) {
       const response = await handler(
-        new Request("http://studio/api/entities/employee/ada", {
-          method: "PUT",
+        new Request("http://studio/api/changes", {
+          method: "POST",
           headers: { "content-type": "application/json", "content-length": String(size) },
-          body: JSON.stringify({ data: { name: "Ada" } }).padEnd(size, " "),
+          body: JSON.stringify({
+            action: { kind: "putEntity", type: "employee", id: "ada", data: { name: "Ada" } },
+          }).padEnd(size, " "),
         }),
       );
       expect(response.status).toBe(size === 32_000 ? 200 : 413);
@@ -226,6 +274,41 @@ test("MCP keeps its origin check, POST-only transport, and notification status",
     );
     expect(notification.status).toBe(202);
     expect(await notification.text()).toBe("");
+  } finally {
+    await dispose();
+  }
+});
+
+test("changes reject malformed and oversized bodies", async () => {
+  const { handler, dispose } = app();
+  try {
+    for (const body of [
+      "{",
+      JSON.stringify({
+        action: { kind: "putEntity", type: "employee", id: "invalid/id", data: {} },
+      }),
+      JSON.stringify({ action: { kind: "unknown" } }),
+    ]) {
+      const response = await handler(
+        new Request("http://studio/api/changes", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body,
+        }),
+      );
+      expect(response.status).toBe(400);
+      expect(await response.json()).toMatchObject({ error: expect.any(String) });
+    }
+    for (const path of ["/api/changes", "/api/changes/change-1/decision"]) {
+      const response = await handler(
+        new Request(`http://studio${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "content-length": "32001" },
+          body: "{}",
+        }),
+      );
+      expect(response.status).toBe(413);
+    }
   } finally {
     await dispose();
   }

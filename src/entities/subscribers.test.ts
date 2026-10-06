@@ -41,3 +41,28 @@ test("notifies only this type's subscribers and retains failures alongside later
     { automation: "welcome", runId: "run-welcome", error: null },
   ]);
 });
+
+test("passes a stable notification key to every subscriber, and keeps unkeyed calls optional", async () => {
+  const keys: Array<string | undefined> = [];
+  const layer = EntitySubscribers.layer((_id, _change, key) =>
+    Effect.sync(() => {
+      keys.push(key);
+      return { runId: null };
+    }),
+  ).pipe(Layer.provideMerge(layerMemory({})));
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const store = yield* EntityStore;
+      yield* store.subscribe("first", "person");
+      yield* store.subscribe("second", "person");
+      const service = yield* EntitySubscribers;
+      const change = {
+        before: undefined,
+        after: { type: "person", id: "sam", data: { name: "Sam" } },
+      };
+      yield* service.notify(change, "proposal-1");
+      yield* service.notify(change);
+    }).pipe(Effect.provide(layer)),
+  );
+  expect(keys).toEqual(["proposal-1", "proposal-1", undefined, undefined]);
+});

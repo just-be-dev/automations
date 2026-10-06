@@ -18,6 +18,9 @@ import {
 import { AppRoute, routeFromUrl } from "./route.ts";
 import type { Flags } from "./theme.ts";
 import { showPage } from "./update/index.ts";
+import * as Assistant from "./assistant/index.ts";
+import { toAssistantMessage } from "./message.ts";
+import { Command } from "foldkit";
 
 export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flags, url) => {
   const route = routeFromUrl(url);
@@ -30,6 +33,10 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
     Run: (run) => run.automationId,
   });
   const model = Model.make({
+    assistant: Assistant.initial,
+    maybeFollowHref: Option.none(),
+    plannerHistoryOpen: false,
+    maybeNavigationNotice: Option.none(),
     page: Page.Studio(),
     automationId,
     directory: Directory.Loading(),
@@ -63,6 +70,11 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
   const page = showPage(model, route);
   return {
     model: page.model,
-    commands: [...(page.commands ?? []), LoadAutomations(), LoadRoles()],
+    commands: [
+      ...(page.commands ?? []),
+      LoadAutomations(),
+      LoadRoles(),
+      ...Command.mapMessages([Assistant.RestoreAssistant()], toAssistantMessage),
+    ],
   };
 };

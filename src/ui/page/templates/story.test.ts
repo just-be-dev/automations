@@ -3,6 +3,9 @@ import { expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import { Command, given, message, model, story } from "foldkit/story";
 import { employee, welcome, welcomeOpen, welcomeUsage } from "./fixtures.ts";
+import * as Change from "../../change/index.ts";
+import { proposalOf } from "../../change/fixtures.ts";
+import { openedResolvers, closedResolvers } from "../../change/test-resolvers.test.ts";
 import {
   DeleteTemplate,
   LoadCatalog,
@@ -85,13 +88,32 @@ test("a new template needs a slot target and named, distinct inputs, then saves 
     ),
     Command.resolve(
       SaveTemplate,
-      Message.SucceededSaveTemplate({
-        template: { ...welcome, name: "farewell", label: "Farewell" },
-        isNew: true,
+      Message.GotChangeMessage({
+        message: Change.Message.SucceededPrepare({
+          proposal: proposalOf({
+            kind: "putTemplate",
+            template: { ...welcome, name: "farewell", label: "Farewell" },
+          }),
+        }),
       }),
     ),
-    Command.expectExact(NavigateToTemplates({ url: "/templates?template=farewell" })),
+    Command.resolveAll(...openedResolvers()),
+    message(
+      Message.GotChangeMessage({ message: Change.Message.ClickedDecision({ approved: true }) }),
+    ),
+    Command.resolve(
+      Change.DecideChange,
+      Change.Message.SucceededDecision({
+        proposalId: "proposal-1",
+        decision: {
+          status: "applied",
+          result: { ...welcome, name: "farewell", label: "Farewell" },
+        },
+      }),
+    ),
+    Command.expectHas(NavigateToTemplates({ url: "/templates?template=farewell" })),
     Command.resolve(NavigateToTemplates, Message.CompletedNavigateToTemplates()),
+    Command.resolveAll(...closedResolvers()),
     model((current) => {
       expect(current.editor._tag).toBe("Closed");
       expect(current.catalog).toEqual(
@@ -174,11 +196,29 @@ test("deleting a template waits for confirmation, then leaves its page", () => {
     message(Message.ClickedConfirmDelete()),
     Command.expectNone(),
     message(Message.ClickedDeleteTemplate()),
-    message(Message.ClickedConfirmDelete()),
     Command.expectExact(DeleteTemplate({ name: "welcome_email" })),
-    Command.resolve(DeleteTemplate, Message.SucceededDeleteTemplate({ name: "welcome_email" })),
-    Command.expectExact(NavigateToTemplates({ url: "/templates" })),
+    Command.resolve(
+      DeleteTemplate,
+      Message.GotChangeMessage({
+        message: Change.Message.SucceededPrepare({
+          proposal: proposalOf({ kind: "deleteTemplate", name: "welcome_email" }),
+        }),
+      }),
+    ),
+    Command.resolveAll(...openedResolvers()),
+    message(
+      Message.GotChangeMessage({ message: Change.Message.ClickedDecision({ approved: true }) }),
+    ),
+    Command.resolve(
+      Change.DecideChange,
+      Change.Message.SucceededDecision({
+        proposalId: "proposal-1",
+        decision: { status: "applied", result: { deleted: "welcome_email" } },
+      }),
+    ),
+    Command.expectHas(NavigateToTemplates({ url: "/templates" })),
     Command.resolve(NavigateToTemplates, Message.CompletedNavigateToTemplates()),
+    Command.resolveAll(...closedResolvers()),
     model((current) => expect(current.catalog).toEqual(expect.objectContaining({ templates: [] }))),
   );
 });

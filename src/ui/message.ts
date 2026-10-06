@@ -9,8 +9,11 @@ import { PendingChat, Permission, Run, RunSummary, Workflow } from "../workflow.
 import { SubjectOption } from "./api.ts";
 import { AutomationSummary, Exchange, WorkflowDisplay } from "./model.ts";
 import { Entities, Overview, Templates, Traces } from "./page/index.ts";
+import * as Assistant from "./assistant/index.ts";
 
 export const Message = defineMessageUnion({
+  GotAssistantMessage: { message: Assistant.Message },
+  ToggledPlannerHistory: { isOpen: Schema.Boolean },
   ClickedLink: { request: UrlRequest },
   ChangedUrl: { url: Url },
   CompletedNavigateInternal: {},
@@ -91,6 +94,9 @@ export const Message = defineMessageUnion({
   GotTracesMessage: { message: Traces.Message },
 });
 export type Message = typeof Message.Type;
+
+export const toAssistantMessage = (message: Assistant.Message) =>
+  Message.GotAssistantMessage({ message });
 
 export const toNewAutomationDialogMessage = (message: Dialog.Message) =>
   Message.GotNewAutomationDialogMessage({ message });

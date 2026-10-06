@@ -356,30 +356,34 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
    * Starts a run when the saved workflow's entity trigger matches a change: the entity is new,
    * or a watched field changed, and the trigger's condition holds for the new version.
    */
-  const entityChanged = Effect.fn("Automation.entityChanged")(function* (
-    before: EntityData | undefined,
-    after: Subject,
-  ) {
-    const saved = yield* readWorkflow("saved");
-    const trigger = saved?.trigger;
-    if (saved === undefined || trigger?.kind !== "entity" || trigger.entity !== after.type) {
-      return { runId: null };
-    }
-    const changed = changedFields(before, after.data);
-    const watched = trigger.fields ?? changed;
-    if (before !== undefined && !watched.some((field) => changed.includes(field))) {
-      return { runId: null };
-    }
-    if (trigger.when !== undefined) {
-      const values = yield* resolve(conditionRefs(trigger.when), { subject: after, steps: {} });
-      const now = yield* Clock.currentTimeMillis;
-      if (!holds(trigger.when, (ref) => values[ref], now)) {
+  const notificationLock = Semaphore.makeUnsafe(1);
+  const entityChanged = Effect.fn("Automation.entityChanged")(
+    function* (before: EntityData | undefined, after: Subject, key?: string) {
+      const id = key === undefined ? undefined : RunId.make(`entity-${key}`);
+      // Check before re-evaluating a trigger: its workflow or referenced values may have changed.
+      if (id !== undefined && (yield* readRun(id)) !== undefined) return { runId: id };
+      const saved = yield* readWorkflow("saved");
+      const trigger = saved?.trigger;
+      if (saved === undefined || trigger?.kind !== "entity" || trigger.entity !== after.type) {
         return { runId: null };
       }
-    }
-    const started = yield* beginRun(saved, after);
-    return { runId: started.id };
-  });
+      const changed = changedFields(before, after.data);
+      const watched = trigger.fields ?? changed;
+      if (before !== undefined && !watched.some((field) => changed.includes(field))) {
+        return { runId: null };
+      }
+      if (trigger.when !== undefined) {
+        const values = yield* resolve(conditionRefs(trigger.when), { subject: after, steps: {} });
+        const now = yield* Clock.currentTimeMillis;
+        if (!holds(trigger.when, (ref) => values[ref], now)) {
+          return { runId: null };
+        }
+      }
+      const started = yield* beginRun(saved, after, id);
+      return { runId: started.id };
+    },
+    (effect) => notificationLock.withPermit(effect),
+  );
 
   /**
    * Starts the runs an occurrence of the saved timed trigger calls for, then books the next one.

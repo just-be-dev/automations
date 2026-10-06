@@ -1036,3 +1036,45 @@ describe("Timed triggers and their limits", () => {
     expect(Exit.isFailure(result.deleted)).toBe(true);
   });
 });
+
+test("stable entity notification keys deduplicate concurrent delivery and survive reopening and trigger changes", async () => {
+  const h = harness();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* h.host.storage.put("saved", {
+        ...workflow,
+        trigger: { kind: "entity", entity: "person" },
+      });
+      const app = yield* makeAutomation();
+      const subject = {
+        type: "person",
+        id: "sam",
+        data: { name: "Sam Updated", email: "sam@example.com" },
+      };
+      const delivered = yield* Effect.all(
+        [
+          app.entityChanged({ name: "Sam" }, subject, "confirmation-1"),
+          app.entityChanged({ name: "Sam" }, subject, "confirmation-1"),
+        ],
+        { concurrency: "unbounded" },
+      );
+      expect(delivered).toMatchObject([
+        { runId: "entity-confirmation-1" },
+        { runId: "entity-confirmation-1" },
+      ]);
+      yield* h.host.storage.put("saved", workflow);
+      const reopened = yield* makeAutomation();
+      expect(yield* reopened.entityChanged({ name: "Sam" }, subject, "confirmation-1")).toEqual(
+        delivered[0],
+      );
+      yield* h.host.storage.put("saved", {
+        ...workflow,
+        trigger: { kind: "entity", entity: "person" },
+      });
+      const first = yield* reopened.entityChanged({ name: "Sam" }, subject);
+      const second = yield* reopened.entityChanged({ name: "Sam" }, subject);
+      expect(first.runId).not.toBe(second.runId);
+      expect((yield* reopened.inspectWorkflow()).runs.length).toBe(3);
+    }).pipe(Effect.provide(h.layer)),
+  );
+});

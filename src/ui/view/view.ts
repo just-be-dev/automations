@@ -7,6 +7,7 @@ import { componentName } from "@/lib/component";
 import { icon } from "@/lib/icons";
 import {
   Message,
+  toAssistantMessage,
   toEntitiesMessage,
   toOverviewMessage,
   toTemplatesMessage,
@@ -20,6 +21,7 @@ import { newAutomationDialogView } from "./new-automation.ts";
 import { runPageView, runPanelView } from "./run.ts";
 import { sidebarView } from "./sidebar.ts";
 import { workflowPanelView } from "./studio.ts";
+import * as Assistant from "../assistant/index.ts";
 
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   title: "Automations studio",
@@ -31,6 +33,10 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
         [h.Class("flex min-w-0 flex-1 flex-col bg-background lg:min-h-0 lg:border-l")],
         [
           headerView(model, h),
+          Option.match(model.maybeNavigationNotice, {
+            onNone: () => h.empty,
+            onSome: (notice) => h.p([h.Role("alert"), h.Class("border-b p-3 text-sm")], [notice]),
+          }),
           h.div(
             [h.Class("flex flex-1 flex-col lg:min-h-0 lg:flex-row")],
             [
@@ -38,6 +44,12 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
               Option.match(model.maybeRunPanel, {
                 onNone: () => h.empty,
                 onSome: (openRun) => runPanelView(model, openRun, h),
+              }),
+              h.submodel({
+                slotId: "assistant",
+                model: model.assistant,
+                view: Assistant.view,
+                toParentMessage: toAssistantMessage,
               }),
             ],
           ),
@@ -100,16 +112,31 @@ const pageView = (model: Model, h: HtmlBuilder<Message>) =>
       ),
     Studio: () =>
       h.main(
-        [
-          componentName("page"),
-          h.Class(
-            "grid min-w-0 flex-1 grid-cols-1 lg:min-h-0 lg:grid-cols-[minmax(0,5fr)_minmax(0,6fr)]",
-          ),
-        ],
-        [conversationView(model, h), workflowPanelView(model, h)],
+        [componentName("page"), h.Class("flex min-w-0 flex-1 flex-col lg:min-h-0")],
+        [workflowPanelView(model, h), plannerHistoryView(model, h)],
       ),
     Run: ({ openRun }) => runPageView(model, openRun, h),
   });
+
+const plannerHistoryView = (model: Model, h: HtmlBuilder<Message>) =>
+  h.details(
+    [
+      componentName("planner-history"),
+      h.Class("shrink-0 border-t [&[open]]:max-h-[60vh] [&[open]]:overflow-y-auto"),
+      h.Open(
+        model.plannerHistoryOpen ||
+          Option.exists(model.maybePendingChat, (pending) => pending.status === "asking"),
+      ),
+      h.OnToggle((isOpen) => Message.ToggledPlannerHistory({ isOpen })),
+    ],
+    [
+      h.summary(
+        [h.Class("cursor-pointer p-3 text-sm font-medium")],
+        ["Automation conversation and planner"],
+      ),
+      conversationView(model, h),
+    ],
+  );
 
 const headerView = (model: Model, h: HtmlBuilder<Message>) =>
   h.header(

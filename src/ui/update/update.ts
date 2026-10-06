@@ -45,6 +45,7 @@ import { Entities, Overview, Templates, Traces } from "../page/index.ts";
 import { routeFromUrl, runHref } from "../route.ts";
 import { nextTheme } from "../theme.ts";
 import { followRoute, openRunPanel, opensInPanel } from "./navigation.ts";
+import { dirtyForms, foldAssistant, pageHref } from "./assistant.ts";
 import {
   createdAutomation,
   failedToCreate,
@@ -124,16 +125,53 @@ const foldOverview = Update.foldChild({
 
 export const update = (model: Model, message: Message) =>
   Message.match<Update.Return<Model, Message>>(message, {
+    GotAssistantMessage: ({ message }) => foldAssistant(model, message),
+    ToggledPlannerHistory: ({ isOpen }) => ({
+      model: modifyFields(model, { plannerHistoryOpen: () => isOpen }),
+    }),
     ClickedLink: ({ request }) =>
       UrlRequest.match<Update.Return<Model, Message>>(request, {
-        Internal: ({ url }) =>
-          Option.match(opensInPanel(model, routeFromUrl(url)), {
-            onNone: () => ({ model, commands: [NavigateInternal({ url: urlToString(url) })] }),
-            onSome: ({ automationId, runId }) => openRunPanel(model, automationId, runId),
-          }),
+        Internal: ({ url }) => {
+          const paused = modifyFields(model, {
+            assistant: (assistant) => modifyFields(assistant, { follow: () => false }),
+          });
+          if (dirtyForms(model)) {
+            return {
+              model: modifyFields(paused, {
+                maybeNavigationNotice: () =>
+                  Option.some("Save or cancel your open form before leaving this page."),
+              }),
+            };
+          }
+          return Option.match(opensInPanel(paused, routeFromUrl(url)), {
+            onNone: () => ({
+              model: modifyFields(paused, { maybeNavigationNotice: () => Option.none() }),
+              commands: [NavigateInternal({ url: urlToString(url) })],
+            }),
+            onSome: ({ automationId, runId }) => openRunPanel(paused, automationId, runId),
+          });
+        },
         External: ({ href }) => ({ model, commands: [LoadExternal({ href })] }),
       }),
-    ChangedUrl: ({ url }) => followRoute(model, routeFromUrl(url)),
+    ChangedUrl: ({ url }) => {
+      const href = `${url.pathname}${Option.match(url.search, { onNone: () => "", onSome: (search) => `?${search}` })}`;
+      const automatic = Option.contains(model.maybeFollowHref, href);
+      const paused = modifyFields(model, {
+        assistant: (assistant) =>
+          automatic ? assistant : modifyFields(assistant, { follow: () => false }),
+        maybeFollowHref: () => Option.none(),
+      });
+      if (dirtyForms(model) && href !== pageHref(model)) {
+        return {
+          model: modifyFields(paused, {
+            maybeNavigationNotice: () =>
+              Option.some("Save or cancel your open form before leaving this page."),
+          }),
+          commands: [NavigateInternal({ url: pageHref(model) })],
+        };
+      }
+      return followRoute(paused, routeFromUrl(url));
+    },
     CompletedNavigateInternal: () => ({ model }),
     CompletedLoadExternal: () => ({ model }),
     ClickedNewAutomation: () => openNewAutomation(model),

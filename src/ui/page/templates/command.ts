@@ -5,8 +5,9 @@ import { Command, Http } from "foldkit";
 import { pushUrl } from "foldkit/navigation";
 import { EntityType, Template } from "../../../entities.ts";
 import { TemplateUsage } from "../../../workflow.ts";
-import { errorText, requestJson, sendJson } from "../../api.ts";
-import { Message } from "./message.ts";
+import { errorText, requestJson } from "../../api.ts";
+import { Message, toChangeMessage } from "./message.ts";
+import * as Change from "../../change/index.ts";
 
 const recoverRequest = Effect.catch((error: unknown) =>
   Effect.succeed(Message.FailedRequest({ error: errorText(error) })),
@@ -42,10 +43,10 @@ export const LoadUsage = Command.define("LoadUsage", {
 
 export const SaveTemplate = Command.define("SaveTemplate", {
   args: { template: Template, isNew: Schema.Boolean },
-  messages: [Message.SucceededSaveTemplate, Message.FailedRequest],
-  execute: ({ template, isNew }) =>
-    sendJson("PUT", `/api/templates/${template.name}`, Template, template).pipe(
-      Effect.map((saved) => Message.SucceededSaveTemplate({ template: saved, isNew })),
+  messages: [Message.GotChangeMessage, Message.FailedRequest],
+  execute: ({ template }) =>
+    Change.prepare({ kind: "putTemplate", template }).pipe(
+      Effect.map(toChangeMessage),
       recoverRequest,
       Effect.provide(Http.layer),
     ),
@@ -53,10 +54,10 @@ export const SaveTemplate = Command.define("SaveTemplate", {
 
 export const DeleteTemplate = Command.define("DeleteTemplate", {
   args: { name: Schema.String },
-  messages: [Message.SucceededDeleteTemplate, Message.FailedRequest],
+  messages: [Message.GotChangeMessage, Message.FailedRequest],
   execute: ({ name }) =>
-    sendJson("DELETE", `/api/templates/${name}`, Schema.Unknown).pipe(
-      Effect.as(Message.SucceededDeleteTemplate({ name })),
+    Change.prepare({ kind: "deleteTemplate", name }).pipe(
+      Effect.map(toChangeMessage),
       recoverRequest,
       Effect.provide(Http.layer),
     ),

@@ -3,8 +3,10 @@ import * as Schema from "effect/Schema";
 import { defineMessageUnion } from "foldkit/message";
 import { EntityRecord, EntityType, Subject } from "../../../entities.ts";
 import { Triggered } from "./model.ts";
+import * as Change from "../../change/index.ts";
 
 export const Message = defineMessageUnion({
+  GotChangeMessage: { message: Change.Message },
   ClickedNewType: {},
   ClickedEditType: {},
   ClickedCancelType: {},
@@ -40,3 +42,5 @@ export const Message = defineMessageUnion({
   CompletedNavigateToEntities: {},
 });
 export type Message = typeof Message.Type;
+
+export const toChangeMessage = (message: Change.Message) => Message.GotChangeMessage({ message });

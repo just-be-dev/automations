@@ -15,10 +15,11 @@ import {
   EntityType,
   InvalidEntity,
   Role,
-  Subject,
 } from "../entities/model.ts";
 import { EntityStore, EntityStoreError } from "../entities/store.ts";
-import { EntitySubscribers, Triggered } from "../entities/subscribers.ts";
+import { ChangeDecision, ChangeProposal } from "../changes/model.ts";
+import { ChangeError, Changes } from "../changes/service.ts";
+import { RequestIdentity } from "./identity.ts";
 
 /**
  * The entity store as an MCP server, served at `/api/mcp` by `src/http/mcp.ts`. The tools are an Effect
@@ -33,7 +34,7 @@ export class EntityNotFound extends Schema.TaggedError<EntityNotFound>()("Entity
   message: Schema.String,
 }) {}
 
-const EntityFailure = Schema.Union([EntityStoreError, InvalidEntity, EntityNotFound]);
+const EntityFailure = Schema.Union([EntityStoreError, InvalidEntity, EntityNotFound, ChangeError]);
 
 const TypeParams = Schema.Struct({ type: EntityName });
 const EntityParams = Schema.Struct({ type: EntityName, id: EntityId });
@@ -49,9 +50,9 @@ const ListEntityTypes = Tool.make("list_entity_types", {
 
 const DefineEntityType = Tool.make("define_entity_type", {
   description:
-    "Creates an entity type or replaces one with the same name. Names are snake_case. `title` names the field shown as the entity's name, and a ref field names its target type in `to`. Stored entities aren't rewritten.",
+    "Proposes creating or replacing an entity type; does not write. Review the returned proposal with the person, then use decide_change. Names are snake_case. Stored entities aren't rewritten.",
   parameters: Schema.Struct({ type: EntityType }),
-  success: Schema.Struct({ type: EntityType }),
+  success: ChangeProposal,
   failure: EntityFailure,
 })
   .annotate(Tool.Title, "Define entity type")
@@ -59,9 +60,9 @@ const DefineEntityType = Tool.make("define_entity_type", {
 
 const DeleteEntityType = Tool.make("delete_entity_type", {
   description:
-    "Deletes an entity type. Fails while it has entities, another type or a template slot refers to it, a role has members of it, or a saved automation watches it.",
+    "Proposes deleting an entity type; does not delete. Review the proposal with the person, then use decide_change. Fails while the type has dependants.",
   parameters: TypeParams,
-  success: Schema.Struct({ deleted: EntityName }),
+  success: ChangeProposal,
   failure: EntityFailure,
 })
   .annotate(Tool.Title, "Delete entity type")
@@ -88,18 +89,19 @@ const GetEntity = Tool.make("get_entity", {
 
 const PutEntity = Tool.make("put_entity", {
   description:
-    "Creates an entity or updates one, merging `data` over its stored fields; `null` clears a field. Like any entity write, it starts the saved automations whose trigger matches the change, and returns them in `triggered`.",
+    "Proposes creating or updating an entity, merging data; null clears a field. Does not write or start runs. Review the proposal with the person, then use decide_change. Approval may start matching saved automations.",
   parameters: Schema.Struct({ ...EntityParams.fields, data: EntityData }),
-  success: Schema.Struct({ entity: Subject, triggered: Schema.Array(Triggered) }),
+  success: ChangeProposal,
   failure: EntityFailure,
 })
   .annotate(Tool.Title, "Create or update entity")
   .annotate(Tool.OpenWorld, true);
 
 const DeleteEntity = Tool.make("delete_entity", {
-  description: "Deletes an entity. Starts no automations. Fails while a role lists it as a member.",
+  description:
+    "Proposes deleting an entity; does not delete. Review the proposal with the person, then use decide_change. Deletion starts no automations and fails while a role lists it as a member.",
   parameters: EntityParams,
-  success: Schema.Struct({ deleted: EntityRecord }),
+  success: ChangeProposal,
   failure: EntityFailure,
 })
   .annotate(Tool.Title, "Delete entity")
@@ -124,6 +126,14 @@ const DefineRole = Tool.make("define_role", {
   .annotate(Tool.Title, "Define role")
   .annotate(Tool.Idempotent, true);
 
+const DecideChange = Tool.make("decide_change", {
+  description:
+    "Confirm or cancel a proposal for this person. Only approve after the person has explicitly agreed to the exact proposal. Returns the persisted terminal receipt, not a new proposal.",
+  parameters: Schema.Struct({ proposalId: Schema.String, approved: Schema.Boolean }),
+  success: ChangeDecision,
+  failure: ChangeError,
+}).annotate(Tool.Idempotent, true);
+
 export const EntityTools = Toolkit.make(
   ListEntityTypes,
   DefineEntityType,
@@ -134,6 +144,7 @@ export const EntityTools = Toolkit.make(
   DeleteEntity,
   ListRoles,
   DefineRole,
+  DecideChange,
 );
 
 const notFound = (type: string, id: string) =>
@@ -143,12 +154,18 @@ const notFound = (type: string, id: string) =>
 export const EntityToolHandlers = EntityTools.toLayer(
   Effect.gen(function* () {
     const store = yield* EntityStore;
-    const subscribers = yield* EntitySubscribers;
+    const changes = yield* Changes;
+    const identity = yield* RequestIdentity;
+    const owner = identity.email ?? "local";
+    const changeFailure = (error: unknown) => new ChangeError({ message: messageOf(error) });
     return EntityTools.of({
       list_entity_types: () => Effect.map(store.listTypes, (types) => ({ types })),
       define_entity_type: ({ type }) =>
-        Effect.map(store.putType(type), (stored) => ({ type: stored })),
-      delete_entity_type: ({ type }) => Effect.as(store.deleteType(type), { deleted: type }),
+        changes.prepare(owner, { kind: "putType", type }).pipe(Effect.mapError(changeFailure)),
+      delete_entity_type: ({ type }) =>
+        changes
+          .prepare(owner, { kind: "deleteType", name: type })
+          .pipe(Effect.mapError(changeFailure)),
       list_entities: ({ type }) =>
         Effect.map(store.listEntities(type), (entities) => ({ entities })),
       get_entity: ({ type, id }) =>
@@ -156,17 +173,17 @@ export const EntityToolHandlers = EntityTools.toLayer(
           entity === undefined ? Effect.fail(notFound(type, id)) : Effect.succeed({ entity }),
         ),
       put_entity: ({ type, id, data }) =>
-        Effect.gen(function* () {
-          const change = yield* store.putEntity(type, id, data);
-          const triggered = yield* subscribers.notify(change);
-          return { entity: change.after, triggered };
-        }),
+        changes
+          .prepare(owner, { kind: "putEntity", type, id, data })
+          .pipe(Effect.mapError(changeFailure)),
       delete_entity: ({ type, id }) =>
-        Effect.flatMap(store.deleteEntity(type, id), (deleted) =>
-          deleted === undefined ? Effect.fail(notFound(type, id)) : Effect.succeed({ deleted }),
-        ),
+        changes
+          .prepare(owner, { kind: "deleteEntity", type, id })
+          .pipe(Effect.mapError(changeFailure)),
       list_roles: () => Effect.map(store.listRoles, (roles) => ({ roles })),
       define_role: ({ role }) => Effect.map(store.putRole(role), (stored) => ({ role: stored })),
+      decide_change: ({ proposalId, approved }) =>
+        changes.decide(owner, proposalId, approved).pipe(Effect.mapError(changeFailure)),
     });
   }),
 );
@@ -224,7 +241,7 @@ export const jsonRpcError = (
 ): JsonRpcResponse => ({ jsonrpc: "2.0", id, error: { code, message } });
 
 const instructions =
-  "Reads and writes the automations studio's entity store: entity types (schemas), the entities stored under them, and roles, the groups of people who approve the operations automations ask first about. Writing an entity with put_entity starts the saved automations that watch its type, the same as the HTTP API does. A role's members can't be deleted or lose their email.";
+  "Reads the studio's entity store and proposes changes to entity types and records. Mutation tools return proposals without committing. Show the exact details and consequences to the person and use decide_change only after explicit confirmation or cancellation. Role writes remain direct. A role's members can't be deleted or lose their email.";
 
 const describeTool = (tool: Tool.Any) => ({
   name: tool.name,

@@ -6,6 +6,11 @@ import type { EntityType } from "../entities/model.ts";
 import { answerMcp, EntityToolHandlers } from "./entity-mcp.ts";
 import { EntitySubscribers } from "../entities/subscribers.ts";
 import { layerMemory } from "../entities/store.ts";
+import { Changes } from "../changes/service.ts";
+import { makeChanges } from "../changes/application.ts";
+import { AutomationIndex } from "../automation/index.ts";
+import { Automations } from "../automation/service.ts";
+import { RequestIdentity } from "./identity.ts";
 
 const employee: EntityType = {
   name: "employee",
@@ -27,28 +32,55 @@ const person: EntityType = {
   ],
 };
 
+const services = Layer.mergeAll(
+  layerMemory({
+    types: [employee, person],
+    entities: [
+      { type: "employee", id: "ada", data: { name: "Ada" }, updatedAt: 0 },
+      {
+        type: "person",
+        id: "sam",
+        data: { name: "Sam", email: "sam@example.com" },
+        updatedAt: 0,
+      },
+    ],
+  }),
+  Layer.succeed(EntitySubscribers, {
+    notify: (change) =>
+      Effect.succeed([
+        { automation: `watching-${change.after.type}`, runId: "run-1", error: null },
+      ]),
+  }),
+  Layer.succeed(RequestIdentity, { email: undefined }),
+  Layer.succeed(AutomationIndex, {
+    list: Effect.succeed([]),
+    create: () => Effect.succeed(true),
+    record: () => Effect.void,
+    recordIfMissing: () => Effect.void,
+  }),
+  Layer.succeed(Automations, {
+    get: () => {
+      throw new Error("No automations listed");
+    },
+  }),
+);
 const handlers = EntityToolHandlers.pipe(
   Layer.provide(
-    Layer.merge(
-      layerMemory({
-        types: [employee, person],
-        entities: [
-          { type: "employee", id: "ada", data: { name: "Ada" }, updatedAt: 0 },
-          {
-            type: "person",
-            id: "sam",
-            data: { name: "Sam", email: "sam@example.com" },
-            updatedAt: 0,
-          },
-        ],
+    Layer.effect(
+      Changes,
+      Effect.suspend(() => {
+        const data = new Map<string, unknown>();
+        return makeChanges({
+          get: (key) => Effect.sync(() => data.get(key)),
+          put: (key, value) => Effect.sync(() => void data.set(key, value)),
+          list: (prefix) =>
+            Effect.sync(() =>
+              [...data].filter(([key]) => key.startsWith(prefix)).map(([, value]) => value),
+            ),
+          transaction: (effect) => effect,
+        });
       }),
-      Layer.succeed(EntitySubscribers, {
-        notify: (change) =>
-          Effect.succeed([
-            { automation: `watching-${change.after.type}`, runId: "run-1", error: null },
-          ]),
-      }),
-    ),
+    ).pipe(Layer.provideMerge(services)),
   ),
 );
 
@@ -96,6 +128,7 @@ describe("entity store MCP", () => {
       "delete_entity",
       "list_roles",
       "define_role",
+      "decide_change",
     ]);
     expect(tools.every((tool) => (tool.inputSchema as { type?: string }).type === "object")).toBe(
       true,
@@ -105,15 +138,20 @@ describe("entity store MCP", () => {
     });
   });
 
-  test("writes an entity, reporting the runs it started", async () => {
+  test("proposes an entity write without claiming that runs have started", async () => {
     expect(
       await call("put_entity", { type: "employee", id: "ada", data: { start_date: "2026-11-02" } }),
     ).toMatchObject({
       result: {
         isError: false,
         structuredContent: {
-          entity: { id: "ada", data: { name: "Ada", start_date: "2026-11-02" } },
-          triggered: [{ automation: "watching-employee", runId: "run-1" }],
+          action: {
+            kind: "putEntity",
+            type: "employee",
+            id: "ada",
+            data: { start_date: "2026-11-02" },
+          },
+          details: [{ label: "start_date", before: "Not set", after: "2026-11-02" }],
         },
       },
     });
@@ -174,4 +212,50 @@ describe("entity store MCP", () => {
       error: { code: -32600 },
     });
   });
+});
+
+test("MCP confirmation applies the proposal once; cancellation is terminal and leaves records unchanged", async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const invoke = (name: string, args: unknown) =>
+        answerMcp({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name, arguments: args },
+        });
+      const proposed = yield* invoke("put_entity", {
+        type: "employee",
+        id: "ada",
+        data: { name: "Ada Lovelace" },
+      });
+      const id = (proposed as { result: { structuredContent: { id: string } } }).result
+        .structuredContent.id;
+      expect(yield* invoke("get_entity", { type: "employee", id: "ada" })).toMatchObject({
+        result: { structuredContent: { entity: { data: { name: "Ada" } } } },
+      });
+      const confirmed = yield* invoke("decide_change", { proposalId: id, approved: true });
+      expect(confirmed).toMatchObject({
+        result: {
+          isError: false,
+          structuredContent: {
+            status: "applied",
+            result: { entity: { data: { name: "Ada Lovelace" } }, triggered: [{ runId: "run-1" }] },
+          },
+        },
+      });
+      expect(yield* invoke("decide_change", { proposalId: id, approved: false })).toEqual(
+        confirmed,
+      );
+      const deletion = yield* invoke("delete_entity", { type: "employee", id: "ada" });
+      const deletionId = (deletion as { result: { structuredContent: { id: string } } }).result
+        .structuredContent.id;
+      expect(
+        yield* invoke("decide_change", { proposalId: deletionId, approved: false }),
+      ).toMatchObject({ result: { structuredContent: { status: "cancelled", result: null } } });
+      expect(yield* invoke("get_entity", { type: "employee", id: "ada" })).toMatchObject({
+        result: { structuredContent: { entity: { data: { name: "Ada Lovelace" } } } },
+      });
+    }).pipe(Effect.provide(handlers)),
+  );
 });

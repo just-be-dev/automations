@@ -1,10 +1,12 @@
 /** Tracks the selected approved template, its automation usage, and unsaved slot and wording edits. */
 import * as Array from "effect/Array";
+import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { defineTaggedUnion } from "foldkit/schema";
 import { EntityType, FieldType, Template } from "../../../entities.ts";
 import { TemplateUsage } from "../../../workflow.ts";
+import * as Change from "../../change/index.ts";
 
 /** The templates, and the entity types their slots can point to. */
 export const Catalog = defineTaggedUnion({
@@ -68,6 +70,7 @@ export const Activity = defineTaggedUnion({
 });
 
 export const Model = Schema.Struct({
+  change: Change.Model.pipe(Schema.withConstructorDefault(Effect.succeed(Change.initial))),
   maybeTemplateName: Schema.Option(Schema.String),
   catalog: Catalog,
   usage: Usage,

@@ -14,12 +14,14 @@ export const Triggered = Schema.Struct({
 });
 export type Triggered = typeof Triggered.Type;
 
-/** Shared by HTTP and MCP writes; the host supplies how to notify one automation. */
+/** Shared by confirmed writes; the host must forward the optional stable key to entityChanged. */
 export class EntitySubscribers extends Context.Service<
   EntitySubscribers,
   {
+    /** A stable key identifies one original before/after change across retries. */
     readonly notify: (
       change: EntityChange,
+      key?: string,
     ) => Effect.Effect<ReadonlyArray<Triggered>, EntityStoreError>;
   }
 >()("automations/EntitySubscribers") {
@@ -27,6 +29,7 @@ export class EntitySubscribers extends Context.Service<
     notify: (
       automationId: string,
       change: EntityChange,
+      key?: string,
     ) => Effect.Effect<{ readonly runId: string | null }, unknown>,
   ) =>
     Layer.effect(
@@ -34,10 +37,13 @@ export class EntitySubscribers extends Context.Service<
       Effect.gen(function* () {
         const entities = yield* EntityStore;
         return EntitySubscribers.of({
-          notify: Effect.fn("Api.notifySubscribers")(function* (change: EntityChange) {
+          notify: Effect.fn("Api.notifySubscribers")(function* (
+            change: EntityChange,
+            key?: string,
+          ) {
             const subscribers = yield* entities.subscribers(change.after.type);
             return yield* Effect.forEach(subscribers, (automationId) =>
-              notify(automationId, change).pipe(
+              notify(automationId, change, key).pipe(
                 Effect.map(({ runId }) => ({ automation: automationId, runId, error: null })),
                 Effect.catch((error: unknown) =>
                   Effect.succeed({

@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 import { json, NotFound, respond } from "../../src/http/response.ts";
 import { PLANNER_MODEL } from "../../src/platform/cloudflare/workers-ai.ts";
 import { agent } from "../calls/agent.ts";
+import { assistant } from "../calls/assistant.ts";
 import { decide } from "../calls/decide.ts";
 import { namer } from "../calls/namer.ts";
 import { planner } from "../calls/planner.ts";
@@ -52,6 +53,7 @@ const serve =
 
 const calls: Readonly<Record<string, ReturnType<typeof serve>>> = {
   [agent.name]: serve(agent),
+  [assistant.name]: serve(assistant),
   [decide.name]: serve(decide),
   [namer.name]: serve(namer),
   [planner.name]: serve(planner),

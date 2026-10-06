@@ -6,6 +6,7 @@ import {
   click,
   expect,
   given,
+  Mount,
   label,
   role,
   scene,
@@ -15,6 +16,11 @@ import {
 } from "foldkit/scene";
 import { welcome, welcomeOpen } from "./fixtures.ts";
 import { Message, SaveTemplate, init, update, view } from "./index.ts";
+import * as Change from "../../change/index.ts";
+import { proposalOf } from "../../change/fixtures.ts";
+import { DeleteTemplate } from "./command.ts";
+import { openedResolvers, closedResolvers } from "../../change/test-resolvers.test.ts";
+import { Dialog } from "@foldkit/ui";
 
 test("a template shows its slots, its content, and the automations that use it", () => {
   scene(
@@ -31,9 +37,19 @@ test("a template shows its slots, its content, and the automations that use it",
     expect(role("link", { name: /Remind hires/ })).toContainText("Draft only"),
     expect(text("Couldn't check Broken automation: Reset")).toExist(),
     click(role("button", { name: "Delete" })),
-    expect(
-      text("Delete welcome_email? 2 automations use it, and their runs will fail until they stop."),
-    ).toExist(),
+    Command.resolve(
+      DeleteTemplate,
+      Message.GotChangeMessage({
+        message: Change.Message.SucceededPrepare({
+          proposal: proposalOf({ kind: "deleteTemplate", name: "welcome_email" }),
+        }),
+      }),
+    ),
+    Command.resolveAll(...openedResolvers()),
+    Mount.resolve(Dialog.AcquireResources, Dialog.Message.SucceededAcquireResources()),
+    expect(text("Server supplied consequence; do not replace this wording.")).toExist(),
+    expect(text("Before: Previous name")).toExist(),
+    expect(text("After: Reviewed name")).toExist(),
   );
 });
 
@@ -57,8 +73,24 @@ test("editing a template warns that it changes the runs that start afterwards", 
     ),
     Command.resolve(
       SaveTemplate,
-      Message.SucceededSaveTemplate({ template: welcome, isNew: false }),
+      Message.GotChangeMessage({
+        message: Change.Message.SucceededPrepare({
+          proposal: proposalOf({ kind: "putTemplate", template: welcome }),
+        }),
+      }),
     ),
+    Command.resolveAll(...openedResolvers()),
+    Mount.resolve(Dialog.AcquireResources, Dialog.Message.SucceededAcquireResources()),
+    click(role("button", { name: "Apply reviewed change" })),
+    Command.resolve(
+      Change.DecideChange,
+      Change.Message.SucceededDecision({
+        proposalId: "proposal-1",
+        decision: { status: "applied", result: welcome },
+      }),
+    ),
+    Command.resolveAll(...closedResolvers()),
+    Mount.expectEnded(Dialog.AcquireResources),
     expect(role("status")).toHaveText("Saved welcome_email"),
   );
 });

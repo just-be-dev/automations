@@ -20,10 +20,10 @@ import {
   FieldType,
 } from "../../../entities.ts";
 import { entitiesHref } from "../../route.ts";
-import { Message } from "./message.ts";
+import { Message, toChangeMessage } from "./message.ts";
+import * as Change from "../../change/index.ts";
 import {
   Activity,
-  Confirmation,
   type EntityDraft,
   EntityEditor,
   type FieldDraft,
@@ -58,6 +58,12 @@ export const view = Submodel.defineView<Model, Message>((model, h) =>
         [h.Class("flex min-h-12 items-center gap-4 border-t px-6 py-3")],
         [statusView(model, h)],
       ),
+      h.submodel({
+        slotId: "change",
+        model: model.change,
+        view: Change.view,
+        toParentMessage: toChangeMessage,
+      }),
     ],
   ),
 );
@@ -201,30 +207,6 @@ const noTypeView = (model: Model, h: HtmlBuilder<Message>) => {
   );
 };
 
-const confirmView = (question: string, model: Model, h: HtmlBuilder<Message>) =>
-  h.div(
-    [
-      componentName("confirm"),
-      h.Class("flex items-center gap-2"),
-      h.Role("group"),
-      h.AriaLabel(question),
-    ],
-    [
-      h.span([h.Class("text-xs text-destructive")], [question]),
-      button(
-        {
-          onClick: Message.ClickedConfirmDelete(),
-          variant: "destructive",
-          size: "xs",
-          isDisabled: isWorking(model),
-        },
-        "Delete",
-        h,
-      ),
-      button({ onClick: Message.ClickedCancelDelete(), variant: "ghost", size: "xs" }, "Keep", h),
-    ],
-  );
-
 const typeDetailView = (type: EntityType, model: Model, h: HtmlBuilder<Message>) =>
   h.div(
     [componentName("type-detail"), h.Class("flex flex-col gap-8")],
@@ -250,13 +232,11 @@ const typeDetailView = (type: EntityType, model: Model, h: HtmlBuilder<Message>)
                 [icon(h, Pencil, "size-3.5", "inline-start"), "Edit type"],
                 h,
               ),
-              Confirmation.guards.DeleteType(model.confirmation)
-                ? confirmView(`Delete ${type.name}?`, model, h)
-                : button(
-                    { onClick: Message.ClickedDeleteType(), variant: "ghost", size: "sm" },
-                    [icon(h, Trash2, "size-3.5", "inline-start"), "Delete type"],
-                    h,
-                  ),
+              button(
+                { onClick: Message.ClickedDeleteType(), variant: "ghost", size: "sm" },
+                [icon(h, Trash2, "size-3.5", "inline-start"), "Delete type"],
+                h,
+              ),
             ],
           ),
         ],
@@ -423,33 +403,32 @@ const entitiesTableView = (
   );
 
 const entityActionsView = (entity: EntityRecord, model: Model, h: HtmlBuilder<Message>) =>
-  Confirmation.guards.DeleteEntity(model.confirmation) && model.confirmation.id === entity.id
-    ? confirmView(`Delete ${entity.id}?`, model, h)
-    : h.div(
-        [componentName("entity-actions"), h.Class("flex items-center justify-end gap-1")],
-        [
-          button(
-            {
-              onClick: Message.ClickedEditEntity({ id: entity.id }),
-              variant: "ghost",
-              size: "icon-xs",
-              attributes: [h.AriaLabel(`Edit ${entity.id}`), h.Title("Edit")],
-            },
-            [icon(h, Pencil, "size-3")],
-            h,
-          ),
-          button(
-            {
-              onClick: Message.ClickedDeleteEntity({ id: entity.id }),
-              variant: "ghost",
-              size: "icon-xs",
-              attributes: [h.AriaLabel(`Delete ${entity.id}`), h.Title("Delete")],
-            },
-            [icon(h, Trash2, "size-3")],
-            h,
-          ),
-        ],
-      );
+  h.div(
+    [componentName("entity-actions"), h.Class("flex items-center justify-end gap-1")],
+    [
+      button(
+        {
+          onClick: Message.ClickedEditEntity({ id: entity.id }),
+          variant: "ghost",
+          size: "icon-xs",
+          attributes: [h.AriaLabel(`Edit ${entity.id}`), h.Title("Edit")],
+        },
+        [icon(h, Pencil, "size-3")],
+        h,
+      ),
+      button(
+        {
+          onClick: Message.ClickedDeleteEntity({ id: entity.id }),
+          variant: "ghost",
+          size: "icon-xs",
+          isDisabled: isWorking(model),
+          attributes: [h.AriaLabel(`Delete ${entity.id}`), h.Title("Delete")],
+        },
+        [icon(h, Trash2, "size-3")],
+        h,
+      ),
+    ],
+  );
 
 const formActionsView = (
   saveLabel: string,

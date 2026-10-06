@@ -25,6 +25,7 @@ test("every eval loads and has cases", async () => {
   const evals = await Effect.runPromise(loadEvals);
   expect(evals.map((each) => each.name)).toEqual([
     "agent",
+    "assistant",
     "decide",
     "namer",
     "planner",
