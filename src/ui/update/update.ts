@@ -9,7 +9,6 @@ import { withArticle } from "@/lib/format";
 import { permissionOf } from "../../connections.ts";
 import {
   ApplyTheme,
-  FocusAutomationIdInput,
   LoadAutomations,
   LoadExternal,
   LoadRuns,
@@ -37,9 +36,17 @@ import {
   SubjectChoices,
 } from "../model.ts";
 import { Entities, Overview } from "../page/index.ts";
-import { automationHref, routeFromUrl, runHref } from "../route.ts";
+import { routeFromUrl, runHref } from "../route.ts";
 import { nextTheme } from "../theme.ts";
 import { followRoute, openRunPanel, opensInPanel } from "./navigation.ts";
+import {
+  createdAutomation,
+  failedToCreate,
+  foldNewAutomationDialog,
+  openNewAutomation,
+  describeNewAutomation,
+  submitNewAutomation,
+} from "./new-automation.ts";
 import {
   answerTask,
   isListedAsIs,
@@ -91,24 +98,13 @@ export const update = (model: Model, message: Message) =>
     ChangedUrl: ({ url }) => followRoute(model, routeFromUrl(url)),
     CompletedNavigateInternal: () => ({ model }),
     CompletedLoadExternal: () => ({ model }),
-    UpdatedAutomationId: ({ value }) => ({
-      model: modifyFields(model, { automationIdInput: () => value }),
-    }),
-    ChangedAutomationId: () => {
-      const automationId = model.automationIdInput.trim();
-      if (!AutomationId.isValid(automationId)) {
-        return fail(model, AutomationId.invalidError);
-      }
-      if (automationId === model.automationId) {
-        return { model };
-      }
-      return { model, commands: [NavigateInternal({ url: automationHref(automationId) })] };
-    },
-    ClickedNewAutomation: () => ({
-      model: modifyFields(model, { automationIdInput: () => "" }),
-      commands: [FocusAutomationIdInput()],
-    }),
-    CompletedFocusAutomationIdInput: () => ({ model }),
+    ClickedNewAutomation: () => openNewAutomation(model),
+    GotNewAutomationDialogMessage: ({ message }) => foldNewAutomationDialog(model, message),
+    UpdatedNewAutomationDescription: ({ value }) => describeNewAutomation(model, value),
+    SubmittedNewAutomation: () => submitNewAutomation(model),
+    SucceededCreateAutomation: ({ automation, wasDescriptionSent }) =>
+      createdAutomation(model, automation, wasDescriptionSent),
+    FailedCreateAutomation: ({ error }) => failedToCreate(model, error),
     ToggledStepDetails: ({ stepId, isOpen }) => ({
       model: modifyFields(model, {
         expandedStepIds: (stepIds) => {
@@ -129,7 +125,7 @@ export const update = (model: Model, message: Message) =>
     },
     CompletedApplyTheme: () => ({ model }),
     UpdatedMessageInput: ({ value }) => ({ model: modifyMessageInput(model, () => value) }),
-    ClickedSend: () => {
+    SubmittedMessage: () => {
       if (Activity.guards.Working(model.activity)) {
         return { model };
       }

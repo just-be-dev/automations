@@ -7,6 +7,7 @@ import type { Workflow } from "../workflow.ts";
 import {
   AnswerTask,
   ApplyTheme,
+  CreateAutomation,
   LoadAutomation,
   LoadAutomations,
   LoadRun,
@@ -21,7 +22,13 @@ import {
 } from "./command.ts";
 import { init } from "./main.ts";
 import { Message } from "./message.ts";
-import { messageInputOf, type Model, modifyMessageInput } from "./model.ts";
+import {
+  blankNewAutomation,
+  messageInputOf,
+  type Model,
+  modifyMessageInput,
+  NewAutomation,
+} from "./model.ts";
 import { Overview } from "./page/index.ts";
 import { update } from "./update/index.ts";
 import { approvalTask, laptopTask, onboarding, runOf, studioUrl, summaryOf } from "./fixtures.ts";
@@ -41,7 +48,10 @@ const automationLoaded = (
   });
 
 const loaded = (search = "automation=my-automation") =>
-  update(init({ theme: "System" }, studioUrl(search)).model, automationLoaded()).model;
+  update(
+    init({ theme: "System", shortcutModifier: "Meta" }, studioUrl(search)).model,
+    automationLoaded(),
+  ).model;
 
 const typed = (current: Model, text: string) => modifyMessageInput(current, () => text);
 
@@ -75,7 +85,8 @@ const runLoaded = (fields: { revision: number; poll: number; run: ReturnType<typ
   Message.SucceededLoadRun({ ...fields, maybeSubjectTitle: Option.some("Ari Cho") });
 
 /** The run page as a link opens it: at revision 0, with its first load in flight as poll 1. */
-const openingRun = (runId: string) => init({ theme: "System" }, runUrl(runId)).model;
+const openingRun = (runId: string) =>
+  init({ theme: "System", shortcutModifier: "Meta" }, runUrl(runId)).model;
 
 const withOpenRun = (run: ReturnType<typeof runOf>) =>
   update(openingRun(run.id), runLoaded({ revision: 0, poll: 1, run })).model;
@@ -102,7 +113,7 @@ test("chat waits for the agent's reply, shows the draft, and saves that automati
   story(
     update,
     given(typed(loaded("automation=orders"), "Summarize orders")),
-    message(Message.ClickedSend()),
+    message(Message.SubmittedMessage()),
     Command.expectExact(
       SendMessage({ automationId: "orders", revision: 0, message: "Summarize orders" }),
     ),
@@ -167,7 +178,7 @@ test("chat waits for the agent's reply, shows the draft, and saves that automati
 
 test("reopening an automation while the agent is answering keeps waiting for the reply", () => {
   const reopened = update(
-    init({ theme: "System" }, studioUrl("automation=orders")).model,
+    init({ theme: "System", shortcutModifier: "Meta" }, studioUrl("automation=orders")).model,
     automationLoaded({ maybePendingChat: Option.some(working) }),
   );
   expect(reopened.model.activity._tag).toBe("Working");
@@ -178,7 +189,7 @@ test("reopening an automation while the agent is answering keeps waiting for the
 test("a reply the agent couldn't write puts the prompt back in the composer", () => {
   const failed = { ...working, status: "failed", error: "Agent did not answer" } as const;
   const reopened = update(
-    init({ theme: "System" }, studioUrl("automation=orders")).model,
+    init({ theme: "System", shortcutModifier: "Meta" }, studioUrl("automation=orders")).model,
     automationLoaded({ maybePendingChat: Option.some(failed) }),
   );
   expect(messageInputOf(reopened.model)).toBe("Summarize orders");
@@ -194,7 +205,7 @@ test("a reply the agent couldn't write puts the prompt back in the composer", ()
 test("an unsent or failed message stays with its automation", () => {
   const failed = { ...working, status: "failed", error: "Agent did not answer" } as const;
   const restored = update(
-    init({ theme: "System" }, studioUrl("automation=orders")).model,
+    init({ theme: "System", shortcutModifier: "Meta" }, studioUrl("automation=orders")).model,
     automationLoaded({ maybePendingChat: Option.some(failed) }),
   ).model;
   const switched = update(
@@ -378,7 +389,7 @@ test("a run link in the studio opens the run beside the draft, which follows its
 test("a run link on the overview opens that automation's run beside it", () => {
   const waiting = runOf({ steps: { approve: { status: "waiting" } }, tasks: [approvalTask] });
   const clicked = update(
-    init({ theme: "System" }, studioUrl()).model,
+    init({ theme: "System", shortcutModifier: "Meta" }, studioUrl()).model,
     clickedLink("automation=orders&run=run-1"),
   );
   expect(clicked.model.page._tag).toBe("Overview");
@@ -533,7 +544,7 @@ test("a form task submits its prefilled defaults with the person's edits as type
 });
 
 test("request failures re-enable actions and old failures leave a new automation unchanged", () => {
-  const sending = update(typed(loaded(), "Hello"), Message.ClickedSend());
+  const sending = update(typed(loaded(), "Hello"), Message.SubmittedMessage());
   const failed = update(
     sending.model,
     Message.FailedRequest({ revision: 0, error: "Access denied" }),
@@ -550,8 +561,8 @@ test("request failures re-enable actions and old failures leave a new automation
 
 test("invalid IDs and saving without a draft return errors without requests", () => {
   const invalid = typed(modifyFields(loaded(), { automationId: () => "orders/bad" }), "Hello");
-  expect(update(invalid, Message.ClickedSend()).commands).toBeUndefined();
-  expect(update(invalid, Message.ClickedSend()).model.activity._tag).toBe("Failed");
+  expect(update(invalid, Message.SubmittedMessage()).commands).toBeUndefined();
+  expect(update(invalid, Message.SubmittedMessage()).model.activity._tag).toBe("Failed");
   expect(update(loaded(), Message.ClickedSave()).model.activity).toEqual({
     _tag: "Failed",
     error: "Create a draft first",
@@ -565,12 +576,12 @@ test("messages up to 10,000 characters are sent and longer ones are rejected", (
   story(
     update,
     given(withInput(longest)),
-    message(Message.ClickedSend()),
+    message(Message.SubmittedMessage()),
     Command.expectExact(SendMessage({ ...requestArgs, message: longest })),
     Command.resolve(SendMessage, Message.FailedRequest({ revision: 0, error: "Offline" })),
   );
 
-  const rejected = update(withInput(`${longest}a`), Message.ClickedSend());
+  const rejected = update(withInput(`${longest}a`), Message.SubmittedMessage());
   expect(rejected.model.activity).toEqual(
     expect.objectContaining({ _tag: "Failed", error: "Message must be 1–10,000 characters" }),
   );
@@ -578,9 +589,11 @@ test("messages up to 10,000 characters are sent and longer ones are rejected", (
 });
 
 test("the URL picks which automation opens and loads it with the automation list and roles", () => {
-  const opened = init({ theme: "System" }, studioUrl("automation=orders"));
+  const opened = init(
+    { theme: "System", shortcutModifier: "Meta" },
+    studioUrl("automation=orders"),
+  );
   expect(opened.model.automationId).toBe("orders");
-  expect(opened.model.automationIdInput).toBe("orders");
   expect(opened.model.activity._tag).toBe("Working");
   expect(opened.commands?.map((command) => command.name)).toEqual([
     "LoadAutomation",
@@ -588,36 +601,86 @@ test("the URL picks which automation opens and loads it with the automation list
     "LoadRoles",
   ]);
 
-  const overview = init({ theme: "System" }, studioUrl());
+  const overview = init({ theme: "System", shortcutModifier: "Meta" }, studioUrl());
   expect(overview.model.page._tag).toBe("Overview");
   expect(overview.commands?.map((command) => command.name)).toEqual([
     "LoadOverview",
     "LoadAutomations",
     "LoadRoles",
   ]);
-  expect(init({ theme: "System" }, studioUrl("automation=bad%2Fid")).model.activity._tag).toBe(
-    "Failed",
+  expect(
+    init({ theme: "System", shortcutModifier: "Meta" }, studioUrl("automation=bad%2Fid")).model
+      .activity._tag,
+  ).toBe("Failed");
+});
+
+test("each new automation starts from a blank description and is created once", () => {
+  const opened = update(
+    modifyFields(loaded(), {
+      newAutomation: () =>
+        NewAutomation.Editing({ description: "Earlier", maybeError: Option.some("Earlier error") }),
+    }),
+    Message.ClickedNewAutomation(),
+  );
+  expect(opened.model.newAutomationDialog.isOpen).toBe(true);
+  expect(opened.model.newAutomation).toEqual(blankNewAutomation);
+  expect(opened.commands?.map((command) => command.name)).toContain("ShowDialog");
+
+  const tooLong = "x".repeat(10_001);
+  story(
+    update,
+    given(modifyFields(loaded(), { newAutomation: () => blankNewAutomation })),
+    message(Message.UpdatedNewAutomationDescription({ value: tooLong })),
+    message(Message.SubmittedNewAutomation()),
+    model((current) =>
+      expect(current.newAutomation).toEqual(
+        NewAutomation.Editing({
+          description: tooLong,
+          maybeError: Option.some("Keep the description to 10,000 characters"),
+        }),
+      ),
+    ),
+    message(Message.UpdatedNewAutomationDescription({ value: "Summarize orders" })),
+    message(Message.SubmittedNewAutomation()),
+    Command.expectExact(CreateAutomation({ description: "Summarize orders" })),
+    model((current) => {
+      expect(current.newAutomation).toEqual(
+        NewAutomation.Creating({ description: "Summarize orders" }),
+      );
+      expect(update(current, Message.SubmittedNewAutomation()).commands).toBeUndefined();
+      const edited = update(current, Message.UpdatedNewAutomationDescription({ value: "Edit" }));
+      expect(edited.model).toBe(current);
+    }),
+    Command.resolve(CreateAutomation, Message.FailedCreateAutomation({ error: "Offline" })),
+    model((current) =>
+      expect(current.newAutomation).toEqual(
+        NewAutomation.Editing({
+          description: "Summarize orders",
+          maybeError: Option.some("Offline"),
+        }),
+      ),
+    ),
   );
 });
 
-test("typing an ID doesn't reset the page and committing it navigates to its URL", () => {
-  const typed = update(loaded(), Message.UpdatedAutomationId({ value: "orders" }));
-  expect(typed.model.automationId).toBe("my-automation");
-  expect(typed.model.automationIdInput).toBe("orders");
-
-  story(
-    update,
-    given(typed.model),
-    message(Message.ChangedAutomationId()),
-    Command.expectExact(NavigateInternal({ url: "/?automation=orders" })),
-    Command.resolve(NavigateInternal, Message.CompletedNavigateInternal()),
+test("a description that couldn't be sent waits in the new automation's composer", () => {
+  const creating = modifyFields(loaded(), {
+    newAutomation: () => NewAutomation.Creating({ description: "Summarize orders" }),
+  });
+  const automation = { id: "summarize-orders", name: "Summarize orders" };
+  const unsent = update(
+    creating,
+    Message.SucceededCreateAutomation({ automation, wasDescriptionSent: false }),
   );
+  expect(unsent.model.messageInputs["summarize-orders"]).toBe("Summarize orders");
+  expect(unsent.model.newAutomation).toEqual(blankNewAutomation);
+  expect(unsent.commands?.map((command) => command.name)).toContain("NavigateInternal");
 
-  const unchanged = update(
-    modifyFields(loaded(), { automationIdInput: () => " my-automation " }),
-    Message.ChangedAutomationId(),
+  const sent = update(
+    creating,
+    Message.SucceededCreateAutomation({ automation, wasDescriptionSent: true }),
   );
-  expect(unchanged.commands).toBeUndefined();
+  expect(sent.model.messageInputs["summarize-orders"]).toBeUndefined();
 });
 
 test("a URL change loads that automation, restores its conversation, and leaves the run", () => {
@@ -671,11 +734,11 @@ test("the theme toggle steps through system, light, and dark, applying each choi
 });
 
 test("the studio boots with the saved theme", () => {
-  expect(init({ theme: "Dark" }, studioUrl()).model.theme).toBe("Dark");
+  expect(init({ theme: "Dark", shortcutModifier: "Meta" }, studioUrl()).model.theme).toBe("Dark");
 });
 
 test("the overview drops the studio's late replies, and a run link from it opens that run", () => {
-  const sending = update(typed(loaded(), "Hello"), Message.ClickedSend()).model;
+  const sending = update(typed(loaded(), "Hello"), Message.SubmittedMessage()).model;
   story(
     update,
     given(sending),
@@ -683,7 +746,6 @@ test("the overview drops the studio's late replies, and a run link from it opens
     Command.expectExact(Overview.LoadOverview({ session: 1, poll: 0 })),
     model((current) => {
       expect(current.page._tag).toBe("Overview");
-      expect(current.automationIdInput).toBe("");
       const late = update(current, Message.FailedRequest({ revision: 0, error: "Old error" }));
       expect(late.model).toBe(current);
     }),

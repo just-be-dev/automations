@@ -125,6 +125,7 @@ const harness = () => {
       AutomationIndex,
       AutomationIndex.of({
         list: Effect.succeed([]),
+        create: () => Effect.succeed(true),
         record: (id, name) => Effect.sync(() => void recorded.push({ id, name })),
         recordIfMissing: () => Effect.void,
       }),

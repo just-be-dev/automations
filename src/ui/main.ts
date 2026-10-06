@@ -1,9 +1,19 @@
 import * as Option from "effect/Option";
 import type { Runtime } from "foldkit";
+import * as Dialog from "@/components/ui/dialog";
 import { LoadAutomations, LoadRoles } from "./command.ts";
 import { AutomationId } from "./domain/index.ts";
 import type { Message } from "./message.ts";
-import { Activity, Directory, Model, Page, RoleChoices, SubjectChoices } from "./model.ts";
+import { newAutomationDialogId, newAutomationDescriptionId } from "./constant.ts";
+import {
+  Activity,
+  blankNewAutomation,
+  Directory,
+  Model,
+  Page,
+  RoleChoices,
+  SubjectChoices,
+} from "./model.ts";
 import { AppRoute, routeFromUrl } from "./route.ts";
 import type { Flags } from "./theme.ts";
 import { showPage } from "./update/index.ts";
@@ -19,8 +29,12 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
   const model = Model.make({
     page: Page.Studio(),
     automationId,
-    automationIdInput: automationId,
     directory: Directory.Loading(),
+    newAutomationDialog: Dialog.init({
+      id: newAutomationDialogId,
+      focusSelector: `#${newAutomationDescriptionId}`,
+    }),
+    newAutomation: blankNewAutomation,
     roles: RoleChoices.Loading(),
     revision: 0,
     messageInputs: {},
@@ -37,6 +51,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
     expandedStepIds: [],
     workflowDisplay: "Steps",
     theme: flags.theme,
+    shortcutModifier: flags.shortcutModifier,
     activity: AutomationId.isValid(automationId)
       ? Activity.Working({ notice: "Loading automation…" })
       : Activity.Failed({ error: AutomationId.invalidError }),

@@ -4,6 +4,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { Automations } from "../automation/service.ts";
+import { createAutomation } from "../automation/creation.ts";
 import { AutomationIndex } from "../automation/index.ts";
 import type { AutomationOverview } from "../automation/model.ts";
 import { EntityId } from "../entities/model.ts";
@@ -18,6 +19,7 @@ const AutomationParams = Schema.Struct({
 });
 const RunParams = Schema.Struct({ ...AutomationParams.fields, runId: RunId });
 const TaskParams = Schema.Struct({ ...RunParams.fields, stepId: Schema.String });
+const CreateBody = Schema.Struct({ description: Schema.String });
 const ChatBody = Schema.Struct({ message: Schema.optionalKey(Schema.String) });
 const StartBody = Schema.Struct({ subject: Schema.optionalKey(EntityId) });
 const PermissionsBody = Schema.Struct({ permissions: Permissions });
@@ -28,6 +30,17 @@ export const automationRoutes = Layer.merge(
   HttpRouter.addAll(
     [
       HttpRouter.route("GET", "/", respond(AutomationIndex.use((index) => index.list))),
+      HttpRouter.route(
+        "POST",
+        "/",
+        respond(
+          Effect.gen(function* () {
+            const body = yield* limitedBody(CreateBody);
+            return yield* createAutomation(body.description);
+          }),
+          201,
+        ),
+      ),
       HttpRouter.route(
         "GET",
         "/:id",

@@ -1,15 +1,14 @@
 import * as Option from "effect/Option";
 import type { Document, HtmlBuilder } from "foldkit/html";
-import { Input } from "@foldkit/ui";
-import { Hash, Monitor, Moon, Sun } from "lucide";
+import { Monitor, Moon, Sun } from "lucide";
 import { button } from "@/components/ui/button";
 import { icon } from "@/lib/icons";
-import { automationIdInputId } from "../constant.ts";
 import { Message, toEntitiesMessage, toOverviewMessage } from "../message.ts";
-import { type Model, Page } from "../model.ts";
+import { listedName, type Model, Page } from "../model.ts";
 import { Entities, Overview } from "../page/index.ts";
 import { nextTheme, type Theme } from "../theme.ts";
 import { conversationView } from "./conversation.ts";
+import { newAutomationDialogView } from "./new-automation.ts";
 import { runPageView, runPanelView } from "./run.ts";
 import { sidebarView } from "./sidebar.ts";
 import { workflowPanelView } from "./studio.ts";
@@ -36,6 +35,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
           ),
         ],
       ),
+      newAutomationDialogView(model, h),
     ],
   ),
 });
@@ -80,45 +80,37 @@ const pageView = (model: Model, h: HtmlBuilder<Message>) =>
 
 const headerView = (model: Model, h: HtmlBuilder<Message>) =>
   h.header(
-    [
-      h.Class(
-        "grid h-12 shrink-0 grid-cols-[1fr_minmax(0,28rem)_1fr] items-center gap-2 border-b px-4",
-      ),
-    ],
-    [
-      h.div([]),
-      Input.view(
-        {
-          id: automationIdInputId,
-          value: model.automationIdInput,
-          placeholder: "new-automation-id",
-          onInput: (value) => Message.UpdatedAutomationId({ value }),
-          toView: (attributes) =>
-            h.div(
-              [
-                h.Class(
-                  "flex h-8 w-full max-w-md items-center gap-1.5 rounded-[10px] border bg-sidebar px-2 transition-[border-color,box-shadow] focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/25",
-                ),
-              ],
-              [
-                icon(h, Hash, "size-4 text-muted-foreground"),
-                h.label([...attributes.label, h.Class("sr-only")], ["Automation ID"]),
-                h.input([
-                  ...attributes.input,
-                  h.Autocomplete("off"),
-                  h.Spellcheck(false),
-                  h.OnChange(() => Message.ChangedAutomationId()),
-                  h.Class(
-                    "h-full min-w-0 flex-1 bg-transparent px-0.5 font-mono text-[13px] outline-none placeholder:text-muted-foreground",
-                  ),
-                ]),
-              ],
-            ),
-        },
-        h,
-      ),
-      themeToggleView(model.theme, h),
-    ],
+    [h.Class("flex h-12 shrink-0 items-center justify-between gap-4 border-b px-4")],
+    [headerTitleView(model, h), themeToggleView(model.theme, h)],
+  );
+
+const headerTitleView = (model: Model, h: HtmlBuilder<Message>) =>
+  Page.match(model.page, {
+    Overview: () => headerLabelView("Overview", h),
+    Entities: () => headerLabelView("Entity store", h),
+    Studio: () => automationTitleView(model, h),
+    Run: () => automationTitleView(model, h),
+  });
+
+const headerLabelView = (label: string, h: HtmlBuilder<Message>) =>
+  h.div([h.Class("truncate text-sm font-medium tracking-tight")], [label]);
+
+/** The open automation's name, falling back to its ID until the sidebar lists it. */
+const automationTitleView = (model: Model, h: HtmlBuilder<Message>) =>
+  h.div(
+    [h.Class("flex min-w-0 items-baseline gap-2")],
+    Option.match(listedName(model.directory, model.automationId), {
+      onNone: () => [
+        h.span([h.Class("truncate font-mono text-[13px] font-medium")], [model.automationId]),
+      ],
+      onSome: (name) => [
+        h.span([h.Class("truncate text-sm font-medium tracking-tight")], [name]),
+        h.span(
+          [h.Class("hidden shrink-0 font-mono text-[11px] text-sand-10 sm:inline")],
+          [model.automationId],
+        ),
+      ],
+    }),
   );
 
 const themeIcon: Record<Theme, Parameters<typeof icon>[1]> = {
@@ -133,7 +125,7 @@ const themeToggleView = (theme: Theme, h: HtmlBuilder<Message>) =>
       onClick: Message.ClickedThemeToggle(),
       variant: "ghost",
       size: "icon-sm",
-      className: "justify-self-end rounded-[10px] text-sand-10",
+      className: "rounded-[10px] text-sand-10",
       attributes: [
         h.AriaLabel(`Color theme: ${theme}`),
         h.Title(`Color theme: ${theme}. Click for ${nextTheme[theme]}.`),

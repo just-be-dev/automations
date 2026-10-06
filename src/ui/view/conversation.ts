@@ -10,9 +10,9 @@ import { Message as ChatMessage } from "@/components/ui/message";
 import { textarea } from "@/components/ui/textarea";
 import { icon } from "@/lib/icons";
 import type { PendingChat } from "../../workflow.ts";
-import { maxMessageLength } from "../constant.ts";
 import { Message } from "../message.ts";
 import { Activity, type Exchange, messageInputOf, type Model } from "../model.ts";
+import { characterCountView, submitShortcut } from "./shared.ts";
 
 export const conversationView = (model: Model, h: HtmlBuilder<Message>) =>
   h.section(
@@ -185,6 +185,7 @@ const composerView = (model: Model, h: HtmlBuilder<Message>) =>
               value: messageInputOf(model),
               placeholder: "When an order arrives, summarize its contents and send the summary to…",
               onInput: (value) => Message.UpdatedMessageInput({ value }),
+              attributes: submitShortcut(model.shortcutModifier, Message.SubmittedMessage(), h),
               className:
                 "max-h-60 min-h-20 resize-none border-0 bg-transparent px-3.5 pt-3 placeholder:text-muted-foreground/80 focus-visible:ring-0",
             },
@@ -193,13 +194,10 @@ const composerView = (model: Model, h: HtmlBuilder<Message>) =>
           h.div(
             [h.Class("flex items-center justify-between gap-3 pr-2 pb-2 pl-3.5")],
             [
-              h.span(
-                [h.Class("font-mono text-[11px] text-muted-foreground tabular-nums")],
-                [`${messageInputOf(model).length} / ${maxMessageLength.toLocaleString("en-US")}`],
-              ),
+              characterCountView(messageInputOf(model).length, undefined, h),
               button(
                 {
-                  onClick: Message.ClickedSend(),
+                  onClick: Message.SubmittedMessage(),
                   isDisabled: Activity.guards.Working(model.activity),
                   attributes: [h.Id("send")],
                 },

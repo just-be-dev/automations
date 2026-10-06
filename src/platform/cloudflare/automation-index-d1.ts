@@ -14,7 +14,7 @@ const decodeRows = Schema.decodeUnknownEffect(Schema.Array(Row));
 const upsert = `INSERT INTO automations (id, name, updated_at) VALUES (?, ?, ?)
   ON CONFLICT (id) DO UPDATE SET name = excluded.name, updated_at = excluded.updated_at`;
 const insertIfMissing = `INSERT INTO automations (id, name, updated_at) VALUES (?, ?, ?)
-  ON CONFLICT (id) DO NOTHING`;
+  ON CONFLICT (id) DO NOTHING RETURNING id`;
 const selectAll = "SELECT id, name, updated_at FROM automations ORDER BY updated_at DESC";
 
 /** Bind D1 in the outer Effect, then provide the layer per request or Durable Object instance. */
@@ -36,14 +36,19 @@ export const AutomationIndexD1 = Effect.gen(function* () {
           ),
         );
 
+      // Says whether a row was inserted; only `insertIfMissing` returns one.
       const write = (operation: string, statement: string, id: string, name: string) =>
         indexOperation(
           operation,
           Clock.currentTimeMillis.pipe(
-            Effect.flatMap((updatedAt) => db.prepare(statement).bind(id, name, updatedAt).run()),
-            Effect.asVoid,
+            Effect.flatMap((updatedAt) => db.prepare(statement).bind(id, name, updatedAt).all()),
+            Effect.map((result) => (result.results ?? []).length > 0),
           ),
         );
+
+      const create = Effect.fn("AutomationIndex.create")(function* (id: string, name: string) {
+        return yield* write("create", insertIfMissing, id, name);
+      });
 
       const record = Effect.fn("AutomationIndex.record")(function* (id: string, name: string) {
         yield* write("record", upsert, id, name);
@@ -67,7 +72,7 @@ export const AutomationIndexD1 = Effect.gen(function* () {
         }));
       });
 
-      return AutomationIndex.of({ record, recordIfMissing, list: list() });
+      return AutomationIndex.of({ create, record, recordIfMissing, list: list() });
     }),
   );
 });

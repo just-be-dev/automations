@@ -1,12 +1,13 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { loadShortcutModifier, ShortcutModifier } from "./platform.ts";
 
 /** The color theme the user picked. `System` follows the OS setting. */
 export const Theme = Schema.Literals(["System", "Light", "Dark"]);
 export type Theme = typeof Theme.Type;
 
-/** What the studio boots with: the theme saved by an earlier visit. */
-export const Flags = Schema.Struct({ theme: Theme });
+/** What the studio boots with: the theme saved by an earlier visit, and the platform's shortcut key. */
+export const Flags = Schema.Struct({ theme: Theme, shortcutModifier: ShortcutModifier });
 export type Flags = typeof Flags.Type;
 
 // NOTE: `public/theme.js` reads this key and these values before the app boots, so the first paint
@@ -25,12 +26,15 @@ const themeFromStorage = (value: string | null): Theme =>
 export const nextTheme: Record<Theme, Theme> = { System: "Light", Light: "Dark", Dark: "System" };
 
 /** Reads the saved theme. Storage can be unavailable (private browsing), so that means `System`. */
-export const loadFlags: Effect.Effect<Flags> = Effect.try(() =>
-  localStorage.getItem(storageKey),
-).pipe(
+const loadTheme: Effect.Effect<Theme> = Effect.try(() => localStorage.getItem(storageKey)).pipe(
   Effect.orElseSucceed(() => null),
-  Effect.map((value) => ({ theme: themeFromStorage(value) })),
+  Effect.map(themeFromStorage),
 );
+
+export const loadFlags: Effect.Effect<Flags> = Effect.all({
+  theme: loadTheme,
+  shortcutModifier: loadShortcutModifier,
+});
 
 /**
  * Sets `data-theme` on the document, which `styles.css` reads, then saves the choice. The theme

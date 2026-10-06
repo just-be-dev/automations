@@ -80,10 +80,7 @@ export const sidebarView = (model: Model, h: HtmlBuilder<Message>) =>
             Ready: ({ automations }) =>
               Array.match(automations, {
                 onEmpty: () =>
-                  h.p(
-                    [h.Class(sidebarNoteClass)],
-                    ["Automations show up here once the agent drafts one."],
-                  ),
+                  h.p([h.Class(sidebarNoteClass)], ["No automations yet. Create one with +."]),
                 onNonEmpty: (listed) =>
                   h.ul(
                     [h.Class("flex flex-col")],
@@ -130,7 +127,7 @@ export const sidebarView = (model: Model, h: HtmlBuilder<Message>) =>
   );
 
 const automationLinkView = (
-  automation: typeof AutomationSummary.Type,
+  automation: AutomationSummary,
   isCurrent: boolean,
   h: HtmlBuilder<Message>,
 ) =>

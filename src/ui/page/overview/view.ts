@@ -166,7 +166,7 @@ const automationsView = (
                   Empty.description(
                     {},
                     [
-                      "Create one with New in the sidebar. Once it's saved, you can start it from here.",
+                      "Create one with + in the sidebar. Once it's saved, you can start it from here.",
                     ],
                     h,
                   ),

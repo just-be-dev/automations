@@ -1,10 +1,14 @@
+import * as Array from "effect/Array";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { defineTaggedUnion } from "foldkit/schema";
+import * as Dialog from "@/components/ui/dialog";
 import { PendingChat, Run, RunSummary, Workflow } from "../workflow.ts";
 import { Role } from "../entities.ts";
 import { SubjectOption } from "./api.ts";
 import { TaskAnswer } from "./domain/index.ts";
 import { Entities, Overview } from "./page/index.ts";
+import { ShortcutModifier } from "./platform.ts";
 import { Theme } from "./theme.ts";
 
 export const Activity = defineTaggedUnion({
@@ -24,11 +28,34 @@ export const WorkflowDisplay = Schema.Literals(["Steps", "Json"]);
 export type WorkflowDisplay = typeof WorkflowDisplay.Type;
 
 export const AutomationSummary = Schema.Struct({ id: Schema.String, name: Schema.String });
+export type AutomationSummary = typeof AutomationSummary.Type;
 
 export const Directory = defineTaggedUnion({
   Loading: {},
   Ready: { automations: Schema.Array(AutomationSummary) },
   Unavailable: { error: Schema.String },
+});
+export type Directory = typeof Directory.Type;
+
+export const listedAutomations = (directory: Directory): ReadonlyArray<AutomationSummary> =>
+  Directory.guards.Ready(directory) ? directory.automations : [];
+
+export const listedName = (directory: Directory, automationId: string) =>
+  Option.map(
+    Array.findFirst(listedAutomations(directory), (automation) => automation.id === automationId),
+    (automation) => automation.name,
+  );
+
+/** What the new automation dialog says the automation should do, and whether it's being created. */
+export const NewAutomation = defineTaggedUnion({
+  Editing: { description: Schema.String, maybeError: Schema.Option(Schema.String) },
+  Creating: { description: Schema.String },
+});
+export type NewAutomation = typeof NewAutomation.Type;
+
+export const blankNewAutomation = NewAutomation.Editing({
+  description: "",
+  maybeError: Option.none(),
 });
 
 export const RoleChoices = defineTaggedUnion({
@@ -90,8 +117,9 @@ export type Page = typeof Page.Type;
 export const Model = Schema.Struct({
   page: Page,
   automationId: Schema.String,
-  automationIdInput: Schema.String,
   directory: Directory,
+  newAutomationDialog: Dialog.Model,
+  newAutomation: NewAutomation,
   roles: RoleChoices,
   revision: Schema.Int,
   /** Each automation's unsent message, so the composer never carries one into another automation. */
@@ -112,6 +140,7 @@ export const Model = Schema.Struct({
   expandedStepIds: Schema.Array(Schema.String),
   workflowDisplay: WorkflowDisplay,
   theme: Theme,
+  shortcutModifier: ShortcutModifier,
   activity: Activity,
 });
 export type Model = typeof Model.Type;

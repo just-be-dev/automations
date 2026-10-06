@@ -13,7 +13,6 @@ import { fail } from "./studio.ts";
 const leaveAutomation = (model: Model, automationId: string): Model =>
   modifyFields(model, {
     automationId: () => automationId,
-    automationIdInput: () => automationId,
     revision: (revision) => revision + 1,
     maybeDraft: () => Option.none(),
     maybeSaved: () => Option.none(),

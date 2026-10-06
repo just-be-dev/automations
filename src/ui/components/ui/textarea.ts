@@ -1,5 +1,5 @@
 import { Textarea as FoldkitTextarea } from "@foldkit/ui";
-import type { Html, HtmlBuilder } from "foldkit/html";
+import type { Html, HtmlBuilder, TextareaAttribute } from "foldkit/html";
 
 import { cn } from "@/lib/utils";
 
@@ -35,6 +35,8 @@ export type TextareaConfig<M> = Readonly<{
   labelClass?: string;
   descriptionClass?: string;
   wrapperClass?: string;
+  /** Extra attributes merged onto the textarea element, such as key handlers. */
+  attributes?: ReadonlyArray<TextareaAttribute<M>>;
 }>;
 
 /** Styled textarea with label and optional description, built on the
@@ -72,6 +74,7 @@ export const textarea = <M>(config: TextareaConfig<M>, h: HtmlBuilder<M>): Html 
               ...attributes.textarea,
               h.DataAttribute("slot", "textarea"),
               h.Class(cn(textareaClass, config.className)),
+              ...(config.attributes ?? []),
             ]),
             config.description === undefined
               ? h.empty

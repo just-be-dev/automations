@@ -1,4 +1,5 @@
 import { test } from "bun:test";
+import { Animation, Dialog as FoldkitDialog } from "@foldkit/ui";
 import * as Option from "effect/Option";
 import { UrlRequest } from "foldkit/navigation";
 import { modifyFields } from "foldkit/struct";
@@ -7,8 +8,12 @@ import {
   change,
   click,
   expect,
+  expectHandled,
+  expectIgnored,
   given,
+  keydown,
   label,
+  Mount,
   role,
   scene,
   submit,
@@ -17,8 +22,10 @@ import {
   within,
 } from "foldkit/scene";
 import type { Workflow } from "../workflow.ts";
+import * as Dialog from "@/components/ui/dialog";
 import {
   AnswerTask,
+  CreateAutomation,
   LoadAutomations,
   LoadRun,
   NavigateInternal,
@@ -58,7 +65,7 @@ const automationLoaded = (
   });
 
 const loaded = update(
-  init({ theme: "System" }, studioUrl("automation=my-automation")).model,
+  init({ theme: "System", shortcutModifier: "Meta" }, studioUrl("automation=my-automation")).model,
   automationLoaded(),
 ).model;
 
@@ -76,7 +83,7 @@ const applied = (start: Model, messages: ReadonlyArray<Message>) =>
   messages.reduce((current, next) => update(current, next).model, start);
 
 const withOpenRun = (run: ReturnType<typeof runOf>) =>
-  applied(init({ theme: "System" }, runUrl(run.id)).model, [
+  applied(init({ theme: "System", shortcutModifier: "Meta" }, runUrl(run.id)).model, [
     runLoaded({ revision: 0, poll: 1, run }),
   ]);
 
@@ -84,7 +91,7 @@ test("the accessible message input drives chat and safely renders the workflow",
   scene(
     { update, view },
     given(loaded),
-    expect(label("Automation ID")).toHaveValue("my-automation"),
+    expect(role("banner")).toContainText("my-automation"),
     expect(role("region", { name: "Conversation" })).toExist(),
     type(label("Your message"), "Summarize orders"),
     click(role("button", { name: "Send message" })),
@@ -139,6 +146,33 @@ test("the accessible message input drives chat and safely renders the workflow",
   );
 });
 
+test("the platform's modifier with Enter sends the composer's message, and Enter alone doesn't", () => {
+  const composer = label("Your message");
+  scene(
+    { update, view },
+    given(loaded),
+    type(composer, "Summarize orders"),
+    keydown(composer, "Enter"),
+    expectIgnored(),
+    keydown(composer, "Enter", { ctrlKey: true }),
+    expectIgnored(),
+    keydown(composer, "Enter", { metaKey: true }),
+    expectHandled(),
+    Command.expectExact(SendMessage({ ...requestArgs, message: "Summarize orders" })),
+    Command.resolve(SendMessage, Message.FailedRequest({ revision: 0, error: "Offline" })),
+  );
+  scene(
+    { update, view },
+    given(modifyFields(loaded, { shortcutModifier: () => "Control" as const })),
+    type(composer, "Summarize orders"),
+    keydown(composer, "Enter", { metaKey: true }),
+    expectIgnored(),
+    keydown(composer, "Enter", { ctrlKey: true }),
+    Command.expectExact(SendMessage({ ...requestArgs, message: "Summarize orders" })),
+    Command.resolve(SendMessage, Message.FailedRequest({ revision: 0, error: "Offline" })),
+  );
+});
+
 test("a truncated step description expands to show the full text", () => {
   const instruction =
     "Read the order payload and write a two-sentence summary of what was bought, the total, and anything unusual about shipping or payment.";
@@ -186,6 +220,96 @@ test("the sidebar links to every automation and marks the open one", () => {
     expect(role("link", { name: /Manager onboarding/ })).toHaveAttr("aria-current", "page"),
     expect(role("link", { name: /Order summaries/ })).toHaveAttr("href", "/?automation=orders"),
     expect(role("link", { name: /Order summaries/ })).not.toHaveAttr("aria-current"),
+  );
+});
+
+test("+ opens a dialog whose description creates an automation, lists it, and opens it", () => {
+  const created = { id: "onboard-new-hires", name: "Onboard new hires" };
+  const orders = { id: "orders", name: "Order summaries" };
+  const form = role("form", { name: "New automation" });
+  const onboarding = "When a hire's start date is set, welcome them by email.";
+  scene(
+    { update, view },
+    given(update(loaded, Message.SucceededLoadAutomations({ automations: [orders] })).model),
+    click(role("button", { name: "New automation" })),
+    Command.resolveAll(
+      [FoldkitDialog.ShowDialog, Dialog.Message.SucceededShowDialog()],
+      [Animation.WaitForPaint, Animation.Message.CompletedWaitForPaint({ generation: 1 })],
+      [Animation.WaitForAnimationSettled, Animation.Message.EndedAnimation({ generation: 1 })],
+    ),
+    Mount.resolve(FoldkitDialog.AcquireResources, Dialog.Message.SucceededAcquireResources()),
+    expect(role("heading", { name: "New automation" })).toExist(),
+    submit(form),
+    expect(role("alert")).toHaveText("Describe what the automation should do"),
+    type(label("What should it do?"), onboarding),
+    expect(role("alert")).not.toExist(),
+    submit(form),
+    Command.expectExact(CreateAutomation({ description: onboarding })),
+    expect(role("button", { name: "Creating…" })).toBeDisabled(),
+    Command.resolve(
+      CreateAutomation,
+      Message.SucceededCreateAutomation({ automation: created, wasDescriptionSent: true }),
+    ),
+    expect(role("link", { name: /Onboard new hires/ })).toHaveAttr(
+      "href",
+      "/?automation=onboard-new-hires",
+    ),
+    Command.resolveAll(
+      [Animation.WaitForPaint, Animation.Message.CompletedWaitForPaint({ generation: 2 })],
+      [Animation.WaitForAnimationSettled, Animation.Message.EndedAnimation({ generation: 2 })],
+      [FoldkitDialog.CloseDialog, Dialog.Message.CompletedCloseDialog()],
+      [NavigateInternal, Message.CompletedNavigateInternal()],
+      [LoadAutomations, Message.SucceededLoadAutomations({ automations: [created, orders] })],
+    ),
+    Mount.expectEnded(FoldkitDialog.AcquireResources),
+    expect(role("heading", { name: "New automation" })).not.toExist(),
+    expect(role("link", { name: /Order summaries/ })).toExist(),
+  );
+});
+
+test("a description the server turns down stays in the dialog with the reason", () => {
+  scene(
+    { update, view },
+    given(
+      modifyFields(loaded, {
+        newAutomationDialog: () =>
+          modifyFields(Dialog.init({ id: "new-automation", isAnimated: false }), {
+            isOpen: () => true,
+          }),
+      }),
+    ),
+    Mount.resolve(FoldkitDialog.AcquireResources, Dialog.Message.SucceededAcquireResources()),
+    type(label("What should it do?"), "Summarize orders"),
+    submit(role("form", { name: "New automation" })),
+    Command.resolve(CreateAutomation, Message.FailedCreateAutomation({ error: "Offline" })),
+    expect(role("alert")).toHaveText("Offline"),
+    expect(label("What should it do?")).toHaveValue("Summarize orders"),
+    expect(role("button", { name: "Create automation" })).not.toBeDisabled(),
+  );
+});
+
+test("⌘+Enter in the description creates the automation, and Enter alone doesn't", () => {
+  const description = label("What should it do?");
+  scene(
+    { update, view },
+    given(
+      modifyFields(loaded, {
+        newAutomationDialog: () =>
+          modifyFields(Dialog.init({ id: "new-automation", isAnimated: false }), {
+            isOpen: () => true,
+          }),
+      }),
+    ),
+    Mount.resolve(FoldkitDialog.AcquireResources, Dialog.Message.SucceededAcquireResources()),
+    type(description, "Summarize orders"),
+    keydown(description, "Enter"),
+    expectIgnored(),
+    keydown(description, "Enter", { ctrlKey: true }),
+    expectIgnored(),
+    keydown(description, "Enter", { metaKey: true }),
+    expectHandled(),
+    Command.expectExact(CreateAutomation({ description: "Summarize orders" })),
+    Command.resolve(CreateAutomation, Message.FailedCreateAutomation({ error: "Offline" })),
   );
 });
 
@@ -692,7 +816,7 @@ test("a form task is prefilled from its defaults and submits typed values", () =
 test("the sidebar's overview link marks the overview page", () => {
   scene(
     { update, view },
-    given(init({ theme: "System" }, studioUrl()).model),
+    given(init({ theme: "System", shortcutModifier: "Meta" }, studioUrl()).model),
     expect(role("link", { name: "Overview" })).toHaveAttr("href", "/"),
     expect(role("link", { name: "Overview" })).toHaveAttr("aria-current", "page"),
     expect(text("Runs and automations")).toExist(),

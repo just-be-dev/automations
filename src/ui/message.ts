@@ -2,6 +2,7 @@ import * as Schema from "effect/Schema";
 import { defineMessageUnion } from "foldkit/message";
 import { UrlRequest } from "foldkit/navigation";
 import { Url } from "foldkit/url";
+import * as Dialog from "@/components/ui/dialog";
 import { Role } from "../entities.ts";
 import { PendingChat, Permission, Run, RunSummary, Workflow } from "../workflow.ts";
 import { SubjectOption } from "./api.ts";
@@ -13,16 +14,18 @@ export const Message = defineMessageUnion({
   ChangedUrl: { url: Url },
   CompletedNavigateInternal: {},
   CompletedLoadExternal: {},
-  UpdatedAutomationId: { value: Schema.String },
-  ChangedAutomationId: {},
   ClickedNewAutomation: {},
-  CompletedFocusAutomationIdInput: {},
+  GotNewAutomationDialogMessage: { message: Dialog.Message },
+  UpdatedNewAutomationDescription: { value: Schema.String },
+  SubmittedNewAutomation: {},
+  SucceededCreateAutomation: { automation: AutomationSummary, wasDescriptionSent: Schema.Boolean },
+  FailedCreateAutomation: { error: Schema.String },
   UpdatedMessageInput: { value: Schema.String },
   ToggledStepDetails: { stepId: Schema.String, isOpen: Schema.Boolean },
   SelectedWorkflowDisplay: { display: WorkflowDisplay },
   ClickedThemeToggle: {},
   CompletedApplyTheme: {},
-  ClickedSend: {},
+  SubmittedMessage: {},
   ClickedSave: {},
   SelectedPermission: { operation: Schema.String, permission: Permission },
   SelectedSubject: { subjectId: Schema.String },
@@ -76,6 +79,9 @@ export const Message = defineMessageUnion({
   GotEntitiesMessage: { message: Entities.Message },
 });
 export type Message = typeof Message.Type;
+
+export const toNewAutomationDialogMessage = (message: Dialog.Message) =>
+  Message.GotNewAutomationDialogMessage({ message });
 
 export const toOverviewMessage = (message: Overview.Message) =>
   Message.GotOverviewMessage({ message });

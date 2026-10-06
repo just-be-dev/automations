@@ -1,3 +1,5 @@
 export const maxMessageLength = 10_000;
 
-export const automationIdInputId = "id";
+export const newAutomationDialogId = "new-automation";
+
+export const newAutomationDescriptionId = "new-automation-description";

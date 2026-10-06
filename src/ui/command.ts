@@ -2,12 +2,11 @@ import * as Array from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { Command, Dom, Http } from "foldkit";
+import { Command, Http } from "foldkit";
 import { load, pushUrl } from "foldkit/navigation";
 import { Role } from "../entities.ts";
 import { PendingChat, Permission, RunSummary, TitledRun, Workflow } from "../workflow.ts";
 import { errorText, loadSubjectOptions, requestJson } from "./api.ts";
-import { automationIdInputId } from "./constant.ts";
 import { TaskAnswer } from "./domain/index.ts";
 import { Message } from "./message.ts";
 import { AutomationSummary } from "./model.ts";
@@ -133,12 +132,28 @@ export const ApplyTheme = Command.define("ApplyTheme", {
   execute: ({ theme }) => applyTheme(theme).pipe(Effect.as(Message.CompletedApplyTheme())),
 });
 
-export const FocusAutomationIdInput = Command.define("FocusAutomationIdInput", {
-  messages: [Message.CompletedFocusAutomationIdInput],
-  execute: Dom.focus(`#${automationIdInputId}`).pipe(
-    Effect.ignore,
-    Effect.as(Message.CompletedFocusAutomationIdInput()),
-  ),
+const CreatedAutomation = Schema.Struct({
+  ...AutomationSummary.fields,
+  pendingChat: Schema.optionalKey(PendingChat),
+});
+
+/** Names and lists an automation from its description, then sends that as its first message. */
+export const CreateAutomation = Command.define("CreateAutomation", {
+  args: { description: Schema.String },
+  messages: [Message.SucceededCreateAutomation, Message.FailedCreateAutomation],
+  execute: ({ description }) =>
+    requestJson("/api/automations", CreatedAutomation, { description }).pipe(
+      Effect.map(({ id, name, pendingChat }) =>
+        Message.SucceededCreateAutomation({
+          automation: { id, name },
+          wasDescriptionSent: pendingChat !== undefined,
+        }),
+      ),
+      Effect.catch((error) =>
+        Effect.succeed(Message.FailedCreateAutomation({ error: errorText(error) })),
+      ),
+      Effect.provide(Http.layer),
+    ),
 });
 
 export const SendMessage = Command.define("SendMessage", {
