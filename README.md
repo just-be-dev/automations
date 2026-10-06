@@ -43,7 +43,7 @@ The workflow format is described in [`docs/workflow-dsl.md`](docs/workflow-dsl.m
 Requires Cloudflare Zero Trust, Workers AI, and an Alchemy profile that can manage Workers and Access.
 
 ```sh
-bun alchemy deploy --stage prod
+mise run deploy
 ```
 
 The first deploy offers to bootstrap Alchemy's Cloudflare-hosted state store. Alchemy builds the UI with Vite and deploys two Workers:

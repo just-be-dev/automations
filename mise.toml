@@ -25,3 +25,6 @@ run = "bun run test"
 
 [tasks.dev]
 run = "bun run dev"
+
+[tasks.deploy]
+run = "bun run deploy --stage prod"
