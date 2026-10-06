@@ -174,7 +174,50 @@ The planner can check its working copy with `check_workflow` while it works. Whe
 
 Starts a run when an entity of that type is created, or when one of `fields` changes. If `fields` is omitted, any field counts. `when` is optional and must hold for the new version. The entity becomes the run's subject, and refs to it start with its type: `employee.…`.
 
-Saving the automation subscribes it to the type in the entity store. `PUT /api/entities/:type/:id` writes the entity and asks each subscribed automation whether its trigger matches.
+Saving the automation subscribes it to the type in the entity store. `PUT /api/entities/:type/:id` writes the entity and asks each subscribed automation whether its trigger matches. Every trigger that names an entity type (`entity`, `schedule` and `date` with their `entity`, and `manual` with its `subject`) subscribes to it, so the type can't be deleted while a saved automation uses it; only entity triggers start runs on a change.
+
+### `schedule`
+
+```json
+{ "kind": "schedule", "cron": "0 9 * * 1-5", "timezone": "Europe/London" }
+```
+
+Starts runs on a recurring schedule. `cron` has five fields, `minute hour day-of-month month weekday`, with `*`, lists, ranges, steps, and month and weekday names. Occurrences must be at least 15 minutes apart. `timezone` is an IANA name and defaults to `UTC`, so `0 9 * * 1-5` above runs at 9:00 London time on weekdays, through daylight saving changes.
+
+Without `entity`, each occurrence starts one run with no subject, and refs can only read `steps`. With `entity`, each occurrence starts one run for every entity of that type for which `when` (optional) holds at that moment, with the entity as the run's subject:
+
+```json
+{
+  "kind": "schedule",
+  "cron": "0 9 * * 1",
+  "timezone": "Europe/London",
+  "entity": "employee",
+  "when": { "ref": "employee.start_date", "op": "after", "value": "now" }
+}
+```
+
+`"now"` in `when` is the occurrence's time. One occurrence may start at most 50 runs. Nothing is skipped quietly: saving fails if more than 50 entities match when you save, and an occurrence that matches more starts none of them and records a failed run (`scheduled-<millis>`) that says how many matched, so the overview shows it. Narrow `when` so fewer match.
+
+Saving the automation books its next occurrence as a durable job, in the same storage transaction as the snapshot, and saving a trigger that isn't timed cancels it. Each occurrence starts its runs and then books the next one. Its run IDs are fixed by its time and subject (`scheduled-<millis>` or `scheduled-<millis>-<entity id>`), so a redelivered occurrence doesn't start them twice. An occurrence that fires late still starts its runs once, then books the next one after the current time, so missed occurrences are skipped, not started together. `GET /api/overview` reports when a schedule next runs as `saved.nextRunAt`. A scheduled automation can still be started by hand.
+
+### `date`
+
+```json
+{
+  "kind": "date",
+  "entity": "employee",
+  "on": "employee.start_date",
+  "offset": "3 days",
+  "time": "09:00",
+  "timezone": "Europe/London"
+}
+```
+
+Starts a run for each entity of type `entity` on the day the date at `on` falls, shifted by `offset`, at `time` in `timezone`. `on` is a ref from the entity to a `date` or `datetime` field, possibly through `ref` fields (`employee.manager.start_date`). `offset` is optional and counts whole days or weeks; a negative one, such as `"-1 week"`, runs before the date. `time` is 24-hour `HH:MM` and defaults to `09:00`; `timezone` defaults to `UTC`. A `datetime` value counts as the day it falls on in `timezone`. `when` is optional and must hold for the entity on the day. The entity is the run's subject.
+
+The trigger checks every day at `time`, reading each entity's date then, so a run follows the date when it changes: there's no run waiting on the old date. A date set or moved to a day that was already checked, including today after `time`, starts no run. Runs, their IDs, redelivery, and the limit of 50 runs per check work as for `schedule`.
+
+To start when a record changes and then wait until a date, use an `entity` trigger and a `wait` step with `until` and `offset` instead. That run starts at once and keeps the date it read, so it suits processes with work to do before the date.
 
 ### `manual`
 

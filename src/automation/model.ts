@@ -33,7 +33,13 @@ export interface AutomationSummary extends Schema.Schema.Type<typeof AutomationS
 /** The overview lists failed reads alongside automations whose Durable Objects answered. */
 export const AutomationOverview = Schema.Struct({
   ...AutomationSummary.fields,
-  saved: Schema.optionalKey(Schema.Struct({ trigger: Trigger })),
+  saved: Schema.optionalKey(
+    Schema.Struct({
+      trigger: Trigger,
+      /** When a schedule trigger next starts runs, in epoch milliseconds. */
+      nextRunAt: Schema.optionalKey(Schema.Finite),
+    }),
+  ),
   /** Runs still running or waiting, however old, newest first. */
   activeRuns: Schema.Array(RunSummary),
   lastRun: Schema.optionalKey(RunSummary),

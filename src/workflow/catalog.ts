@@ -19,6 +19,7 @@ import {
   operationsUsed,
   stepRefs,
   subjectType,
+  triggerCondition,
   templateRefs,
   type ActionInput,
   type ActionStep,
@@ -73,7 +74,7 @@ const refProblems = (
   if (subject === undefined) {
     const roots = catalog.types.map((type) => type.name).join(", ");
     return [
-      `${where}: ${ref} starts with ${root}, but this workflow has no subject. Refs start with steps., or with the trigger's entity type (the manual trigger's subject, or an entity trigger). Entity types: ${roots || "none"}.`,
+      `${where}: ${ref} starts with ${root}, but this workflow has no subject. Refs start with steps., or with the trigger's entity type (the manual trigger's subject, or another trigger's entity). Entity types: ${roots || "none"}.`,
     ];
   }
   if (root !== subject.name) {
@@ -397,32 +398,50 @@ const childResults = (
 };
 
 const triggerProblems = (catalog: Catalog, workflow: Workflow): ReadonlyArray<string> => {
-  const name = subjectType(workflow.trigger);
+  const { trigger } = workflow;
+  const name = subjectType(trigger);
+  const when = triggerCondition(trigger);
   if (name === undefined) {
-    return [];
+    return when === undefined
+      ? []
+      : ['The trigger\'s condition needs an entity type: name the one it checks in "entity"'];
   }
   const subject = findType(catalog, name);
   if (subject === undefined) {
     const names = catalog.types.map((type) => type.name).join(", ");
     return [`The trigger names unknown entity type ${name} (types: ${names || "none"})`];
   }
-  if (workflow.trigger.kind !== "entity") {
-    return [];
-  }
   return [
-    ...(workflow.trigger.fields ?? []).flatMap((field) =>
+    ...(trigger.kind === "entity" ? (trigger.fields ?? []) : []).flatMap((field) =>
       subject.fields.some((candidate) => candidate.name === field)
         ? []
         : [`The trigger watches ${name}.${field}, which doesn't exist`],
     ),
-    ...(workflow.trigger.when === undefined
+    ...(when === undefined
       ? []
-      : conditionRefs(workflow.trigger.when).flatMap((ref) =>
+      : conditionRefs(when).flatMap((ref) =>
           ref.startsWith("steps.")
             ? [`The trigger's condition can't read ${ref}; no step has run yet`]
             : refProblems(catalog, subject, new Map(), ref, "The trigger's condition"),
         )),
+    ...(trigger.kind === "date" ? dateRefProblems(catalog, subject, trigger.on) : []),
   ];
+};
+
+/** A date trigger reads a date or datetime field of its entity, or of one it points to. */
+const dateRefProblems = (catalog: Catalog, subject: EntityType, ref: string) => {
+  const [root = "", ...path] = ref.split(".");
+  if (root !== subject.name) {
+    return [`The trigger's date ${ref} must start with ${subject.name}`];
+  }
+  const target = pathTarget(catalog.types, subject, path);
+  if (target.kind === "error") {
+    return [`The trigger's date ${ref}: ${target.message}`];
+  }
+  return target.kind === "field" &&
+    (target.field.type === "date" || target.field.type === "datetime")
+    ? []
+    : [`The trigger's date ${ref} must be a date or datetime field`];
 };
 
 const sequences = (steps: ReadonlyArray<Step>): ReadonlyArray<ReadonlyArray<Step>> => [

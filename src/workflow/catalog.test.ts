@@ -400,7 +400,49 @@ describe("workflowProblems", () => {
       problems([agent("a")], { kind: "entity", entity: "employee", fields: ["salary"] }),
     ).toEqual(["The trigger watches employee.salary, which doesn't exist"]);
     expect(problems([agent("a", "{{employee.name}}")], { kind: "manual" })).toEqual([
-      "Step a: employee.name starts with employee, but this workflow has no subject. Refs start with steps., or with the trigger's entity type (the manual trigger's subject, or an entity trigger). Entity types: employee.",
+      "Step a: employee.name starts with employee, but this workflow has no subject. Refs start with steps., or with the trigger's entity type (the manual trigger's subject, or another trigger's entity). Entity types: employee.",
+    ]);
+  });
+
+  test("checks that a date trigger reads a date of its entity", () => {
+    const date = { kind: "date", entity: "employee", on: "employee.start_date" };
+    expect(problems([agent("a")], date)).toEqual([]);
+    expect(problems([agent("a")], { ...date, on: "employee.manager.start_date" })).toEqual([]);
+    expect(problems([agent("a")], { ...date, on: "employee.name" })).toEqual([
+      "The trigger's date employee.name must be a date or datetime field",
+    ]);
+    expect(problems([agent("a")], { ...date, on: "employee.ends" })).toEqual([
+      expect.stringContaining("employee has no field ends"),
+    ]);
+    expect(problems([agent("a")], { ...date, on: "steps.a.output" })).toEqual([
+      "The trigger's date steps.a.output must start with employee",
+    ]);
+  });
+
+  test("checks a schedule's entity and condition like an entity trigger's", () => {
+    const weekly = { kind: "schedule", cron: "0 9 * * 1", timezone: "Europe/London" };
+    expect(problems([agent("a")], weekly)).toEqual([]);
+    expect(
+      problems([agent("a", "{{employee.name}}")], {
+        ...weekly,
+        entity: "employee",
+        when: { ref: "employee.manager.start_date", op: "after", value: "now" },
+      }),
+    ).toEqual([]);
+    expect(problems([agent("a")], { ...weekly, entity: "contractor" })).toEqual([
+      "The trigger names unknown entity type contractor (types: employee)",
+    ]);
+    expect(
+      problems([agent("a")], {
+        ...weekly,
+        entity: "employee",
+        when: { ref: "employee.salary", op: "exists" },
+      }),
+    ).toEqual([expect.stringContaining("employee.salary")]);
+    expect(
+      problems([agent("a")], { ...weekly, when: { ref: "employee.name", op: "exists" } }),
+    ).toEqual([
+      'The trigger\'s condition needs an entity type: name the one it checks in "entity"',
     ]);
   });
 });

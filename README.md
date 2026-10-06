@@ -76,15 +76,17 @@ curl -X PUT "$STUDIO_URL/api/entities/employee/ada" \
 
 The response lists the runs the change `triggered`. People answer human steps from the run in the studio, or with `POST .../tasks/:stepId`.
 
+A saved automation with a schedule trigger runs on a cron schedule in a time zone, such as every weekday at 9:00 in London. It can start one run each time, or one for every entity of a type that meets a condition, such as each employee who starts in the coming week. The overview shows the schedule in words and when it next runs (see [Triggers](docs/workflow-dsl.md#schedule)). A date trigger starts a run on, before, or after a date each entity holds, such as three days after each employee's start date, and follows the date if it changes (see [`date`](docs/workflow-dsl.md#date)). One occurrence starts at most 50 runs; one that matches more starts none and records a failed run saying so, and a save that already matches more is refused.
+
 Templates hold approved wording, such as the standard welcome email, with slots the automation fills (`hire → employee`). The planner uses a template whenever one fits instead of writing the text, and picks one per case with a `match`, for example a different welcome email by role. Write them with `PUT /api/templates/:name` (see [Templates](docs/workflow-dsl.md#templates)). Editing a template changes runs that start afterwards; runs already going keep the wording they started with.
 
 | Endpoint                                                   | Purpose                                                                                                    |
 | ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `GET /api/overview`                                        | Each automation's trigger and runs in flight                                                               |
+| `GET /api/overview`                                        | Each automation's trigger, its next scheduled run, and runs in flight                                      |
 | `GET /api/automations`                                     | List automations                                                                                           |
 | `GET /api/automations/:id`                                 | Inspect an automation and its recent runs                                                                  |
 | `POST /api/automations/:id/chat`                           | Send a design message                                                                                      |
-| `POST /api/automations/:id/save`                           | Save the draft and subscribe to its trigger                                                                |
+| `POST /api/automations/:id/save`                           | Save the draft, subscribe to its trigger, and book its schedule                                            |
 | `POST /api/automations/:id/permissions`                    | Set which operations ask which role first (`{ "permissions": { "email.send": { "ask": "people_ops" } } }`) |
 | `GET /api/roles`, `PUT /api/roles/:name`                   | List or define roles (`{ "name", "label", "members": [{ "type", "id" }] }`)                                |
 | `POST /api/automations/:id/start`                          | Start a run by hand (`{ "subject": "<id>" }`)                                                              |

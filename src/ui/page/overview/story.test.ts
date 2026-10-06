@@ -18,6 +18,7 @@ const ordersRow = {
   name: "Order summary",
   maybeTrigger: Option.some({ kind: "manual" as const }),
   activeRuns: [],
+  maybeNextRunAt: Option.none(),
   maybeLastRun: Option.none(),
   maybeError: Option.none(),
 };
@@ -27,6 +28,7 @@ const onboardingRow = {
   name: "Manager onboarding",
   maybeTrigger: Option.some(onboarding.trigger),
   activeRuns: [summaryOf(runOf({ status: "waiting" }))],
+  maybeNextRunAt: Option.none(),
   maybeLastRun: Option.some(summaryOf(runOf({ status: "waiting" }))),
   maybeError: Option.none(),
 };
@@ -157,4 +159,25 @@ test("triggers read as a plain phrase", () => {
   ).toBe(
     "When an employee is created or its start_date or manager changes, if its condition holds",
   );
+  expect(triggerSummary({ kind: "schedule", cron: "0 9 * * 1-5" })).toBe(
+    "Every weekday at 9:00 (UTC)",
+  );
+  expect(
+    triggerSummary({
+      kind: "schedule",
+      cron: "0 9 * * 1",
+      timezone: "Europe/London",
+      entity: "employee",
+      when: { ref: "employee.start_date", op: "after", value: "now" },
+    }),
+  ).toBe("Every Monday at 9:00 (Europe/London), for each employee that meets its condition");
+  expect(
+    triggerSummary({
+      kind: "date",
+      entity: "employee",
+      on: "employee.start_date",
+      offset: "3 days",
+      timezone: "Europe/London",
+    }),
+  ).toBe("3 days after each employee's start_date at 9:00 (Europe/London)");
 });

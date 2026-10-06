@@ -1,4 +1,6 @@
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import { nextOccurrence } from "../workflow/schedule.ts";
 import { makeDesignSession } from "./design-session.ts";
 import { makeRuns } from "./runs.ts";
 import { makeWorkflowStore } from "./workflow-store.ts";
@@ -15,12 +17,24 @@ export const makeAutomation = Effect.fn("Automation.make")(function* () {
     return { ...session, runs: recent.slice(0, 20) };
   });
 
-  /** Saved trigger, every run still in flight however old, and the latest run. */
+  /**
+   * Saved trigger and when its schedule next starts runs, every run still in flight however old,
+   * and the latest run.
+   */
   const overview = Effect.fn("Automation.overview")(function* () {
     const saved = yield* workflows.read("saved");
     const summaries = yield* runs.summaries;
+    const now = yield* Clock.currentTimeMillis;
+    const trigger = saved?.trigger;
     return {
-      ...(saved === undefined ? {} : { saved: { trigger: saved.trigger } }),
+      ...(trigger === undefined
+        ? {}
+        : {
+            saved: {
+              trigger,
+              ...(trigger.kind === "schedule" ? { nextRunAt: nextOccurrence(trigger, now) } : {}),
+            },
+          }),
       activeRuns: summaries.filter((run) => run.status === "running" || run.status === "waiting"),
       ...(summaries[0] === undefined ? {} : { lastRun: summaries[0] }),
     };

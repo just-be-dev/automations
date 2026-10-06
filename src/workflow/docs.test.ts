@@ -71,3 +71,24 @@ test("the documented template is seeded, and the match example checks against th
   );
   expect(workflow.steps[0]).toMatchObject({ kind: "action", use: "email.send" });
 });
+
+test("the documented timed triggers decode and check against the employee type", async () => {
+  const { blocks, employee } = await documented();
+  const isKind = (kind: string) => (block: unknown) =>
+    typeof block === "object" && block !== null && "kind" in block && block.kind === kind;
+  const schedules = blocks.filter((block) => isKind("schedule")(block) || isKind("date")(block));
+  expect(schedules).toHaveLength(3);
+  for (const trigger of schedules) {
+    await Effect.runPromise(
+      decodeWorkflow({
+        name: "Scheduled",
+        trigger,
+        steps: [{ id: "a", title: "A", kind: "agent", instruction: "Do it" }],
+      }).pipe(
+        Effect.flatMap((decoded) =>
+          checkWorkflow({ types: [employee], templates: [], roles: [] }, decoded),
+        ),
+      ),
+    );
+  }
+});

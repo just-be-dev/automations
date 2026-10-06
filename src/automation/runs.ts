@@ -26,7 +26,6 @@ import { EntityStore } from "../entities/store.ts";
 import {
   changedFields,
   isEmailField,
-  readRef,
   type EntityData,
   type EntityType,
   type Subject,
@@ -36,11 +35,15 @@ import {
   conditionRefs,
   holds,
   subjectType,
+  isTimed,
+  triggerSchedule,
   valueMatches,
   type Workflow,
 } from "../workflow/model.ts";
+import { MAX_SCHEDULED_RUNS, nextOccurrence, occursAt, tooManyRuns } from "../workflow/schedule.ts";
+import { makeSubjects } from "./subjects.ts";
 import { RunId, type Run, type HumanTask, type RunSummary } from "../workflow/run.ts";
-import { ExecutionId, type ExecutionValues } from "../workflow/execution.ts";
+import { ExecutionId } from "../workflow/execution.ts";
 import { AutomationError } from "./model.ts";
 import type { WorkflowStore } from "./workflow-store.ts";
 import { makeRunStore, type StoredRun } from "./run-store.ts";
@@ -60,6 +63,18 @@ interface ClockFired {
   readonly executionId: ExecutionId;
   readonly deferredName: string;
 }
+
+/** Payload of the `tick` callback, an occurrence of the saved schedule: a persisted contract. */
+interface Tick {
+  readonly at: number;
+}
+
+/**
+ * An occurrence's run IDs are fixed by its time and subject, so a redelivered tick finds the runs
+ * it already started instead of starting them again.
+ */
+const scheduledRunId = (at: number, subject: Subject | null) =>
+  RunId.make(subject === null ? `scheduled-${at}` : `scheduled-${at}-${subject.id}`);
 
 const summary = (types: ReadonlyArray<EntityType>, run: Run): RunSummary => {
   const type = types.find((candidate) => candidate.name === run.subject?.type);
@@ -81,6 +96,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
   const pi = yield* PiAgent;
   const { read: readWorkflow, catalog } = workflows;
   const records = yield* makeRunStore();
+  const { loadEntity, resolve, due } = yield* makeSubjects();
   const { read: readRun, write: writeRun, update: updateRun } = records;
 
   /** A role's members as approvers: their names and email addresses, as stored now. */
@@ -105,27 +121,6 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     );
     return { role: role.name, label: role.label, members: members.flat() };
   });
-
-  const loadEntity = (type: string, id: string) =>
-    entities
-      .getEntity(type, id)
-      .pipe(
-        Effect.map((found): Subject | undefined =>
-          found === undefined ? undefined : { type: found.type, id: found.id, data: found.data },
-        ),
-      );
-
-  const resolve = (
-    refs: ReadonlyArray<string>,
-    known: Pick<ExecutionValues, "subject" | "steps">,
-  ) =>
-    Effect.gen(function* () {
-      const types = yield* entities.listTypes;
-      const values = yield* Effect.forEach(refs, (ref) =>
-        readRef(types, known, ref, loadEntity).pipe(Effect.map((value) => [ref, value] as const)),
-      );
-      return Object.fromEntries(values);
-    });
 
   // Agent steps in a run share one conversation, so later steps can build on earlier answers.
   const conversationLock = Semaphore.makeUnsafe(1);
@@ -257,6 +252,27 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     yield* durable.fireClock(RunAutomation, executionId, deferredName);
   });
 
+  /** Records a run that failed before it started, so the studio shows why. */
+  const recordFailedRun = Effect.fn("Automation.recordFailedRun")(function* (
+    id: RunId,
+    workflow: Workflow,
+    subject: Subject | null,
+    error: string,
+  ) {
+    const run: StoredRun = {
+      id,
+      workflow,
+      subject,
+      status: "failed",
+      steps: {},
+      tasks: [],
+      error,
+      startedAt: yield* Clock.currentTimeMillis,
+    };
+    yield* writeRun(run);
+    return { id, status: run.status };
+  });
+
   /**
    * Starts a run of the saved workflow. Entity types and templates may have changed since the
    * save, so the workflow is checked again, and a run that no longer checks is recorded as
@@ -266,8 +282,8 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
   const beginRun = Effect.fn("Automation.beginRun")(function* (
     saved: Workflow,
     subject: Subject | null,
+    id: RunId = RunId.make(crypto.randomUUID()),
   ) {
-    const id = RunId.make(crypto.randomUUID());
     const startedAt = yield* Clock.currentTimeMillis;
     const current = yield* catalog;
     const prepared = yield* checkWorkflow(current, saved).pipe(
@@ -275,18 +291,12 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
       Effect.result,
     );
     if (Result.isFailure(prepared)) {
-      const run: StoredRun = {
+      return yield* recordFailedRun(
         id,
-        workflow: saved,
+        saved,
         subject,
-        status: "failed",
-        steps: {},
-        tasks: [],
-        error: `The saved workflow no longer fits the entity types and templates. Update it and save again.\n${prepared.failure.message}`,
-        startedAt,
-      };
-      yield* writeRun(run);
-      return { id, status: run.status };
+        `The saved workflow no longer fits the entity types and templates. Update it and save again.\n${prepared.failure.message}`,
+      );
     }
     const workflow = prepared.success;
     const payload = { runId: id, workflow, subject };
@@ -369,7 +379,41 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     return { runId: started.id };
   });
 
-  /** Answers a run's open human step. */
+  /**
+   * Starts the runs an occurrence of the saved timed trigger calls for, then books the next one.
+   * An occurrence that matches more entities than it may start starts none and records a failed
+   * run that says so. A late tick starts its runs once and books the next occurrence after now,
+   * so the runs it missed aren't started in a burst. A tick the saved schedule no longer has
+   * starts nothing; a saved workflow without a timed trigger books nothing, because saving it
+   * cancelled the schedule.
+   */
+  const tick = Effect.fn("Automation.tick")(function* ({ at }: Tick) {
+    const saved = yield* readWorkflow("saved");
+    const trigger = saved?.trigger;
+    if (saved === undefined || trigger === undefined || !isTimed(trigger)) {
+      return;
+    }
+    const schedule = triggerSchedule(trigger);
+    if (occursAt(schedule, at)) {
+      const subjects = yield* due(trigger, at);
+      if (subjects.length > MAX_SCHEDULED_RUNS) {
+        const id = scheduledRunId(at, null);
+        if ((yield* readRun(id)) === undefined) {
+          yield* recordFailedRun(id, saved, null, tooManyRuns(subjects.length));
+        }
+      } else {
+        for (const subject of subjects) {
+          const id = scheduledRunId(at, subject);
+          if ((yield* readRun(id)) === undefined) {
+            yield* beginRun(saved, subject, id);
+          }
+        }
+      }
+    }
+    const now = yield* Clock.currentTimeMillis;
+    yield* host.jobs.tick(nextOccurrence(schedule, Math.max(at, now)));
+  });
+
   /**
    * Answers a run's open human step or permission request. `responder` is the email address of
    * whoever answers, when the studio knows it; only a role's members may answer for it.
@@ -435,7 +479,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
   });
 
   return {
-    callbacks: { advance, clock },
+    callbacks: { advance, clock, tick },
     summaries: runSummaries,
     start,
     entityChanged,

@@ -29,6 +29,8 @@ const harness = () => {
   const replies: Array<{ automationId: string; chatId: string }> = [];
   const advances: Array<string> = [];
   const clocks: Array<{ executionId: string; deferredName: string; at: number }> = [];
+  /** The pending schedule occurrence: one at a time, like the host's single job ID. */
+  const ticks = { pending: undefined as number | undefined };
   const prompts: Array<PromptOptions> = [];
   const recorded: Array<{ id: string; name: string }> = [];
   const lock = Semaphore.makeUnsafe(1);
@@ -53,12 +55,14 @@ const harness = () => {
           Effect.gen(function* () {
             const before = new Map(data);
             const counts = [replies.length, advances.length, clocks.length] as const;
+            const pendingTick = ticks.pending;
             const result = yield* Effect.exit(effect);
             if (Exit.isFailure(result)) {
               data = before;
               replies.length = counts[0];
               advances.length = counts[1];
               clocks.length = counts[2];
+              ticks.pending = pendingTick;
             }
             return yield* result;
           }),
@@ -73,6 +77,8 @@ const harness = () => {
       advance: (executionId) => Effect.sync(() => void advances.push(executionId)),
       clock: (executionId, deferredName, at) =>
         Effect.sync(() => void clocks.push({ executionId, deferredName, at })),
+      tick: (at) => Effect.sync(() => void (ticks.pending = at)),
+      cancelTick: Effect.sync(() => void (ticks.pending = undefined)),
     },
   });
   type Call = (name: string, args?: unknown) => Effect.Effect<string>;
@@ -153,6 +159,7 @@ const harness = () => {
     replies,
     advances,
     clocks,
+    ticks,
     prompts,
     recorded,
     failSchedule: () => {
@@ -564,5 +571,259 @@ describe("Automation application without a platform", () => {
     expect(result.finished?.tasks[0]?.status).toBe("closed");
     expect(result.finished?.steps.send?.record).toMatchObject({ simulated: true });
     expect(h.advances).toHaveLength(2);
+  });
+});
+
+describe("Scheduled automations", () => {
+  const monday = Date.parse("2026-10-05T13:00:00Z");
+  const nextMonday = Date.parse("2026-10-12T13:00:00Z");
+  const weekly: Workflow = {
+    ...workflow,
+    trigger: { kind: "schedule", cron: "0 9 * * 1", timezone: "America/New_York" },
+  };
+  const withClock = (h: ReturnType<typeof harness>) => Layer.merge(h.layer, TestClock.layer());
+
+  test("saving books the next occurrence, and saving another trigger cancels it", async () => {
+    const h = harness();
+    const overview = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(monday - 3_600_000);
+        yield* h.host.storage.put("draft", weekly);
+        const app = yield* makeAutomation();
+        yield* app.save("a1");
+        expect(h.ticks.pending).toBe(monday);
+        const scheduled = yield* app.overview();
+        yield* h.host.storage.put("draft", workflow);
+        yield* app.save("a1");
+        expect(h.ticks.pending).toBeUndefined();
+        return scheduled;
+      }).pipe(Effect.provide(withClock(h))),
+    );
+    expect(overview.saved).toEqual({ trigger: weekly.trigger, nextRunAt: monday });
+  });
+
+  test("an occurrence starts its run once, then books the next", async () => {
+    const h = harness();
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* h.host.storage.put("draft", weekly);
+        const app = yield* makeAutomation();
+        yield* app.save("a1");
+        yield* TestClock.setTime(monday);
+        yield* app.callbacks.tick({ at: monday });
+        // Delivery is at least once.
+        yield* (yield* makeAutomation()).callbacks.tick({ at: monday });
+        const booked = h.ticks.pending;
+        // A tick for a time the schedule doesn't have starts nothing.
+        yield* app.callbacks.tick({ at: monday + 60_000 });
+        const { runs } = yield* app.inspectWorkflow();
+        return { booked, runs, run: yield* app.run(RunId.make(`scheduled-${monday}`)) };
+      }).pipe(Effect.provide(withClock(h))),
+    );
+    expect(result.booked).toBe(nextMonday);
+    expect(result.runs.map((run) => run.id)).toEqual([RunId.make(`scheduled-${monday}`)]);
+    expect(result.run?.subject).toBeNull();
+    expect(h.advances).toHaveLength(1);
+  });
+
+  test("a late occurrence starts once and books the next one after now", async () => {
+    const h = harness();
+    const runs = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* h.host.storage.put("draft", weekly);
+        const app = yield* makeAutomation();
+        yield* app.save("a1");
+        yield* TestClock.setTime(nextMonday + 3_600_000);
+        yield* app.callbacks.tick({ at: monday });
+        return (yield* app.inspectWorkflow()).runs;
+      }).pipe(Effect.provide(withClock(h))),
+    );
+    expect(runs).toHaveLength(1);
+    expect(h.ticks.pending).toBe(Date.parse("2026-10-19T13:00:00Z"));
+  });
+
+  test("a schedule over an entity type starts a run for each entity its condition holds for", async () => {
+    const h = harness();
+    const ids = await Effect.runPromise(
+      Effect.gen(function* () {
+        const entities = yield* EntityStore;
+        yield* entities.putEntity("person", "ada", { name: "Ada", email: "ada@example.com" });
+        yield* entities.putEntity("person", "kim", { name: "Kim", email: "kim@other.org" });
+        yield* h.host.storage.put("draft", {
+          ...weekly,
+          trigger: {
+            ...weekly.trigger,
+            entity: "person",
+            when: { ref: "person.email", op: "contains", value: "@example.com" },
+          },
+        });
+        const app = yield* makeAutomation();
+        yield* app.save("a1");
+        yield* TestClock.setTime(monday);
+        yield* app.callbacks.tick({ at: monday });
+        const { runs } = yield* app.inspectWorkflow();
+        const ada = yield* app.run(RunId.make(`scheduled-${monday}-ada`));
+        return { runs: runs.map((run) => run.id).toSorted(), subject: ada?.subject?.id };
+      }).pipe(Effect.provide(withClock(h))),
+    );
+    expect(ids.runs).toEqual([`scheduled-${monday}-ada`, `scheduled-${monday}-sam`]);
+    expect(ids.subject).toBe("ada");
+  });
+
+  test("a tick after the schedule was replaced starts and books nothing", async () => {
+    const h = harness();
+    const runs = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* h.host.storage.put("saved", workflow);
+        const app = yield* makeAutomation();
+        yield* TestClock.setTime(monday);
+        yield* app.callbacks.tick({ at: monday });
+        return (yield* app.inspectWorkflow()).runs;
+      }).pipe(Effect.provide(withClock(h))),
+    );
+    expect(runs).toEqual([]);
+    expect(h.ticks.pending).toBeUndefined();
+  });
+});
+
+describe("Timed triggers and their limits", () => {
+  const monday = Date.parse("2026-10-05T13:00:00Z");
+  const tuesday = Date.parse("2026-10-06T13:00:00Z");
+  const everyone: Workflow = {
+    ...workflow,
+    trigger: {
+      kind: "schedule",
+      cron: "0 9 * * 1",
+      timezone: "America/New_York",
+      entity: "person",
+    },
+  };
+  const withClock = (h: ReturnType<typeof harness>) => Layer.merge(h.layer, TestClock.layer());
+  const addPeople = (count: number, email: (index: number) => string) =>
+    Effect.gen(function* () {
+      const entities = yield* EntityStore;
+      for (let index = 0; index < count; index++) {
+        yield* entities.putEntity("person", `p${index}`, {
+          name: `P${index}`,
+          email: email(index),
+        });
+      }
+    });
+
+  test("saving a schedule that already matches too many entities is refused", async () => {
+    const h = harness();
+    const failure = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* addPeople(50, (index) => `p${index}@example.com`);
+        yield* h.host.storage.put("draft", everyone);
+        const app = yield* makeAutomation();
+        const error = yield* Effect.flip(app.save("a1"));
+        expect(yield* h.host.storage.get("saved")).toBeUndefined();
+        return error;
+      }).pipe(Effect.provide(withClock(h))),
+    );
+    expect(failure).toMatchObject({
+      message: expect.stringContaining("51 entities are due at once"),
+    });
+    expect(h.ticks.pending).toBeUndefined();
+  });
+
+  test("an occurrence that matches too many entities starts none and records why", async () => {
+    const h = harness();
+    const runs = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* h.host.storage.put("draft", {
+          ...everyone,
+          trigger: {
+            ...everyone.trigger,
+            when: { ref: "person.email", op: "contains", value: "@later.org" },
+          },
+        });
+        const app = yield* makeAutomation();
+        yield* app.save("a1");
+        yield* addPeople(51, (index) => `p${index}@later.org`);
+        yield* TestClock.setTime(monday);
+        yield* app.callbacks.tick({ at: monday });
+        yield* app.callbacks.tick({ at: monday });
+        return (yield* app.inspectWorkflow()).runs;
+      }).pipe(Effect.provide(withClock(h))),
+    );
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ id: `scheduled-${monday}`, status: "failed" });
+    expect(h.advances).toEqual([]);
+    expect(h.ticks.pending).toBe(Date.parse("2026-10-12T13:00:00Z"));
+  });
+
+  test("a date trigger starts a run on the day each date falls, and follows a changed date", async () => {
+    const h = harness();
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const entities = yield* EntityStore;
+        yield* entities.putType({
+          name: "person",
+          label: "Person",
+          title: "name",
+          fields: [
+            { name: "name", label: "Name", type: "text" },
+            { name: "email", label: "Email", type: "text" },
+            { name: "start_date", label: "Start date", type: "date" },
+          ],
+        });
+        yield* entities.putEntity("person", "ada", {
+          name: "Ada",
+          email: "ada@example.com",
+          start_date: "2026-10-02",
+        });
+        yield* h.host.storage.put("draft", {
+          ...workflow,
+          trigger: {
+            kind: "date",
+            entity: "person",
+            on: "person.start_date",
+            offset: "3 days",
+            timezone: "America/New_York",
+          },
+        });
+        yield* TestClock.setTime(monday - 3_600_000);
+        const app = yield* makeAutomation();
+        yield* app.save("a1");
+        const booked = h.ticks.pending;
+        yield* TestClock.setTime(monday);
+        yield* app.callbacks.tick({ at: monday });
+        const first = (yield* app.inspectWorkflow()).runs.map((run) => run.id);
+        // A date that moves to a day already checked doesn't start a run late.
+        yield* entities.putEntity("person", "ada", { start_date: "2026-10-01" });
+        yield* entities.putEntity("person", "sam", { start_date: "2026-10-03" });
+        yield* TestClock.setTime(tuesday);
+        yield* app.callbacks.tick({ at: tuesday });
+        const second = (yield* app.inspectWorkflow()).runs.map((run) => run.id);
+        return { booked, first, second, watchers: yield* entities.subscribers("person") };
+      }).pipe(Effect.provide(withClock(h))),
+    );
+    expect(result.booked).toBe(Date.parse("2026-10-05T13:00:00Z"));
+    expect(result.first).toEqual([`scheduled-${monday}-ada`]);
+    expect(result.second.toSorted()).toEqual([
+      `scheduled-${monday}-ada`,
+      `scheduled-${tuesday}-sam`,
+    ]);
+    expect(h.ticks.pending).toBe(Date.parse("2026-10-07T13:00:00Z"));
+    expect(result.watchers).toEqual(["a1"]);
+  });
+
+  test("saving subscribes to the type a schedule is about, so the type can't be deleted", async () => {
+    const h = harness();
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const entities = yield* EntityStore;
+        yield* h.host.storage.put("draft", everyone);
+        yield* (yield* makeAutomation()).save("a1");
+        const watchers = yield* entities.subscribers("person");
+        yield* entities.deleteEntity("person", "sam").pipe(Effect.ignore);
+        const deleted = yield* Effect.exit(entities.deleteType("person"));
+        return { watchers, deleted };
+      }).pipe(Effect.provide(withClock(h))),
+    );
+    expect(result.watchers).toEqual(["a1"]);
+    expect(Exit.isFailure(result.deleted)).toBe(true);
   });
 });
