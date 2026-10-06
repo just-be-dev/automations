@@ -39,6 +39,8 @@ Runs have three distinct representations:
 
 `mise run dev` runs everything locally on stage `dev_$USER` and prints the Studio URL. Dev mode skips Cloudflare Access, but it needs Cloudflare credentials for Workers AI. Run `bun alchemy profile edit --add Cloudflare` once, or set `ALCHEMY_PROFILE` to a profile that already has them.
 
+`package.json` overrides Effect to `4.0.1` so the app and tooling share one copy despite Foldkit's exact `4.0.0` peer pins and the Effect lint plugin's `4.0.0` dependency. Recheck this override when upgrading those packages; remove it once their constraints allow the app's Effect version.
+
 The workflow format is described in [`docs/workflow-dsl.md`](docs/workflow-dsl.md). Agent instructions are in `AGENTS.md` and `src/ui/AGENTS.md`.
 
 ### Evals
