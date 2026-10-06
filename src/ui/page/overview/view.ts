@@ -52,10 +52,6 @@ export const view = Submodel.defineView<Model, Message>((model, h) =>
             [
               h.div([h.Class(eyebrowClass)], ["Overview"]),
               h.h1([h.Class("text-xl font-semibold")], ["Runs and automations"]),
-              h.p(
-                [h.Class(noteClass)],
-                ["What's in flight right now, and every automation you can start by hand."],
-              ),
             ],
           ),
           ...Listing.match(model.listing, {
@@ -164,11 +160,6 @@ const noAutomationsView = (h: HtmlBuilder<Message>) =>
         [
           Empty.media({ className: "icon-tile" }, [icon(h, WorkflowIcon, "size-3.5")], h),
           Empty.title({}, ["No automations yet"], h),
-          Empty.description(
-            {},
-            ["Describe what you want done, and the studio drafts the steps with you."],
-            h,
-          ),
         ],
         h,
       ),

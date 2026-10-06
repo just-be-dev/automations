@@ -34,7 +34,7 @@ export const newAutomationDialogView = (model: Model, h: HtmlBuilder<Message>) =
               Dialog.description(
                 { attributes: descriptionAttributes },
                 [
-                  "Describe what should happen. It's named for you and listed in the sidebar, and the agent starts drafting its steps from your description.",
+                  "Describe the trigger and what should happen. You can edit the workflow in chat afterward.",
                 ],
                 h,
               ),
