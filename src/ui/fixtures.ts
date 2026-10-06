@@ -1,3 +1,4 @@
+/** Supplies shared onboarding workflows, human tasks, and runs for studio and run interaction tests. */
 import * as Option from "effect/Option";
 import type { Url } from "foldkit/url";
 import type { HumanTask, Run, RunSummary, Workflow } from "../workflow.ts";

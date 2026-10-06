@@ -1,3 +1,4 @@
+/** Declares the Access-protected studio, private API binding, and local-versus-deployed Alchemy state store. */
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";

@@ -1,3 +1,4 @@
+/** Checks trace conversion against real pi conversation records produced by a scripted model. */
 import { expect, test } from "bun:test";
 import { createModels } from "@earendil-works/pi-ai/models";
 import {

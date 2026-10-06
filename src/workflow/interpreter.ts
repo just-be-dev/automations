@@ -1,3 +1,4 @@
+/** Walks a saved workflow with durable activities, clocks, and human responses; StepRunner owns outside effects. */
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";

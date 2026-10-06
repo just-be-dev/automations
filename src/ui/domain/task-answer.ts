@@ -1,8 +1,10 @@
+/** Turns human-task edits and defaults into typed answers, reporting fields that need attention. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
-import type { HumanField, HumanTask, ValueType } from "../../workflow.ts";
+import type { HumanField, HumanTask } from "../../workflow.ts";
+import * as FieldValue from "./field-value.ts";
 
 export const TaskFieldEdit = Schema.Struct({
   step: Schema.String,
@@ -26,20 +28,6 @@ export const fieldText = (edits: ReadonlyArray<TaskFieldEdit>, task: HumanTask, 
     },
   );
 
-const isoDate = /^\d{4}-\d{2}-\d{2}$/;
-
-const answerParsers: Record<ValueType, (text: string) => Option.Option<Schema.Json>> = {
-  text: (text) => Option.some(text),
-  number: (text) => {
-    const value = Number(text.trim());
-    return text.trim() !== "" && Number.isFinite(value) ? Option.some(value) : Option.none();
-  },
-  boolean: (text) => Option.some(text === "true"),
-  date: (text) => (isoDate.test(text) ? Option.some(text) : Option.none()),
-  datetime: (text) =>
-    Number.isNaN(Date.parse(text)) ? Option.none() : Option.some(new Date(text).toISOString()),
-};
-
 export const fromForm = (
   edits: ReadonlyArray<TaskFieldEdit>,
   task: HumanTask,
@@ -47,7 +35,7 @@ export const fromForm = (
 ): Result.Result<TaskAnswer, string> => {
   const parsed = Array.map(fields, (field) => ({
     field,
-    maybeValue: answerParsers[field.type](fieldText(edits, task, field.name)),
+    maybeValue: FieldValue.parsers[field.type](fieldText(edits, task, field.name)),
   }));
   return Array.match(
     Array.filter(parsed, ({ maybeValue }) => Option.isNone(maybeValue)),

@@ -1,3 +1,5 @@
+/** Presents workflow triggers and nested steps in readable terms, with references, conditions, and template usage.
+ * Adds step outcomes and recorded results when showing an executed snapshot. */
 import * as Array from "effect/Array";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";

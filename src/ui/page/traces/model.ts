@@ -1,3 +1,4 @@
+/** Tracks the selected planner or run conversation, available sources, and trace loading and refresh state. */
 import * as Equivalence from "effect/Equivalence";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";

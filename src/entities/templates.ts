@@ -1,10 +1,11 @@
+/** Models approved wording with entity-backed slots, checks references, and expands uses into a run's action inputs. */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { EntityField, EntityName, pathTarget, type EntityType } from "./model.ts";
 import {
   InvalidWorkflow,
   actionTemplates,
-  childSequences,
+  flattenSteps,
   loneRef,
   templateParts,
   templateRefs,
@@ -199,15 +200,13 @@ const expandStep = (templates: ReadonlyArray<Template>, step: Step): Step => {
 const expandSteps = (templates: ReadonlyArray<Template>, steps: ReadonlyArray<Step>) =>
   steps.map((step) => expandStep(templates, step));
 
-const stepTemplates = (steps: ReadonlyArray<Step>): ReadonlyArray<string> =>
-  steps.flatMap((step) => [
-    ...(step.kind === "action" ? actionTemplates(step).map((use) => use.use) : []),
-    ...childSequences(step).flatMap(stepTemplates),
-  ]);
-
 /** The names of the templates a workflow uses, each once, in order of first use. */
 export const usedTemplates = (workflow: Workflow): ReadonlyArray<string> => [
-  ...new Set(stepTemplates(workflow.steps)),
+  ...new Set(
+    flattenSteps(workflow.steps).flatMap((step) =>
+      step.kind === "action" ? actionTemplates(step).map((use) => use.use) : [],
+    ),
+  ),
 ];
 
 /**

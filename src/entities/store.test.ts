@@ -1,3 +1,4 @@
+/** Checks entity-store merging, subscriptions, and deletion constraints for types, templates, and roles. */
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import type { EntityType } from "./model.ts";

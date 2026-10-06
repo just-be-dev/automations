@@ -1,3 +1,5 @@
+/** The evals call models; this checks, without them, that what they start from holds up. */
+
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -6,8 +8,6 @@ import { checkWorkflow } from "../src/workflow/catalog.ts";
 import { Workflow } from "../src/workflow/model.ts";
 import { loadEvals } from "./framework/eval.ts";
 import { catalog, headsUpDraft, welcomeDraft } from "./fixtures.ts";
-
-/** The evals call models; this checks, without them, that what they start from holds up. */
 
 test("templates fit the entity types", () => {
   expect(

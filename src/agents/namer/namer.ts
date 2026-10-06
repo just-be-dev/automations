@@ -1,13 +1,8 @@
+/** Titles new automations with a fast model, falling back to the description so creation never depends on AI. */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-
-/**
- * The namer agent: a fast model that titles a new automation from the description its first chat
- * message carries, so the sidebar can list it before the planner has drafted anything. The planner
- * renames it once it drafts the workflow.
- */
 
 export class NamerError extends Schema.TaggedError<NamerError>()("NamerError", {
   message: Schema.String,

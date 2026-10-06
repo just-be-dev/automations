@@ -1,3 +1,4 @@
+/** Opens the selected agent conversation and reloads it when the URL changes, retaining runs for the same automation. */
 import * as Option from "effect/Option";
 import { modifyFields } from "foldkit/struct";
 import { LoadAutomations, LoadRuns, LoadTrace } from "./command.ts";

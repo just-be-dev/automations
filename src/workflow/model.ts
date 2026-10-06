@@ -1,3 +1,4 @@
+/** Defines the workflow DSL and its structural checks, reference traversal, template strings, and conditions. */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";

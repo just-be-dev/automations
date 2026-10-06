@@ -1,3 +1,4 @@
+/** Checks question validation and how host-provided answers become results the agent can read. */
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import type { AgentToolError } from "../pi.ts";

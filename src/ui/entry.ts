@@ -1,3 +1,4 @@
+/** Boots the browser application with saved preferences, routing, and the studio's fonts and styles. */
 import { Runtime } from "foldkit";
 import { init } from "./main.ts";
 import { Message } from "./message.ts";

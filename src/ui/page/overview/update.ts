@@ -1,3 +1,5 @@
+/** Keeps the overview current while runs are in flight and guides one manual launch at a time.
+ * Drops outdated loads and asks the parent app to handle automation creation. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import type { Update } from "foldkit";

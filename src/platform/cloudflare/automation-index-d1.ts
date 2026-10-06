@@ -1,3 +1,4 @@
+/** Implements the automation directory on D1, capturing the host runtime in each provided service layer. */
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Clock from "effect/Clock";

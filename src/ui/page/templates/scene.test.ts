@@ -1,3 +1,4 @@
+/** Exercises template details and editing, including usage warnings and links to affected automations. */
 import { test } from "bun:test";
 import * as Option from "effect/Option";
 import {

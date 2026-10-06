@@ -1,3 +1,4 @@
+/** Converts pi conversation records into chronological application traces, including reasoning and tool results. */
 import {
   CompactionEntry,
   ResetEntry,
@@ -6,8 +7,6 @@ import {
   type EntryRecord,
 } from "@earendil-works/pi-durable";
 import type { Trace, TraceEvent } from "../../ai/trace.ts";
-
-/** Reads pi's records of a conversation back as a `Trace`. */
 
 type Context = Parameters<Conversation["entries"]>[3];
 

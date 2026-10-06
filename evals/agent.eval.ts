@@ -1,9 +1,9 @@
+/** Agent steps do one piece of work in a run, and record text or the fields they're asked for. */
+
 import { expect } from "bun:test";
 import { agent } from "./calls/agent.ts";
 import { defineEval, judged } from "./framework/eval.ts";
 import { ada, values } from "./fixtures.ts";
-
-/** Agent steps do one piece of work in a run, and record text or the fields they're asked for. */
 
 export default defineEval({
   call: agent,

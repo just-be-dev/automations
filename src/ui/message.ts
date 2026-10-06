@@ -1,3 +1,4 @@
+/** Describes user interactions and asynchronous results for the studio, runs, and shared app shell. */
 import * as Schema from "effect/Schema";
 import { defineMessageUnion } from "foldkit/message";
 import { UrlRequest } from "foldkit/navigation";

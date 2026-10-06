@@ -1,3 +1,4 @@
+/** Checks template selection, draft validation, saving, and confirmed deletion, including stale usage replies. */
 import { expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import { Command, given, message, model, story } from "foldkit/story";

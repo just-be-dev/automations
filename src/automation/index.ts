@@ -1,3 +1,4 @@
+/** Defines the automation directory and assigns readable, collision-checked IDs to new entries. */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Random from "effect/Random";

@@ -1,3 +1,4 @@
+/** Describes overview refreshes and manual run launches, including the request to create a new automation. */
 import * as Schema from "effect/Schema";
 import { defineMessageUnion } from "foldkit/message";
 import { SubjectOption } from "../../api.ts";

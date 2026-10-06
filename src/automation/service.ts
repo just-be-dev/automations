@@ -1,3 +1,4 @@
+/** Defines how callers address an automation independently of its host and RPC transport. */
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import type { AutomationApplication } from "./application.ts";

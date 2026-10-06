@@ -1,3 +1,5 @@
+/** Names an automation from its description, as `POST /api/automations` does. */
+
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -6,8 +8,6 @@ import { AutomationNamer, nameAutomation, nameFromReply } from "../../src/agents
 import { workersAiNamer } from "../../src/platform/cloudflare/workers-ai.ts";
 import type { Call } from "../framework/call.ts";
 import { WorkersAi } from "../framework/models.ts";
-
-/** Names an automation from its description, as `POST /api/automations` does. */
 
 export const NamerOutput = Schema.Struct({
   name: Schema.String,

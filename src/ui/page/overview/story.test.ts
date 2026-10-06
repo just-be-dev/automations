@@ -1,3 +1,4 @@
+/** Checks overview polling and stale replies, manual launches, and readable trigger descriptions. */
 import { expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import { Command, given, message, model, story } from "foldkit/story";

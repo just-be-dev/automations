@@ -1,3 +1,5 @@
+/** Walks the person through the planner's questions and answer review, with choices, written answers, and skips.
+ * Also presents completed question rounds in the conversation. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import type { Html, HtmlBuilder } from "foldkit/html";

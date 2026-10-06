@@ -1,3 +1,4 @@
+/** Tracks each automation's saved trigger and run summaries alongside overview loading and manual launch state. */
 import * as Array from "effect/Array";
 import * as Schema from "effect/Schema";
 import { defineTaggedUnion } from "foldkit/schema";

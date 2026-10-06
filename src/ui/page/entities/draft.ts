@@ -1,8 +1,10 @@
+/** Converts entity-store forms to and from saved types and records, validating typed values before submission. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { labelFromName } from "@/lib/format";
+import { FieldValue } from "../../domain/index.ts";
 import {
   type EntityData,
   type EntityField,
@@ -81,8 +83,6 @@ export const entityDraftOf = (type: EntityType, entity: EntityRecord): EntityDra
   ),
 });
 
-const isoDate = /^\d{4}-\d{2}-\d{2}$/;
-
 const fieldTypeArticle: Record<FieldType, string> = {
   text: "text",
   number: "a number",
@@ -92,26 +92,19 @@ const fieldTypeArticle: Record<FieldType, string> = {
   ref: "an entity ID",
 };
 
-const fieldParsers: Record<FieldType, (text: string) => Option.Option<Schema.Json>> = {
-  text: (text) => Option.some(text),
-  ref: (text) => Option.some(text.trim()),
-  number: (text) => {
-    const value = Number(text.trim());
-    return Number.isFinite(value) ? Option.some(value) : Option.none();
-  },
-  boolean: (text) => Option.some(text.trim() === "true"),
-  date: (text) => (isoDate.test(text.trim()) ? Option.some(text.trim()) : Option.none()),
-  datetime: (text) =>
-    Number.isNaN(Date.parse(text)) ? Option.none() : Option.some(new Date(text).toISOString()),
+const fieldValue = (field: EntityField, text: string): Result.Result<Schema.Json, string> => {
+  if (text.trim() === "") {
+    return Result.succeed(null);
+  }
+  if (field.type === "ref") {
+    return Result.succeed(text.trim());
+  }
+  const input = field.type === "date" || field.type === "boolean" ? text.trim() : text;
+  return Option.match(FieldValue.parsers[field.type](input), {
+    onNone: () => Result.fail(`${field.label} must be ${fieldTypeArticle[field.type]}`),
+    onSome: (value) => Result.succeed(value),
+  });
 };
-
-const fieldValue = (field: EntityField, text: string): Result.Result<Schema.Json, string> =>
-  text.trim() === ""
-    ? Result.succeed(null)
-    : Option.match(fieldParsers[field.type](text), {
-        onNone: () => Result.fail(`${field.label} must be ${fieldTypeArticle[field.type]}`),
-        onSome: (value) => Result.succeed(value),
-      });
 
 /** Every field of the type, with empty inputs sent as `null` so they clear the stored value. */
 export const entityDataFromDraft = (

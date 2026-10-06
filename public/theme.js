@@ -1,5 +1,4 @@
-// Applies the saved color theme before the first paint, so the page doesn't flash the OS theme
-// while the app loads. `src/ui/theme.ts` owns the storage key and values; keep the two in sync.
+/** Applies the saved theme before first paint; keep its storage key and values in sync with src/ui/theme.ts. */
 try {
   const theme = localStorage.getItem("theme");
   if (theme === "light" || theme === "dark") {

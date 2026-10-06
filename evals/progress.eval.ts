@@ -1,13 +1,13 @@
-import { expect } from "bun:test";
-import type { ProgressPhrase } from "../src/agents/planner/planner.ts";
-import { progress, type ProgressOutput } from "./calls/progress.ts";
-import { defineEval } from "./framework/eval.ts";
-
 /**
  * The progress classifier picks the phrase the studio shows from the planner's latest reasoning.
  * Each input is reasoning written the way the planner reasons; each case accepts the phrases a
  * person would find accurate.
  */
+
+import { expect } from "bun:test";
+import type { ProgressPhrase } from "../src/agents/planner/planner.ts";
+import { progress, type ProgressOutput } from "./calls/progress.ts";
+import { defineEval } from "./framework/eval.ts";
 
 const picks = (...phrases: ReadonlyArray<ProgressPhrase>) => ({
   [`picks ${phrases.join(" or ")}`]: (output: ProgressOutput) =>

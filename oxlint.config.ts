@@ -1,3 +1,4 @@
+/** Enables Effect safety rules and scopes Foldkit architecture rules to the browser app. */
 import { defineConfig } from "oxlint";
 import effect from "@mpsuesser/oxlint-plugin-effect";
 import foldkit from "@foldkit/oxlint-plugin";

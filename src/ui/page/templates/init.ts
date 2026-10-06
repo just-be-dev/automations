@@ -1,3 +1,4 @@
+/** Opens the template catalogue and selected template's usage, resetting forms when the URL selects another. */
 import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import { modifyFields } from "foldkit/struct";

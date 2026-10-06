@@ -1,3 +1,4 @@
+/** Supplies welcome wording, entity slots, and automation usage for template-page tests. */
 import * as Option from "effect/Option";
 import type { EntityType, Template } from "../../../entities.ts";
 import type { TemplateUsage } from "../../../workflow.ts";

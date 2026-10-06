@@ -1,3 +1,4 @@
+/** Defines shared light/dark theme tokens, typography, and workflow rails used by the Foldkit views. */
 @import "tailwindcss";
 @import "tw-animate-css";
 

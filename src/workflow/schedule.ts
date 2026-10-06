@@ -1,10 +1,6 @@
+/** Validates cron schedules, finds timezone-aware occurrences, and describes schedule and date triggers in words. */
 import * as Cron from "effect/Cron";
 import * as Result from "effect/Result";
-
-/**
- * Cron schedules for the `schedule` trigger: checking an expression, finding its next occurrence
- * in a time zone, and saying it in words. Pure, so the checker, the runs, and the UI all use it.
- */
 
 /** Runs a schedule starts can't come closer together than this. */
 export const MIN_SCHEDULE_GAP_MINUTES = 15;

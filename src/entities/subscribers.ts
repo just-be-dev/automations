@@ -1,7 +1,9 @@
+/** Notifies automations watching an entity change and returns each started run or failure to the writer. */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import { messageOf } from "../error.ts";
 import { EntityStore, type EntityChange, type EntityStoreError } from "./store.ts";
 
 /** A run an entity write started, or why an automation watching the type couldn't start one. */
@@ -11,14 +13,6 @@ export const Triggered = Schema.Struct({
   error: Schema.NullOr(Schema.String),
 });
 export type Triggered = typeof Triggered.Type;
-
-const messageOf = (error: unknown) =>
-  typeof error === "object" &&
-  error !== null &&
-  "message" in error &&
-  typeof error.message === "string"
-    ? error.message
-    : "Unexpected error";
 
 /** Shared by HTTP and MCP writes; the host supplies how to notify one automation. */
 export class EntitySubscribers extends Context.Service<

@@ -1,3 +1,4 @@
+/** Journals workflow activities, deferreds, and clocks in a key-value store and replays executions on host wakeups. */
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";

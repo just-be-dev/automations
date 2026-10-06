@@ -1,3 +1,4 @@
+/** Checks entity data validation, changed fields, and references that walk between related entities. */
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import {

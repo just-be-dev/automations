@@ -1,3 +1,4 @@
+/** Presents chat content in aligned, themed bubbles with optional reactions and interactive content. */
 import type { Attribute, Html, HtmlBuilder } from "foldkit/html";
 
 type Child = Html | string;

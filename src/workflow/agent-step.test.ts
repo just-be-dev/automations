@@ -1,3 +1,4 @@
+/** Checks agent-step prompts and decoding of structured agent answers and routing decisions. */
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import { agentOutput, agentPrompt, decision } from "./agent-step.ts";

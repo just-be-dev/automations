@@ -1,3 +1,4 @@
+/** Presents the entity store's type definitions and records with forms for editing both and confirming deletion. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";

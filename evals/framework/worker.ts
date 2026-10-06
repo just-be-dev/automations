@@ -1,3 +1,5 @@
+/** Serves schema-checked eval calls and judge requests with the Worker's Workers AI binding. */
+
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";

@@ -1,3 +1,4 @@
+/** Defines the platform-independent conversation, replay-safe tool, and trace contracts used by agents. */
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";

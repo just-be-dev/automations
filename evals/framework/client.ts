@@ -1,3 +1,8 @@
+/**
+ * Starts the Evals Worker the way `alchemy dev` starts the app, on its own stage, and talks to it.
+ * Workers AI is reached with the Alchemy Cloudflare profile (`ALCHEMY_PROFILE`, or the default).
+ */
+
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Core from "alchemy/Test/Core";
 import * as Config from "effect/Config";
@@ -8,11 +13,6 @@ import * as Schema from "effect/Schema";
 import type { Call } from "./call.ts";
 import { CallFailed, CheckFailed, EvalWorker } from "./eval.ts";
 import Stack from "./stack.ts";
-
-/**
- * Starts the Evals Worker the way `alchemy dev` starts the app, on its own stage, and talks to it.
- * Workers AI is reached with the Alchemy Cloudflare profile (`ALCHEMY_PROFILE`, or the default).
- */
 
 const Failure = Schema.Struct({ error: Schema.String });
 const Called = Schema.Struct({ output: Schema.Unknown });

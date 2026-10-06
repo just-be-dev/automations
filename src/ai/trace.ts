@@ -1,3 +1,4 @@
+/** Defines chronological agent traces: prompts, reasoning, answers, tool calls and results, and token usage. */
 import * as Schema from "effect/Schema";
 
 /**

@@ -1,3 +1,4 @@
+/** Validates workflows against entity types, templates, operations, and roles, and describes that catalog to the planner. */
 import * as Effect from "effect/Effect";
 import {
   connections,

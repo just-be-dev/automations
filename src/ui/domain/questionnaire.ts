@@ -1,3 +1,5 @@
+/** Tracks the person's choices and written answers while walking through the agent's questions.
+ * Prepares ordered answers or skips for resuming the conversation. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";

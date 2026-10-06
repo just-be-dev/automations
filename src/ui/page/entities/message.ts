@@ -1,3 +1,4 @@
+/** Describes entity-store editing, deletion confirmations, and the outcomes of loading and saving records. */
 import * as Schema from "effect/Schema";
 import { defineMessageUnion } from "foldkit/message";
 import { EntityRecord, EntityType, Subject } from "../../../entities.ts";

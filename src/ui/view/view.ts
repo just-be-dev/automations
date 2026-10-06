@@ -1,3 +1,4 @@
+/** Arranges the application shell around the selected page, shared navigation, run preview, and creation dialog. */
 import * as Option from "effect/Option";
 import type { Document, HtmlBuilder } from "foldkit/html";
 import { Monitor, Moon, Sun } from "lucide";

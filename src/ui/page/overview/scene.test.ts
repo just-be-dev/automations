@@ -1,3 +1,4 @@
+/** Exercises the overview's run listings, subject picker, launch feedback, and empty state. */
 import { test } from "bun:test";
 import * as Option from "effect/Option";
 import { Command, change, click, expect, given, label, role, scene, text } from "foldkit/scene";

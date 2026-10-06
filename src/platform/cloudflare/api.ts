@@ -1,3 +1,4 @@
+/** Hosts the private API Worker and supplies request-scoped application services and authenticated identity. */
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";

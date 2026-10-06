@@ -1,3 +1,4 @@
+/** Routes automation design and run operations and builds the overview from each listed automation's status. */
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";
@@ -13,7 +14,8 @@ import { HumanResponse } from "../workflow/interpreter.ts";
 import { Permissions } from "../workflow/model.ts";
 import { RunId } from "../workflow/run.ts";
 import { RequestIdentity } from "./identity.ts";
-import { limitedBody, messageOf, NotFound, pathParams, respond } from "./response.ts";
+import { messageOf } from "../error.ts";
+import { limitedBody, NotFound, pathParams, respond } from "./response.ts";
 
 const AutomationParams = Schema.Struct({
   id: Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]{1,80}$/)),

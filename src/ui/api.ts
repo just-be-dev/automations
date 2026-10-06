@@ -1,3 +1,4 @@
+/** Handles the studio's JSON API requests and supplies labelled entities for choosing run subjects. */
 import * as Array from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

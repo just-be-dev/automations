@@ -1,3 +1,4 @@
+/** Checks replay-safe edits and assembly of the planner's flat working copy into a workflow tree. */
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import { decodeWorkflow, type Workflow } from "../../workflow/model.ts";

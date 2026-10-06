@@ -1,3 +1,5 @@
+/** Provides the Workers AI binding and opens isolated production pi agents over in-memory storage. */
+
 import { MemoryStorage } from "@earendil-works/pi-durable";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";

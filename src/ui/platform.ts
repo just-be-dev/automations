@@ -1,3 +1,4 @@
+/** Chooses the browser platform's modifier key for submitting text without losing plain Enter for newlines. */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 

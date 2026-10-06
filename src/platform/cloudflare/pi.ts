@@ -1,3 +1,4 @@
+/** Implements PiAgent with resumable pi-durable conversations, root-only tools, and Workers AI model calls. */
 import { createModels } from "@earendil-works/pi-ai/models";
 import {
   AssistantEntry,

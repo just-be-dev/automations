@@ -1,3 +1,4 @@
+/** Presents the planner conversation, pending progress or questions, and the person's message composer. */
 import * as Array from "effect/Array";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";

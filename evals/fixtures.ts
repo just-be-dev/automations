@@ -1,10 +1,10 @@
+/** What the evals work with: a People Ops team's entity store, its people, and drafts to edit. */
+
 import type { Subject } from "../src/entities/model.ts";
 import type { Catalog } from "../src/workflow/catalog.ts";
 import { RunId } from "../src/workflow/run.ts";
 import type { ExecutionValues } from "../src/workflow/execution.ts";
 import type { Workflow } from "../src/workflow/model.ts";
-
-/** What the evals work with: a People Ops team's entity store, its people, and drafts to edit. */
 
 export const catalog: Catalog = {
   types: [

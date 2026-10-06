@@ -1,3 +1,4 @@
+/** Presents empty states with a coordinated heading, explanation, illustration, and optional actions. */
 import type { Attribute, Html, HtmlBuilder } from "foldkit/html";
 
 type Child = Html | string;

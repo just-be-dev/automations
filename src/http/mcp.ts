@@ -1,3 +1,4 @@
+/** Serves stateless MCP over HTTP with origin checks, body limits, and JSON-only responses. */
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";

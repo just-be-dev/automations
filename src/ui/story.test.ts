@@ -1,3 +1,5 @@
+/** Checks root app transitions for chat, saving, run polling, task answers, and navigation.
+ * Exercises request freshness and recovery without executing browser or server effects. */
 import { expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import { Command, given, message, model, story } from "foldkit/story";

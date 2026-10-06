@@ -1,3 +1,4 @@
+/** Starts a fresh overview session and its initial load, keeping earlier sessions' replies separate. */
 import type { Update } from "foldkit";
 import { LoadOverview } from "./command.ts";
 import type { Message } from "./message.ts";

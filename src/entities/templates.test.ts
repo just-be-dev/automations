@@ -1,3 +1,4 @@
+/** Checks template slots, reference substitution, nested expansion, and ordered template-use discovery. */
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import type { EntityType } from "./model.ts";

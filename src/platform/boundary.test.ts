@@ -1,3 +1,4 @@
+/** Guards backend domain boundaries against platform imports and native Cloudflare globals. */
 import { expect, test } from "bun:test";
 import { dirname, resolve } from "node:path";
 

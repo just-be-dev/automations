@@ -1,3 +1,4 @@
+/** Presents step records as labelled fields, readable dates, and list tags for people who do not read JSON. */
 import * as Array from "effect/Array";
 import * as Predicate from "effect/Predicate";
 import type * as Schema from "effect/Schema";
@@ -5,9 +6,6 @@ import type { Html, HtmlBuilder } from "foldkit/html";
 import { componentName } from "@/lib/component";
 import { formatTime } from "@/lib/format";
 import { cn } from "@/lib/utils";
-
-// What a step recorded, laid out for people who don't read JSON: labelled fields, readable dates,
-// lists as tags.
 
 type JsonObject = { readonly [key: string]: Schema.Json };
 

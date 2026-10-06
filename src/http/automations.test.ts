@@ -1,3 +1,4 @@
+/** Checks automation HTTP delegation, creation, and trace reads without a native hosting platform. */
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";

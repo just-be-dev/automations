@@ -1,3 +1,4 @@
+/** Defines the model service that classifies planner reasoning into a user-facing progress topic. */
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";

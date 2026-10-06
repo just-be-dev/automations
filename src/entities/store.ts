@@ -1,3 +1,4 @@
+/** Defines entity-store operations and enforces shared validation, merging, and dependency constraints over storage adapters. */
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -15,13 +16,6 @@ import {
   type Subject,
 } from "./model.ts";
 import { checkTemplate, type InvalidTemplate, type Template } from "./templates.ts";
-
-/**
- * Where entity types, entities, templates, roles, and subscriptions to entity changes live. Templates sit
- * beside the types because each one is checked against them. `EntityStore` is the service steps,
- * triggers, and the API use; the platform adapter implements it on D1, and `layerMemory` below
- * implements it in memory for tests.
- */
 
 export class EntityStoreError extends Schema.TaggedError<EntityStoreError>()("EntityStoreError", {
   message: Schema.String,

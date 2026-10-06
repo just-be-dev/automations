@@ -1,3 +1,4 @@
+/** Guides automation creation from a description, keeping failures editable and adding successes to the sidebar immediately. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import { Update } from "foldkit";

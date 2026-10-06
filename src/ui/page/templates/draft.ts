@@ -1,3 +1,4 @@
+/** Converts approved templates into editable slot and content rows and checks drafts before saving. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";

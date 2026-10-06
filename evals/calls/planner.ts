@@ -1,3 +1,5 @@
+/** Runs a planner turn with production tools and records retries, tool calls, and skipped questions. */
+
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";

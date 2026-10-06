@@ -1,3 +1,5 @@
+/** The planner turns one chat message into a draft, and answers the person. */
+
 import { expect } from "bun:test";
 import { conditionRefs } from "../src/workflow/model.ts";
 import {
@@ -14,8 +16,6 @@ import {
 } from "./calls/planner.ts";
 import { defineEval, judged } from "./framework/eval.ts";
 import { catalogWithoutRoles, headsUpDraft, welcomeDraft } from "./fixtures.ts";
-
-/** The planner turns one chat message into a draft, and answers the person. */
 
 const drafts = {
   "drafts a workflow": (output: PlannerOutput) => expect(output.workflow).toBeDefined(),

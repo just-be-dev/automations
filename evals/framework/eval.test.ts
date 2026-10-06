@@ -1,3 +1,5 @@
+/** Checks trial execution, failure accounting, pass rates, and case filtering with stubbed models. */
+
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

@@ -1,3 +1,4 @@
+/** Opens the entity store at the URL's selected type and resets forms when that selection changes. */
 import * as Equal from "effect/Equal";
 import * as Option from "effect/Option";
 import { modifyFields } from "foldkit/struct";

@@ -71,7 +71,7 @@ Stick to these `GET` routes unless the user asks for more. `chat` calls Workers 
   - Decode every boundary with Schema: request bodies, path params, LLM output, and values read back from storage.
   - Model expected failures with `Schema.TaggedError`.
   - Name operations with `Effect.fn("Module.operation")`.
-- Durable Object RPC errors reach the Worker as plain objects. Map them structurally (see `messageOf` in `src/http/response.ts`); don't use `instanceof`.
+- Durable Object RPC errors reach the Worker as plain objects. Map them structurally (see `messageOf` in `src/error.ts`); don't use `instanceof`.
 - pi-ai and pi-durable stay on purpose even though they are Promise-based. Wrap them in `src/platform/cloudflare/pi.ts` with `Effect.tryPromise` and `PiError`. Don't swap them for Effect AI.
 
 ## Alchemy 2

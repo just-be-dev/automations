@@ -1,3 +1,4 @@
+/** Prepares the root app for its initial URL and preferences, loading the selected page and shared catalogues. */
 import * as Option from "effect/Option";
 import type { Runtime } from "foldkit";
 import * as Dialog from "@/components/ui/dialog";

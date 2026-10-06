@@ -1,3 +1,4 @@
+/** Reads snapshots and the current catalog; saving validates, persists, schedules, and updates subscriptions. */
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import { EntityStore } from "../entities/store.ts";

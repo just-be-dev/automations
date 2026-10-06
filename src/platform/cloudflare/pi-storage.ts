@@ -1,3 +1,4 @@
+/** Adapts Durable Object SQLite to pi-durable storage with pi-prefixed tables, without importing the native SDK. */
 import {
   SQLITE_MIGRATIONS,
   SqliteStorage,

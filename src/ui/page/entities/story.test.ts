@@ -1,3 +1,4 @@
+/** Checks entity-store selection, form validation, saves, and confirmed deletion without server requests. */
 import { expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import { Command, given, message, model, story } from "foldkit/story";

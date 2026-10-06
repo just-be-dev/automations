@@ -1,3 +1,4 @@
+/** Presents themed multiline form controls with accessible labels, descriptions, and validation states. */
 import { Textarea as FoldkitTextarea } from "@foldkit/ui";
 import type { Attribute, Html, HtmlBuilder, TextareaAttribute } from "foldkit/html";
 

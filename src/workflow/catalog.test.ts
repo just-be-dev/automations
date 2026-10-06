@@ -1,3 +1,4 @@
+/** Checks workflow references, branch ordering, operation inputs, templates, and role permissions against a catalog. */
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import { describeCatalog, workflowProblems, type Catalog } from "./catalog.ts";

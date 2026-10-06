@@ -1,3 +1,4 @@
+/** Gives entity names, times, and run statuses consistent readable wording and visual cues across the UI. */
 import type { RunStatus } from "../../workflow.ts";
 
 export const withArticle = (entityType: string) => {

@@ -1,3 +1,5 @@
+/** Coordinates entity-store editing and confirmed deletion, validating drafts and reporting triggered runs.
+ * Ignores record loads for types that are no longer selected. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";

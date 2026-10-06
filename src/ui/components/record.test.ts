@@ -1,3 +1,4 @@
+/** Checks that recorded field names and date-like values read naturally without altering ordinary text. */
 import { expect, test } from "bun:test";
 import { formatTime } from "@/lib/format";
 import { fieldLabel, formatText } from "./record.ts";

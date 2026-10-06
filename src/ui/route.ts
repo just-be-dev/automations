@@ -1,3 +1,4 @@
+/** Connects studio URLs to pages and selections, keeping navigation links consistent with URL parsing. */
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { defineRouteUnion } from "foldkit/route";

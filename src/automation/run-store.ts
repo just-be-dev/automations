@@ -1,3 +1,4 @@
+/** Persists application run records, serializes progress updates, and settles status from engine outcomes. */
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";

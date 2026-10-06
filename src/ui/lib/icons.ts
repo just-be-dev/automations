@@ -1,3 +1,4 @@
+/** Renders Lucide node trees as Foldkit elements and assigns consistent icons to workflow triggers. */
 import type { Attribute, ChildAttribute, Html, HtmlBuilder } from "foldkit/html";
 import { CalendarClock, CalendarDays, Play, Radio, type IconNode, type SVGProps } from "lucide";
 import type { Trigger } from "../../workflow.ts";

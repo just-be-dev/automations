@@ -1,3 +1,5 @@
+/** Coordinates root app interactions across the studio, runs, and child pages.
+ * Guards page-specific results against outdated page revisions and polling contexts. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";

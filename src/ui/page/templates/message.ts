@@ -1,3 +1,4 @@
+/** Describes template wording and slot edits, deletion confirmations, and catalogue and usage request outcomes. */
 import * as Schema from "effect/Schema";
 import { defineMessageUnion } from "foldkit/message";
 import { EntityType, Template } from "../../../entities.ts";

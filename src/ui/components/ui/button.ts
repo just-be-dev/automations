@@ -1,3 +1,4 @@
+/** Gives buttons and button-like links consistent themed sizes, emphasis, and interaction states. */
 import { Button as FoldkitButton } from "@foldkit/ui";
 import type { Attribute, Html, HtmlBuilder } from "foldkit/html";
 

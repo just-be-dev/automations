@@ -1,8 +1,10 @@
+/** Shares HTTP boundary decoding, request-size checks, and consistent JSON success and error responses. */
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 import * as Schema from "effect/Schema";
+import { messageOf } from "../error.ts";
 
 const MAX_BODY_BYTES = 32_000;
 
@@ -20,15 +22,6 @@ class PayloadTooLarge extends Schema.TaggedError<PayloadTooLarge>()("PayloadTooL
 
 export const json = (body: unknown, status = 200) =>
   HttpServerResponse.jsonUnsafe(body, { status, headers: { "cache-control": "no-store" } });
-
-// Remote failures can arrive as plain objects, so read their message structurally.
-export const messageOf = (error: unknown) =>
-  typeof error === "object" &&
-  error !== null &&
-  "message" in error &&
-  typeof error.message === "string"
-    ? error.message
-    : "Unexpected error";
 
 export const pathParams = <A, I extends Readonly<Record<string, string | undefined>>>(
   schema: Schema.Codec<A, I>,

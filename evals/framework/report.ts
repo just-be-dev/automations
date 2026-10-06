@@ -1,3 +1,5 @@
+/** What a run prints, and the results it keeps in `evals/results/` to compare the next run with. */
+
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import { mkdir, readdir } from "node:fs/promises";
@@ -10,8 +12,6 @@ import {
   trialPassed,
   type EvalResult,
 } from "./eval.ts";
-
-/** What a run prints, and the results it keeps in `evals/results/` to compare the next run with. */
 
 const resultsDir = join(import.meta.dir, "..", "results");
 

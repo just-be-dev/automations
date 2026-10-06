@@ -1,3 +1,4 @@
+/** Manages the run followed on a page or in a panel, including reloads, polling cadence, and human-task answers. */
 import * as Array from "effect/Array";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";

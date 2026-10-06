@@ -1,3 +1,4 @@
+/** Hosts one automation in a Durable Object, wiring storage, jobs, AI, and replay-compatible callbacks. */
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";

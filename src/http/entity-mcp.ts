@@ -1,3 +1,4 @@
+/** Exposes entity-store tools and answers MCP JSON-RPC messages statelessly, without sessions or background handlers. */
 import * as Tool from "effect/ai/Tool";
 import * as Toolkit from "effect/ai/Toolkit";
 import * as Context from "effect/Context";
@@ -5,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import { messageOf } from "../error.ts";
 import {
   EntityData,
   EntityId,
@@ -238,14 +240,6 @@ const describeTool = (tool: Tool.Any) => ({
   },
 });
 
-const messageOf = (error: unknown) =>
-  typeof error === "object" &&
-  error !== null &&
-  "message" in error &&
-  typeof error.message === "string"
-    ? error.message
-    : "The tool failed";
-
 const toolText = (value: unknown) => ({ type: "text", text: JSON.stringify(value) });
 
 const callTool = Effect.fn("EntityMcp.callTool")(function* (name: string, args: unknown) {
@@ -265,7 +259,10 @@ const callTool = Effect.fn("EntityMcp.callTool")(function* (name: string, args: 
       isError: false,
     })),
     Effect.catch((error: unknown) =>
-      Effect.succeed({ content: [{ type: "text", text: messageOf(error) }], isError: true }),
+      Effect.succeed({
+        content: [{ type: "text", text: messageOf(error, "The tool failed") }],
+        isError: true,
+      }),
     ),
   );
 });

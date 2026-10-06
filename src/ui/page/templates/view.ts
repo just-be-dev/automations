@@ -1,3 +1,4 @@
+/** Presents approved wording, slots, and the automations using each template, with editing and deletion warnings. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import { Submodel } from "foldkit";

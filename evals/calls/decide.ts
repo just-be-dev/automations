@@ -1,3 +1,8 @@
+/**
+ * Makes a decide step's decision, as a run does: the step's prompt in a fresh conversation, and
+ * the decision `decision` makes of the answer.
+ */
+
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { decidePrompt, decision } from "../../src/workflow/agent-step.ts";
@@ -5,11 +10,6 @@ import { ExecutionValues } from "../../src/workflow/execution.ts";
 import { DecideStep } from "../../src/workflow/model.ts";
 import type { Call } from "../framework/call.ts";
 import { openPi } from "../framework/models.ts";
-
-/**
- * Makes a decide step's decision, as a run does: the step's prompt in a fresh conversation, and
- * the decision `decision` makes of the answer.
- */
 
 export const DecideInput = Schema.Struct({
   question: Schema.String,

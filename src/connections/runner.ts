@@ -1,3 +1,4 @@
+/** Executes action operations: guarded HTTP requests and replay-stable simulations of uncredentialed services. */
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";

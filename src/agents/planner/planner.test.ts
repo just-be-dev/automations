@@ -1,3 +1,4 @@
+/** Checks draft acceptance, planner retries, current instructions, and user-facing progress selection. */
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import type { Catalog } from "../../workflow/catalog.ts";

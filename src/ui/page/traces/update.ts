@@ -1,3 +1,4 @@
+/** Refreshes the trace debugger's data while keeping the current conversation visible until its replacement arrives. */
 import * as Option from "effect/Option";
 import type { Update } from "foldkit";
 import { modifyFields } from "foldkit/struct";

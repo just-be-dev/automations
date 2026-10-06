@@ -1,3 +1,4 @@
+/** Supplies a planner conversation with reasoning, tool calls, and a failed tool result for trace tests. */
 import * as Option from "effect/Option";
 import type { Trace } from "../../../ai/trace.ts";
 import type { RunSummary } from "../../../workflow.ts";

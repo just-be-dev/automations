@@ -1,3 +1,4 @@
+/** Loads approved templates and their usage, saves wording changes, and removes templates on request. */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Command, Http } from "foldkit";

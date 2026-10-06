@@ -1,3 +1,4 @@
+/** Tracks the entity store's selected type, loaded records, editable forms, and pending deletion or save. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";

@@ -1,3 +1,4 @@
+/** Joins independent design and execution lifecycles into one automation's public operations and reads. */
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import { usedTemplates } from "../entities/templates.ts";

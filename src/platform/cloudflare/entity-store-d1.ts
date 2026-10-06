@@ -1,3 +1,4 @@
+/** Implements entity storage on D1 with schema-checked rows; shared store code owns validation and merging. */
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Clock from "effect/Clock";
@@ -8,11 +9,6 @@ import { AutomationsDatabase } from "./database.ts";
 import { EntityData, EntityType, Role, type EntityRecord } from "../../entities/model.ts";
 import { EntityStore, EntityStoreError, makeEntityStore } from "../../entities/store.ts";
 import { Template } from "../../entities/templates.ts";
-
-/**
- * The `EntityStore` on D1, in the `entity_types`, `entities`, `entity_subscriptions`,
- * `templates`, and `roles` tables (see `migrations/`).
- */
 
 const TypeRow = Schema.Struct({ definition: Schema.fromJsonString(EntityType) });
 const TemplateRow = Schema.Struct({ definition: Schema.fromJsonString(Template) });

@@ -1,3 +1,4 @@
+/** Advances the planner's questionnaire through answers, optional review, and submission that resumes the parked turn. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import type { Update } from "foldkit";
@@ -9,10 +10,6 @@ import type { Message } from "../message.ts";
 import { Activity, type Model, openQuestionnaire } from "../model.ts";
 
 type UpdateReturn = Update.Return<Model, Message>;
-
-// The person answers the questions the agent is waiting on one at a time. With one question, its
-// answer is sent as soon as it's complete; with several, a review comes before sending them
-// together. Sending resumes the agent's reply.
 
 /** Runs `answer` on the open questionnaire, unless the message is about questions already answered. */
 const answering = (

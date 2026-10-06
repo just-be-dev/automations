@@ -1,3 +1,4 @@
+/** Presents a run's saved snapshot, outcomes, and open tasks on its own page or beside another page. */
 import * as Option from "effect/Option";
 import type { HtmlBuilder } from "foldkit/html";
 import { CircleAlert, LoaderCircle, Maximize2, OctagonX, Pencil, X } from "lucide";

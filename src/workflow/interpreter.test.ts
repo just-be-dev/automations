@@ -1,3 +1,4 @@
+/** Exercises workflow execution, suspension, replay, branching, and human responses with a journaled test engine. */
 import { describe, expect, test } from "bun:test";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -208,7 +209,10 @@ describe("RunAutomation", () => {
         expect(yield* outcome(executionId)).toBe("suspended");
         yield* TestClock.adjust("1 day");
         yield* harness.drain;
-        expect(Exit.isExit(yield* outcome(executionId))).toBe(true);
+        expect(yield* finalSteps(executionId)).toEqual({
+          draft: { output: "Do draft after nothing" },
+          pause: null,
+        });
       }),
     );
     expect(harness.calls).toEqual(["draft"]);

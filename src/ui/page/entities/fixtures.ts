@@ -1,3 +1,4 @@
+/** Provides an employee type, sample record, and loaded entity page for editing tests. */
 import * as Option from "effect/Option";
 import type { EntityRecord, EntityType } from "../../../entities.ts";
 import { Message, init, update, type Model } from "./index.ts";

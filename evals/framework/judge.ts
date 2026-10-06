@@ -1,12 +1,12 @@
-import { createAI } from "agents/models/pi-ai";
-import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
-import { WorkersAi } from "./models.ts";
-
 /**
  * The LLM judge, for what code can't check, such as whether a reply reads well to someone who
  * doesn't build software. It runs in the Evals Worker; checks reach it through `judged`.
  */
+
+import { createAI } from "agents/models/pi-ai";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import { WorkersAi } from "./models.ts";
 
 export const Grade = Schema.Struct({ pass: Schema.Boolean, reason: Schema.String });
 

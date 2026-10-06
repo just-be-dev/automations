@@ -1,3 +1,4 @@
+/** Composes the platform-independent API routes and their fallback response. */
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as Layer from "effect/Layer";
 import { automationRoutes } from "./automations.ts";

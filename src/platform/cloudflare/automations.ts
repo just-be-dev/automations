@@ -1,3 +1,4 @@
+/** Adapts named Durable Object RPC clients to the platform-independent Automations service. */
 import * as Alchemy from "alchemy";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

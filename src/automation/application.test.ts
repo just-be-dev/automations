@@ -1,3 +1,4 @@
+/** Exercises design, saving, scheduling, approvals, and durable runs over an in-memory automation host. */
 import { describe, expect, expectTypeOf, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";

@@ -1,3 +1,4 @@
+/** Builds ask_question: validate all questions, wait through the host's Ask capability, and return readable answers. */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { type AgentTool, AgentToolError } from "../pi.ts";
@@ -12,12 +13,6 @@ import {
   questionnaireProblems,
   type QuestionsAnswer,
 } from "./question.ts";
-
-/**
- * The `ask_question` tool, for any agent whose host can show the person questions. It checks the
- * questions, tells the model every problem with them in plain words, and otherwise waits for the
- * answer through `ask` and returns it as the result the model reads.
- */
 
 /**
  * Shows the person the questions one call asks and waits for their answer. Asking again with the

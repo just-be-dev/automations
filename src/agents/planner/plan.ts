@@ -1,3 +1,4 @@
+/** Models the planner's flat working copy, replay-safe edits, and assembly into a nested workflow. */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { stringify } from "yaml";

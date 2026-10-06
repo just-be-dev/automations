@@ -1,3 +1,4 @@
+/** Starts saved workflows and owns run scheduling, human tasks, step services, and durable replay callbacks. */
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

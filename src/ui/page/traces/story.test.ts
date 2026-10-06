@@ -1,3 +1,4 @@
+/** Checks trace selection and refresh transitions, preserving visible data and ignoring outdated replies. */
 import { expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import { Command, given, message, model, story } from "foldkit/story";

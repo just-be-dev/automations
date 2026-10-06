@@ -1,3 +1,4 @@
+/** Opens URL-selected pages and run previews while clearing page-specific state and invalidating old requests. */
 import * as Option from "effect/Option";
 import { Update } from "foldkit";
 import { modifyFields } from "foldkit/struct";

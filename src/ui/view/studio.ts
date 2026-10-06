@@ -1,3 +1,4 @@
+/** Presents the editable workflow draft, permissions, and recent runs with saving and saved-version launch controls. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import type { HtmlBuilder } from "foldkit/html";

@@ -1,3 +1,4 @@
+/** Persists one planner turn's working copy and question answers so replayed tools resume the same design. */
 import * as Effect from "effect/Effect";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";

@@ -1,3 +1,5 @@
+/** Coordinates approved-template editing and deletion, validating slots and content before saving.
+ * Keeps the catalogue and selected template's usage in step with request outcomes. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import * as Order from "effect/Order";

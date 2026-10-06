@@ -1,3 +1,4 @@
+/** Defines chat state and automation directory, overview, and template-usage records shared with callers. */
 import * as Schema from "effect/Schema";
 import { AskedQuestions, Question } from "../ai/ask-question/question.ts";
 import { Trigger } from "../workflow/model.ts";

@@ -1,3 +1,5 @@
+/** Defines eval cases and runs repeated trials with named checks, failure capture, and pass rates. */
+
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";

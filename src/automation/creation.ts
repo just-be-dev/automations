@@ -1,3 +1,4 @@
+/** Names and lists a new automation, then submits its description as the first design message. */
 import * as Effect from "effect/Effect";
 import { nameAutomation } from "../agents/namer/namer.ts";
 import { listNewAutomation } from "./index.ts";

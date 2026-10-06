@@ -1,3 +1,4 @@
+/** Defines planner instructions, turns tool edits and replies into validated drafts, and selects progress phrases. */
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -7,11 +8,6 @@ import { InvalidWorkflow, type Workflow } from "../../workflow/model.ts";
 import { MAX_SCHEDULED_RUNS, MIN_SCHEDULE_GAP_MINUTES } from "../../workflow/schedule.ts";
 import { assemblePlan, planOf, planYaml, samePlan, type Plan } from "./plan.ts";
 import { MAX_OPTIONS, MAX_QUESTIONS, MIN_OPTIONS } from "../../ai/ask-question/question.ts";
-
-/**
- * The planner agent: its system prompt instructions, how its edits and answer become a draft, and
- * the progress lines shown while it works.
- */
 
 export const plannerInstructions = (
   catalog: Catalog,

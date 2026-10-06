@@ -1,13 +1,10 @@
+/** Renders agent Markdown as safe elements, keeping raw HTML inert and restricting link protocols. */
 import * as Array from "effect/Array";
 import * as Match from "effect/Match";
 import type { Html, HtmlBuilder } from "foldkit/html";
 import { Lexer, type MarkedToken, type Token, type Tokens } from "marked";
 import { componentName } from "@/lib/component";
 import { cn } from "@/lib/utils";
-
-// Markdown from the agent, built as elements rather than set as HTML, so nothing it writes can
-// add markup, scripts, or styles. Raw HTML shows as text, and links only open web and mail
-// addresses, in a new tab so the studio stays open.
 
 type Child = Html | string;
 

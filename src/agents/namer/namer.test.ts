@@ -1,3 +1,4 @@
+/** Checks name cleanup and fallback behavior when the naming model fails, stalls, or answers poorly. */
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

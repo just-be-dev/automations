@@ -1,3 +1,4 @@
+/** Defines host persistence and durable jobs, which must commit or roll back in the same transaction. */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";

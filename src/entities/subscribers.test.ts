@@ -1,3 +1,4 @@
+/** Checks that entity changes notify only matching automations and retain each subscriber's failure. */
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";

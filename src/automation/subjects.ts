@@ -1,3 +1,4 @@
+/** Loads run subjects, resolves references through related entities, and selects subjects due for timed triggers. */
 import * as Effect from "effect/Effect";
 import { EntityStore } from "../entities/store.ts";
 import { readRef, type Subject } from "../entities/model.ts";

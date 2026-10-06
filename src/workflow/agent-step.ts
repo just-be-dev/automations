@@ -1,12 +1,8 @@
+/** Builds agent and decide prompts and validates their answers into step records; PiAgent performs model calls. */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { valueMatches, type AgentStep, type DecideStep } from "./model.ts";
 import type { ExecutionValues } from "./execution.ts";
-
-/**
- * How agent and decide steps talk to the model: the prompts the Automation object sends, and how
- * the answers become step records. The model call itself lives in `src/ai/pi.ts`.
- */
 
 export class AgentAnswerError extends Schema.TaggedError<AgentAnswerError>()("AgentAnswerError", {
   message: Schema.String,

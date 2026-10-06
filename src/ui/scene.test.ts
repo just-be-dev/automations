@@ -1,3 +1,5 @@
+/** Exercises visible studio and run interactions, including questionnaires, permissions, and safe rendering.
+ * Covers the shared shell's dialogs, run panels, and integration with the other pages. */
 import { test } from "bun:test";
 import { Animation, Dialog as FoldkitDialog } from "@foldkit/ui";
 import * as Option from "effect/Option";

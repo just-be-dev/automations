@@ -1,3 +1,4 @@
+/** Guides chat submission and pending replies and prepares subject choices for the saved automation's runs. */
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import type { Update } from "foldkit";

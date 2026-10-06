@@ -1,3 +1,4 @@
+/** Defines execution identity and interpreter values rebuilt from the journal on each replay. */
 import * as Schema from "effect/Schema";
 import { Subject } from "../entities/model.ts";
 import { RunId } from "./run.ts";

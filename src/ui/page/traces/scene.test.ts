@@ -1,3 +1,4 @@
+/** Exercises the trace debugger's conversation details, usage totals, source links, and failed refresh feedback. */
 import { test } from "bun:test";
 import { Command, click, expect, given, role, scene, text } from "foldkit/scene";
 import * as Option from "effect/Option";

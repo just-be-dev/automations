@@ -1,3 +1,4 @@
+/** Checks timed-trigger validation, timezone-aware occurrences, date offsets, and readable schedule descriptions. */
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";

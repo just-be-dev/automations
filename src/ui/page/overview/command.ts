@@ -1,3 +1,4 @@
+/** Loads and polls the automation overview and starts saved automations for an optional chosen subject. */
 import * as Array from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";

@@ -1,3 +1,4 @@
+/** Reads automation and run listings and their agent conversations for the trace debugger. */
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";

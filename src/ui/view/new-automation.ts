@@ -1,3 +1,4 @@
+/** Presents the description dialog for creating an automation, including validation and creation feedback. */
 import * as Option from "effect/Option";
 import type { HtmlBuilder } from "foldkit/html";
 import { CircleAlert, LoaderCircle } from "lucide";

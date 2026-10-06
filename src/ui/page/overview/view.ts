@@ -1,3 +1,4 @@
+/** Presents active runs and saved automation triggers, with controls for launching runs and choosing their subjects. */
 import * as Array from "effect/Array";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";

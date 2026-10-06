@@ -1,9 +1,9 @@
+/** Decide steps pick the option that routes a run. */
+
 import { expect } from "bun:test";
 import { decide } from "./calls/decide.ts";
 import { defineEval } from "./framework/eval.ts";
 import { ada, values } from "./fixtures.ts";
-
-/** Decide steps pick the option that routes a run. */
 
 const welcomes = {
   engineer: "Software engineers and other people who write code",

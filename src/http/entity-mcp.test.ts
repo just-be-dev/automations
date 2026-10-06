@@ -1,3 +1,4 @@
+/** Exercises stateless MCP negotiation and tools over the entity store, including persisted role writes. */
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -26,37 +27,33 @@ const person: EntityType = {
   ],
 };
 
-const answer = (message: unknown) =>
-  Effect.runPromise(
-    answerMcp(message).pipe(
-      Effect.provide(
-        EntityToolHandlers.pipe(
-          Layer.provide(
-            Layer.merge(
-              layerMemory({
-                types: [employee, person],
-                entities: [
-                  { type: "employee", id: "ada", data: { name: "Ada" }, updatedAt: 0 },
-                  {
-                    type: "person",
-                    id: "sam",
-                    data: { name: "Sam", email: "sam@example.com" },
-                    updatedAt: 0,
-                  },
-                ],
-              }),
-              Layer.succeed(EntitySubscribers, {
-                notify: (change) =>
-                  Effect.succeed([
-                    { automation: `watching-${change.after.type}`, runId: "run-1", error: null },
-                  ]),
-              }),
-            ),
-          ),
-        ),
-      ),
+const handlers = EntityToolHandlers.pipe(
+  Layer.provide(
+    Layer.merge(
+      layerMemory({
+        types: [employee, person],
+        entities: [
+          { type: "employee", id: "ada", data: { name: "Ada" }, updatedAt: 0 },
+          {
+            type: "person",
+            id: "sam",
+            data: { name: "Sam", email: "sam@example.com" },
+            updatedAt: 0,
+          },
+        ],
+      }),
+      Layer.succeed(EntitySubscribers, {
+        notify: (change) =>
+          Effect.succeed([
+            { automation: `watching-${change.after.type}`, runId: "run-1", error: null },
+          ]),
+      }),
     ),
-  );
+  ),
+);
+
+const answer = (message: unknown) =>
+  Effect.runPromise(answerMcp(message).pipe(Effect.provide(handlers)));
 
 const call = (name: string, args: unknown) =>
   answer({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } });
@@ -123,23 +120,34 @@ describe("entity store MCP", () => {
   });
 
   test("defines and lists roles, whose members must have an email", async () => {
-    const ops = { name: "ops", label: "Ops", members: [{ type: "person", id: "sam" }] };
-    expect(await call("define_role", { role: ops })).toMatchObject({
-      result: { isError: false, structuredContent: { role: ops } },
-    });
-    expect(
-      await call("define_role", {
-        role: { ...ops, members: [{ type: "employee", id: "ada" }] },
-      }),
-    ).toMatchObject({
-      result: {
-        isError: true,
-        content: [{ text: "employee has no email field, so it can't be a member" }],
-      },
-    });
-    expect(await call("list_roles", {})).toMatchObject({
-      result: { isError: false, structuredContent: { roles: [] } },
-    });
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const call = (name: string, args: unknown) =>
+          answerMcp({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "tools/call",
+            params: { name, arguments: args },
+          });
+        const ops = { name: "ops", label: "Ops", members: [{ type: "person", id: "sam" }] };
+        expect(yield* call("define_role", { role: ops })).toMatchObject({
+          result: { isError: false, structuredContent: { role: ops } },
+        });
+        expect(
+          yield* call("define_role", {
+            role: { ...ops, members: [{ type: "employee", id: "ada" }] },
+          }),
+        ).toMatchObject({
+          result: {
+            isError: true,
+            content: [{ text: "employee has no email field, so it can't be a member" }],
+          },
+        });
+        expect(yield* call("list_roles", {})).toMatchObject({
+          result: { isError: false, structuredContent: { roles: [ops] } },
+        });
+      }).pipe(Effect.provide(handlers)),
+    );
   });
 
   test("reports store and argument problems as tool errors", async () => {

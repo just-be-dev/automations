@@ -1,3 +1,4 @@
+/** Exercises entity-store forms and tables through their accessible controls, including failed saves. */
 import { test } from "bun:test";
 import * as Option from "effect/Option";
 import {

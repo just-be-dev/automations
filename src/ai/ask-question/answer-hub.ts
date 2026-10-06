@@ -1,3 +1,4 @@
+/** Wakes in-memory agent turns when answers arrive and signals when a turn parks on a question. */
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";

@@ -1,3 +1,4 @@
+/** Presents agent conversations for debugging, including instructions, reasoning, tool activity, and token usage. */
 import * as Array from "effect/Array";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";

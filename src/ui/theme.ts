@@ -1,3 +1,4 @@
+/** Restores browser preferences at boot and applies and remembers the user's color-theme choice. */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { loadShortcutModifier, ShortcutModifier } from "./platform.ts";

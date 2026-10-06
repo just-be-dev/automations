@@ -1,3 +1,8 @@
+/**
+ * Carries out an agent step, as a run does: the step's prompt in a fresh conversation, and the
+ * record `agentOutput` makes of the answer.
+ */
+
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { agentOutput, agentPrompt } from "../../src/workflow/agent-step.ts";
@@ -5,11 +10,6 @@ import { ExecutionValues } from "../../src/workflow/execution.ts";
 import { AgentStep, ValueType } from "../../src/workflow/model.ts";
 import type { Call } from "../framework/call.ts";
 import { openPi } from "../framework/models.ts";
-
-/**
- * Carries out an agent step, as a run does: the step's prompt in a fresh conversation, and the
- * record `agentOutput` makes of the answer.
- */
 
 export const AgentInput = Schema.Struct({
   title: Schema.String,

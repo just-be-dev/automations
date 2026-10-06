@@ -1,3 +1,5 @@
+/** Picks the progress phrase the studio shows for the planner's latest reasoning. */
+
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -5,8 +7,6 @@ import { pickProgress } from "../../src/agents/planner/planner.ts";
 import { workersAiClassifier } from "../../src/platform/cloudflare/workers-ai.ts";
 import type { Call } from "../framework/call.ts";
 import { WorkersAi } from "../framework/models.ts";
-
-/** Picks the progress phrase the studio shows for the planner's latest reasoning. */
 
 export const ProgressOutput = Schema.Struct({
   /** Nothing when the classifier's answer didn't decode or it wasn't sure. */

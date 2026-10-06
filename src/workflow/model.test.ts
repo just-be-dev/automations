@@ -1,3 +1,4 @@
+/** Checks DSL decoding, template-string references, condition evaluation, and workflow structural limits. */
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import {

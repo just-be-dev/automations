@@ -1,3 +1,4 @@
+/** Owns planner chat, durable pending replies, progress, questions, and edits to the draft's permissions. */
 import * as Effect from "effect/Effect";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";

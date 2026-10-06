@@ -1,3 +1,4 @@
+/** Routes entity-type and record operations, notifying subscribers after writes but not deletions. */
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as Schema from "effect/Schema";

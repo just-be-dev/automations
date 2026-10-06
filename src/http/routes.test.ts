@@ -1,3 +1,4 @@
+/** Checks entity, role, template, and MCP routes through their HTTP responses and service calls. */
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";

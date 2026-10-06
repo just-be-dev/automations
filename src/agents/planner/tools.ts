@@ -1,3 +1,4 @@
+/** Builds replay-safe planner tools that edit, inspect, and validate the working copy or ask the person questions. */
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -16,11 +17,6 @@ import {
   type Plan,
 } from "./plan.ts";
 import { askQuestionTool, type Ask } from "../../ai/ask-question/tool.ts";
-
-/**
- * The planner's tools, which edit the working copy of the draft. Every edit sets values or
- * replaces steps by ID, so running a call again after a restart changes nothing more.
- */
 
 /** Where the working copy of the message being answered is kept, and how its questions are asked. */
 export interface PlanStore {

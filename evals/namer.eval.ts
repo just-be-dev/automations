@@ -1,8 +1,8 @@
+/** The namer titles a new automation from its description. */
+
 import { expect } from "bun:test";
 import { namer } from "./calls/namer.ts";
 import { defineEval } from "./framework/eval.ts";
-
-/** The namer titles a new automation from its description. */
 
 const words = (name: string) => name.split(/\s+/).filter((word) => word !== "");
 

@@ -1,3 +1,4 @@
+/** Tracks the selected approved template, its automation usage, and unsaved slot and wording edits. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";

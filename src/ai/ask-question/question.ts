@@ -1,3 +1,4 @@
+/** Defines agent questions and person answers, validates their limits, and renders answers as tool results. */
 import * as Schema from "effect/Schema";
 
 /**

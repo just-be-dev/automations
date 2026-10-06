@@ -1,3 +1,5 @@
+/** Holds the shared app state for designing automations and following runs across pages and panels.
+ * Keeps unsent messages, pending questions, and request freshness tied to their current context. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";

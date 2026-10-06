@@ -1,3 +1,4 @@
+/** Describes connection operations, inputs, and records for the planner, checker, and UI without executing them. */
 import type { Permission, Workflow } from "../workflow/model.ts";
 
 /**

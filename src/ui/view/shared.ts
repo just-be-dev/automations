@@ -1,3 +1,4 @@
+/** Keeps shared studio headings, step metadata, and text-submission affordances consistent across views. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import type { Html, HtmlBuilder, TextareaAttribute } from "foldkit/html";

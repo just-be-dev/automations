@@ -1,12 +1,6 @@
+/** Defines entity types, records, and roles, validates data, and resolves paths through related entities. */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-
-/**
- * Entities are the records automations act on, such as an `employee`. The `EntityStore` service
- * (`src/entities/store.ts`) keeps their types and records; this module holds the pure model: the
- * Schemas, how an entity's data is checked against its type, and how a dotted path walks from one
- * entity to another through `ref` fields.
- */
 
 export class InvalidEntity extends Schema.TaggedError<InvalidEntity>()("InvalidEntity", {
   message: Schema.String,

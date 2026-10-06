@@ -1,3 +1,4 @@
+/** Presents navigation to automations and supporting pages, with creation access and the current selection. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import type { HtmlBuilder } from "foldkit/html";

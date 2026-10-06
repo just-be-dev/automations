@@ -1,3 +1,4 @@
+/** Routes role and template management and reports which listed automations use a template. */
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
@@ -10,7 +11,8 @@ import { Automations } from "../automation/service.ts";
 import { EntityName, Role } from "../entities/model.ts";
 import { EntityStore } from "../entities/store.ts";
 import { Template } from "../entities/templates.ts";
-import { BadRequest, limitedBody, messageOf, NotFound, pathParams, respond } from "./response.ts";
+import { messageOf } from "../error.ts";
+import { BadRequest, limitedBody, NotFound, pathParams, respond } from "./response.ts";
 
 const RoleParams = Schema.Struct({ role: EntityName });
 const TemplateParams = Schema.Struct({ name: EntityName });

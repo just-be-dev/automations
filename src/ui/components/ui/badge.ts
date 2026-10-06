@@ -1,3 +1,4 @@
+/** Presents compact themed labels for statuses and other supporting information. */
 import type { Attribute, Html, HtmlBuilder } from "foldkit/html";
 
 type Child = Html | string;

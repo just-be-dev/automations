@@ -1,3 +1,4 @@
+/** Arranges chat messages and their avatars, headings, content, and footers for either speaker. */
 import type { Attribute, Html, HtmlBuilder } from "foldkit/html";
 
 import { cn } from "@/lib/utils";

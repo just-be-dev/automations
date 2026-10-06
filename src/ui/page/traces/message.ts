@@ -1,3 +1,4 @@
+/** Describes debugger refreshes and the results of loading automation, run, and conversation data. */
 import * as Schema from "effect/Schema";
 import { defineMessageUnion } from "foldkit/message";
 import { Trace } from "../../../ai/trace.ts";

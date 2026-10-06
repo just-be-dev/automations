@@ -1,3 +1,4 @@
+/** Gives connection operations recognizable names and icons and marks simulated operations consistently. */
 import type { HtmlBuilder } from "foldkit/html";
 import { CalendarDays, Mail, MessageSquare, Webhook } from "lucide";
 import { badge } from "@/components/ui/badge";

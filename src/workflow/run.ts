@@ -1,3 +1,4 @@
+/** Defines public run records, step results, human tasks, and summaries separately from replay state. */
 import * as Schema from "effect/Schema";
 import { Subject } from "../entities/model.ts";
 import { HumanResponseSpec, Workflow } from "./model.ts";

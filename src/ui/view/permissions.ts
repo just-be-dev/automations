@@ -1,3 +1,4 @@
+/** Presents each workflow operation's permission choices and the roles that can approve it. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import type { HtmlBuilder } from "foldkit/html";

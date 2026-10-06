@@ -1,3 +1,4 @@
+/** Checks that request-scoped Access identity reaches approval operations without leaking between requests. */
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";

@@ -1,3 +1,4 @@
+/** Presents themed single-line form controls with accessible labels, descriptions, and validation states. */
 import { Input as FoldkitInput } from "@foldkit/ui";
 import type { Attribute, Html, HtmlBuilder } from "foldkit/html";
 
