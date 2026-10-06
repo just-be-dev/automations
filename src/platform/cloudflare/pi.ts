@@ -118,8 +118,10 @@ const toolExtension = (tools: ReadonlyArray<AgentTool>) =>
         executionMode: "sequential",
         // pi validates what this returns against `parameters`.
         prepareArguments: (args) => parseStringArguments(tool.parameters, args),
-        execute: async (args) => {
-          const result = await Effect.runPromise(Effect.result(tool.execute(args)));
+        execute: async (args, api) => {
+          const result = await Effect.runPromise(
+            Effect.result(tool.execute(args, { id: String(api.taskId) })),
+          );
           if (Result.isFailure(result)) {
             throw new Error(result.failure.message);
           }

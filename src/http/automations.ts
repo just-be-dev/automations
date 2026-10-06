@@ -4,6 +4,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { Automations } from "../automation/service.ts";
+import { QuestionsAnswer } from "../agents/planner/question.ts";
 import { createAutomation } from "../automation/creation.ts";
 import { AutomationIndex } from "../automation/index.ts";
 import type { AutomationOverview } from "../automation/model.ts";
@@ -21,6 +22,7 @@ const RunParams = Schema.Struct({ ...AutomationParams.fields, runId: RunId });
 const TaskParams = Schema.Struct({ ...RunParams.fields, stepId: Schema.String });
 const CreateBody = Schema.Struct({ description: Schema.String });
 const ChatBody = Schema.Struct({ message: Schema.optionalKey(Schema.String) });
+const AnswersBody = Schema.Struct({ chatId: Schema.String, answer: QuestionsAnswer });
 const StartBody = Schema.Struct({ subject: Schema.optionalKey(EntityId) });
 const PermissionsBody = Schema.Struct({ permissions: Permissions });
 const automationParams = pathParams(AutomationParams);
@@ -95,6 +97,20 @@ export const automationRoutes = Layer.merge(
             const body = yield* limitedBody(ChatBody);
             const automations = yield* Automations;
             return yield* automations.get(id).chat(id, body.message ?? "");
+          }),
+          202,
+        ),
+      ),
+      // Answers the questions the planner is waiting on, which resumes its reply.
+      HttpRouter.route(
+        "POST",
+        "/:id/answers",
+        respond(
+          Effect.gen(function* () {
+            const { id } = yield* automationParams;
+            const body = yield* limitedBody(AnswersBody);
+            const automations = yield* Automations;
+            return yield* automations.get(id).answer(id, body.chatId, body.answer);
           }),
           202,
         ),

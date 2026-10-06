@@ -25,6 +25,7 @@ test("Access identity is request-scoped and reaches the automation's approval op
       get: (id) => ({
         inspectWorkflow: unused,
         overview: unused,
+        answer: unused,
         chat: unused,
         save: unused,
         setPermissions: unused,

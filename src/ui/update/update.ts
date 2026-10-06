@@ -16,11 +16,9 @@ import {
   PollAutomation,
   PollRun,
   SaveDraft,
-  SendMessage,
   SetPermission,
   StartRun,
 } from "../command.ts";
-import { maxMessageLength } from "../constant.ts";
 import { AutomationId, TaskAnswer } from "../domain/index.ts";
 import { Message, toEntitiesMessage, toOverviewMessage } from "../message.ts";
 import {
@@ -57,12 +55,22 @@ import {
   reloadOpenRun,
 } from "./open-run.ts";
 import {
+  chooseOption,
+  nextQuestion,
+  sendAnswers,
+  showQuestionStep,
+  skipQuestions,
+  updateOwnAnswer,
+  writeOwnAnswer,
+} from "./questionnaire.ts";
+import {
   choicesEntityType,
   chooseSubjects,
   fail,
   isAnswering,
   loadedAutomation,
   savedSubjectType,
+  sendMessage,
   thinking,
 } from "./studio.ts";
 
@@ -129,30 +137,17 @@ export const update = (model: Model, message: Message) =>
     },
     CompletedApplyTheme: () => ({ model }),
     UpdatedMessageInput: ({ value }) => ({ model: modifyMessageInput(model, () => value) }),
-    SubmittedMessage: () => {
-      if (Activity.guards.Working(model.activity)) {
-        return { model };
-      }
-      if (!AutomationId.isValid(model.automationId)) {
-        return fail(model, "Use an alphanumeric automation ID");
-      }
-      const messageInput = messageInputOf(model);
-      if (!messageInput.trim() || messageInput.length > maxMessageLength) {
-        return fail(model, "Message must be 1–10,000 characters");
-      }
-      return {
-        model: modifyFields(model, {
-          activity: () => Activity.Working({ notice: "Sending message…" }),
-        }),
-        commands: [
-          SendMessage({
-            automationId: model.automationId.trim(),
-            revision: model.revision,
-            message: messageInput,
-          }),
-        ],
-      };
-    },
+    SubmittedMessage: () => sendMessage(model, messageInputOf(model)),
+    ClickedQuestionStep: ({ chatId, step }) => showQuestionStep(model, chatId, step),
+    ClickedQuestionOption: ({ chatId, question, label }) =>
+      chooseOption(model, chatId, question, label),
+    ClickedWriteOwnAnswer: ({ chatId, question }) => writeOwnAnswer(model, chatId, question),
+    UpdatedOwnAnswer: ({ chatId, question, text }) =>
+      updateOwnAnswer(model, chatId, question, text),
+    ClickedNextQuestion: ({ chatId, question }) => nextQuestion(model, chatId, question),
+    ClickedSendAnswers: ({ chatId }) => sendAnswers(model, chatId),
+    ClickedSkipQuestions: ({ chatId }) => skipQuestions(model, chatId),
+    CompletedFocusOwnAnswer: () => ({ model }),
     ClickedSave: () => {
       if (Activity.guards.Working(model.activity)) {
         return { model };
@@ -298,10 +293,23 @@ export const update = (model: Model, message: Message) =>
               modifyMessageInput(model, (value) => (value === sentMessage ? "" : value)),
               {
                 maybePendingChat: () => Option.some(pendingChat),
+                maybeQuestionnaire: () => Option.none(),
                 maybeProgress: () => Option.none(),
                 activity: () => thinking,
               },
             ),
+            commands: [PollAutomation({ automationId: model.automationId.trim(), revision })],
+          },
+    SucceededSendAnswers: ({ revision, pendingChat }) =>
+      revision !== model.revision
+        ? { model }
+        : {
+            model: modifyFields(model, {
+              maybePendingChat: () => Option.some(pendingChat),
+              maybeQuestionnaire: () => Option.none(),
+              maybeProgress: () => Option.none(),
+              activity: () => thinking,
+            }),
             commands: [PollAutomation({ automationId: model.automationId.trim(), revision })],
           },
     SucceededSaveDraft: ({ revision, saved }) =>

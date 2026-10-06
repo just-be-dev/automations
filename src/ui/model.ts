@@ -3,10 +3,10 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { defineTaggedUnion } from "foldkit/schema";
 import * as Dialog from "@/components/ui/dialog";
-import { PendingChat, Run, RunSummary, Workflow } from "../workflow.ts";
+import { AskedQuestions, PendingChat, Run, RunSummary, Workflow } from "../workflow.ts";
 import { Role } from "../entities.ts";
 import { SubjectOption } from "./api.ts";
-import { TaskAnswer } from "./domain/index.ts";
+import { Questionnaire, TaskAnswer } from "./domain/index.ts";
 import { Entities, Overview } from "./page/index.ts";
 import { ShortcutModifier } from "./platform.ts";
 import { Theme } from "./theme.ts";
@@ -17,9 +17,11 @@ export const Activity = defineTaggedUnion({
   Failed: { error: Schema.String },
 });
 
+/** One chat turn: the message, the questions the agent asked on the way, and its Markdown reply. */
 export const Exchange = Schema.Struct({
   id: Schema.Int,
   prompt: Schema.String,
+  asked: Schema.Array(AskedQuestions),
   reply: Schema.String,
 });
 export type Exchange = typeof Exchange.Type;
@@ -128,6 +130,8 @@ export const Model = Schema.Struct({
   maybeDraft: Schema.Option(Workflow),
   maybeSaved: Schema.Option(Workflow),
   maybePendingChat: Schema.Option(PendingChat),
+  /** The answers given so far to the questions the agent is waiting on. */
+  maybeQuestionnaire: Schema.Option(Questionnaire.Questionnaire),
   runs: Schema.Array(RunSummary),
   /** The run open beside the overview or the studio. Changing pages closes it. */
   maybeRunPanel: Schema.Option(OpenRun),
@@ -144,6 +148,27 @@ export const Model = Schema.Struct({
   activity: Activity,
 });
 export type Model = typeof Model.Type;
+
+/** The questions the agent is waiting on, with the answers given so far. */
+export const openQuestionnaire = (model: Model) =>
+  Option.flatMap(model.maybePendingChat, (pending) =>
+    pending.status !== "asking"
+      ? Option.none()
+      : Array.match(pending.questions, {
+          onEmpty: () => Option.none(),
+          onNonEmpty: (questions) =>
+            Option.some({
+              questions,
+              questionnaire: Option.getOrElse(
+                Option.filter(
+                  model.maybeQuestionnaire,
+                  (questionnaire) => questionnaire.chatId === pending.id,
+                ),
+                () => Questionnaire.start(pending.id, questions),
+              ),
+            }),
+        }),
+  );
 
 /** The open automation's unsent message. */
 export const messageInputOf = (model: Model) => model.messageInputs[model.automationId] ?? "";

@@ -21,15 +21,17 @@ import {
   type,
   within,
 } from "foldkit/scene";
-import type { Workflow } from "../workflow.ts";
+import type { Question, Workflow } from "../workflow.ts";
 import * as Dialog from "@/components/ui/dialog";
 import {
   AnswerTask,
   CreateAutomation,
+  FocusOwnAnswer,
   LoadAutomations,
   LoadRun,
   NavigateInternal,
   PollAutomation,
+  SendAnswers,
   SendMessage,
   SetPermission,
   StartRun,
@@ -123,7 +125,14 @@ test("the accessible message input drives chat and safely renders the workflow",
     Command.resolve(
       PollAutomation,
       automationLoaded({
-        conversation: [{ id: 0, prompt: "Summarize orders", reply: "Ready to review." }],
+        conversation: [
+          {
+            id: 0,
+            prompt: "Summarize orders",
+            reply: "Ready to review.",
+            asked: [],
+          },
+        ],
         maybeDraft: Option.some({
           name: "Orders",
           trigger: { kind: "manual" },
@@ -143,6 +152,200 @@ test("the accessible message input drives chat and safely renders the workflow",
     expect(text("Manual start")).toExist(),
     expect(text("<script>alert('unsafe')</script>")).toExist(),
     Command.resolve(LoadAutomations, Message.SucceededLoadAutomations({ automations: [] })),
+  );
+});
+
+test("the agent's reply renders Markdown without letting it add markup", () => {
+  const reply = [
+    "**Almost done.** Two things:",
+    "",
+    "1. Read [the guide](https://example.com/guide)",
+    "2. Ignore [this](javascript:alert(1)) and <b>raw</b> HTML",
+  ].join("\n");
+  const conversation = role("region", { name: "Conversation" });
+  scene(
+    { update, view },
+    given(
+      update(
+        loaded,
+        automationLoaded({
+          conversation: [{ id: 0, prompt: "Summarize orders", reply, asked: [] }],
+        }),
+      ).model,
+    ),
+    expect(within(conversation, role("strong"))).toHaveText("Almost done."),
+    expect(within(conversation, role("list"))).toContainText("Read the guide"),
+    expect(role("link", { name: "the guide" })).toHaveAttr("href", "https://example.com/guide"),
+    expect(role("link", { name: "the guide" })).toHaveAttr("target", "_blank"),
+    expect(role("link", { name: "this" })).not.toExist(),
+    expect(within(conversation, role("list"))).toContainText("Ignore this and <b>raw</b> HTML"),
+  );
+});
+
+const approver = {
+  question: "Who should approve the email?",
+  header: "Approver",
+  options: [{ label: "Managers", description: "Each hire's manager" }, { label: "HR" }],
+};
+
+const askedWith = (questions: ReadonlyArray<Question>) =>
+  update(
+    loaded,
+    automationLoaded({
+      maybePendingChat: Option.some({
+        id: "chat-1",
+        prompt: "Email new hires",
+        status: "asking" as const,
+        questions,
+      }),
+    }),
+  ).model;
+
+const answered = (answers: ReadonlyArray<string | null>) =>
+  SendAnswers({ ...requestArgs, chatId: "chat-1", answer: { kind: "answers", answers } });
+
+const resumed = Command.resolve(
+  SendAnswers,
+  Message.SucceededSendAnswers({
+    revision: 0,
+    pendingChat: { id: "chat-1", prompt: "Email new hires", status: "working" },
+  }),
+);
+
+test("picking an answer to the agent's only question sends it and resumes the reply", () => {
+  const managers = role("button", { name: /Managers/ });
+  scene(
+    { update, view },
+    given(askedWith([approver])),
+    expect(role("group", { name: "Questions from the agent" })).toContainText(approver.question),
+    expect(role("navigation", { name: "Questions" })).not.toExist(),
+    expect(managers).toContainText("Each hire's manager"),
+    expect(label("Your message")).toHaveAttr(
+      "placeholder",
+      "Or answer the agent in your own words…",
+    ),
+    click(managers),
+    Command.expectExact(answered(["Managers"])),
+    expect(managers).toBeDisabled(),
+    resumed,
+    expect(managers).not.toExist(),
+    expect(text("Thinking…")).toExist(),
+    Command.resolve(PollAutomation, Message.FailedRequest({ revision: 0, error: "Offline" })),
+  );
+});
+
+test("the person can skip the agent's questions", () => {
+  scene(
+    { update, view },
+    given(askedWith([approver])),
+    click(role("button", { name: "Skip questions" })),
+    Command.expectExact(answered([null])),
+    resumed,
+    Command.resolve(PollAutomation, Message.FailedRequest({ revision: 0, error: "Offline" })),
+  );
+});
+
+test("a finished reply shows the questions it asked and how they were answered", () => {
+  const timeZone = {
+    question: "Which time zone?",
+    header: "Time zone",
+    options: [{ label: "London" }, { label: "Tokyo" }],
+  };
+  const conversation = role("region", { name: "Conversation" });
+  scene(
+    { update, view },
+    given(
+      update(
+        loaded,
+        automationLoaded({
+          conversation: [
+            {
+              id: 0,
+              prompt: "Email new hires",
+              asked: [
+                {
+                  questions: [approver, timeZone],
+                  answer: { kind: "answers", answers: ["HR", null] },
+                },
+                { questions: [timeZone], answer: { kind: "message", text: "Whatever HR uses" } },
+              ],
+              reply: "Done.",
+            },
+          ],
+        }),
+      ).model,
+    ),
+    expect(conversation).toContainText(approver.question),
+    expect(conversation).toContainText("HR"),
+    expect(conversation).toContainText("Skipped"),
+    expect(conversation).toContainText("You answered in your own words"),
+    expect(conversation).toContainText("Whatever HR uses"),
+    expect(conversation).toContainText("Done."),
+    expect(role("group", { name: "Questions from the agent" })).not.toExist(),
+  );
+});
+
+test("the person can answer a question in their own words", () => {
+  const ownAnswer = label("Your own answer");
+  scene(
+    { update, view },
+    given(askedWith([approver])),
+    click(role("button", { name: "Write your own answer" })),
+    Command.expectExact(FocusOwnAnswer()),
+    Command.resolve(FocusOwnAnswer, Message.CompletedFocusOwnAnswer()),
+    expect(role("button", { name: "Send answer" })).toBeDisabled(),
+    type(ownAnswer, "  The People Ops lead  "),
+    click(role("button", { name: "Send answer" })),
+    Command.expectExact(answered(["The People Ops lead"])),
+    resumed,
+    expect(ownAnswer).not.toExist(),
+    Command.resolve(PollAutomation, Message.FailedRequest({ revision: 0, error: "Offline" })),
+  );
+});
+
+test("several questions are answered one at a time, reviewed, and sent together", () => {
+  const timeZones = {
+    question: "Which time zones should it use?",
+    header: "Time zones",
+    multiSelect: true,
+    options: [{ label: "London" }, { label: "New York" }, { label: "Tokyo" }],
+  };
+  const channel = {
+    question: "Where should reminders go?",
+    header: "Channel",
+    options: [{ label: "Slack" }, { label: "Email" }],
+  };
+  const questions = role("group", { name: "Questions from the agent" });
+  const step = (name: string) =>
+    within(role("navigation", { name: "Questions" }), role("button", { name }));
+  scene(
+    { update, view },
+    given(askedWith([approver, timeZones, channel])),
+    expect(step("Approver")).toHaveAttr("aria-current", "step"),
+    click(role("button", { name: "HR" })),
+    expect(questions).toContainText(timeZones.question),
+    expect(step("Time zones")).toHaveAttr("aria-current", "step"),
+    expect(questions).toContainText("Pick any that apply."),
+    click(role("button", { name: "London" })),
+    click(role("button", { name: "New York" })),
+    click(role("button", { name: "Tokyo" })),
+    click(role("button", { name: "New York" })),
+    expect(role("button", { name: "London" })).toHaveAttr("aria-pressed", "true"),
+    expect(role("button", { name: "New York" })).toHaveAttr("aria-pressed", "false"),
+    click(role("button", { name: "Next" })),
+    expect(questions).toContainText(channel.question),
+    click(role("button", { name: "Skip" })),
+    expect(questions).toContainText("Review your answers"),
+    expect(questions).toContainText("London, Tokyo"),
+    expect(questions).toContainText("Not answered yet: Channel."),
+    click(step("Approver")),
+    expect(role("button", { name: "HR" })).toHaveAttr("aria-pressed", "true"),
+    click(step("Review")),
+    click(role("button", { name: "Send answers" })),
+    Command.expectExact(answered(["HR", "London, Tokyo", null])),
+    resumed,
+    expect(questions).not.toExist(),
+    Command.resolve(PollAutomation, Message.FailedRequest({ revision: 0, error: "Offline" })),
   );
 });
 

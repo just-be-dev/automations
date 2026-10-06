@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -11,6 +12,7 @@ import { EntityStore, EntityStoreError, layerMemory } from "../entities/store.ts
 import type { Workflow } from "../workflow/model.ts";
 import { ExecutionId, ExecutionValues } from "../workflow/execution.ts";
 import { RunId } from "../workflow/run.ts";
+import { answerHubLayer } from "./answer-hub.ts";
 import { makeAutomation } from "./application.ts";
 import { AutomationHost } from "./host.ts";
 import { AutomationIndex, AutomationIndexError } from "./index.ts";
@@ -97,12 +99,17 @@ const harness = () => {
     PiAgent,
     Effect.gen(function* () {
       const { tools } = yield* makePlanning();
+      // Call IDs repeat when a script runs again for the same request, as pi's do when it reruns
+      // a call after a restart.
+      let request = "";
+      let calls = 0;
       const call: Call = (name, args = {}) =>
         Effect.suspend(() => {
           const tool = tools.find((candidate) => candidate.name === name);
+          calls += 1;
           return tool === undefined
             ? Effect.die(`No tool ${name}`)
-            : Effect.orDie(tool.execute(args));
+            : Effect.orDie(tool.execute(args, { id: `${request}#${calls}` }));
         });
       return PiAgent.of({
         createConversation: Effect.succeed(7),
@@ -111,12 +118,15 @@ const harness = () => {
         prompt: (options) =>
           Effect.suspend(() => {
             prompts.push(options);
+            request = options.requestId ?? "";
+            calls = 0;
             return answer(call);
           }),
       });
     }),
   );
   const services = Layer.mergeAll(
+    answerHubLayer,
     Layer.succeed(
       ProgressClassifier,
       ProgressClassifier.of({ classify: () => Effect.die("No reasoning to classify") }),
@@ -220,6 +230,146 @@ describe("Automation application without a platform", () => {
       { prompt: "Onboard people", reply: "What should start it?" },
     ]);
     expect(h.recorded).toEqual([]);
+  });
+
+  test("a question parks the reply, and answering resumes the same turn", async () => {
+    const h = harness();
+    const questions = [
+      {
+        question: "Who should approve the email?",
+        header: "Approver",
+        options: [{ label: "Ops" }, { label: "Nobody", description: "Send it on its own" }],
+      },
+    ];
+    const results: Array<string> = [];
+    h.answerWith((call) =>
+      Effect.gen(function* () {
+        results.push(yield* call("ask_question", { questions }));
+        return "Ops will approve it.";
+      }),
+    );
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const app = yield* makeAutomation();
+        const { pendingChat } = yield* app.chat("a1", "Email new people");
+        const reply = { automationId: "a1", chatId: pendingChat.id };
+        yield* app.callbacks.planReply(reply);
+        const parked = yield* app.inspectWorkflow();
+        // A delivery that finds the turn parked leaves it waiting.
+        yield* app.callbacks.planReply(reply);
+        const wrongCount = yield* app
+          .answer("a1", pendingChat.id, { kind: "answers", answers: ["Ops", null] })
+          .pipe(Effect.flip);
+        const resumed = yield* app.answer("a1", pendingChat.id, {
+          kind: "answers",
+          answers: ["Ops"],
+        });
+        const again = yield* app
+          .answer("a1", pendingChat.id, { kind: "answers", answers: ["Ops"] })
+          .pipe(Effect.flip);
+        yield* app.callbacks.planReply(reply);
+        return {
+          pendingChat,
+          parked,
+          wrongCount,
+          resumed,
+          again,
+          finished: yield* app.inspectWorkflow(),
+        };
+      }).pipe(Effect.provide(h.layer)),
+    );
+    expect(result.parked.pendingChat).toEqual({
+      id: result.pendingChat.id,
+      prompt: "Email new people",
+      status: "asking",
+      questions,
+    });
+    expect(result.parked.conversation).toEqual([]);
+    expect(result.wrongCount.message).toBe("Give one answer for each of the 1 questions");
+    expect(result.resumed.pendingChat.status).toBe("working");
+    expect(result.again.message).toBe("The agent isn't waiting for answers");
+    expect(h.replies).toHaveLength(2);
+    expect(h.prompts.map((prompt) => prompt.requestId)).toEqual([
+      `chat:${result.pendingChat.id}`,
+      `chat:${result.pendingChat.id}`,
+    ]);
+    expect(results).toEqual([
+      "The person answered:\n- Who should approve the email? Ops\nCarry on with their answers.",
+    ]);
+    expect(result.finished.pendingChat).toBeUndefined();
+    expect(result.finished.conversation).toEqual([
+      {
+        prompt: "Email new people",
+        asked: [{ questions, answer: { kind: "answers", answers: ["Ops"] } }],
+        reply: "Ops will approve it.",
+      },
+    ]);
+    expect(await Effect.runPromise(h.host.storage.get("plan"))).toBeUndefined();
+  });
+
+  test("a message sent while the planner waits answers its questions in other words", async () => {
+    const h = harness();
+    const questions = [
+      {
+        question: "Which tone?",
+        header: "Tone",
+        options: [{ label: "Formal" }, { label: "Casual" }],
+      },
+    ];
+    const results: Array<string> = [];
+    h.answerWith((call) =>
+      Effect.gen(function* () {
+        results.push(yield* call("ask_question", { questions }));
+        return "Done";
+      }),
+    );
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const app = yield* makeAutomation();
+        const { pendingChat } = yield* app.chat("a1", "Write a greeting");
+        yield* app.callbacks.planReply({ automationId: "a1", chatId: pendingChat.id });
+        const sent = yield* app.chat("a1", "Somewhere in between, and short");
+        yield* app.callbacks.planReply({ automationId: "a1", chatId: pendingChat.id });
+        return { pendingChat, sent, finished: yield* app.inspectWorkflow() };
+      }).pipe(Effect.provide(h.layer)),
+    );
+    expect(result.sent.pendingChat).toEqual(result.pendingChat);
+    expect(results[0]).toContain(
+      "Instead of picking answers, the person wrote:\n\nSomewhere in between, and short",
+    );
+    expect(result.finished.conversation[0]?.asked).toEqual([
+      { questions, answer: { kind: "message", text: "Somewhere in between, and short" } },
+    ]);
+  });
+
+  test("a turn still waiting in memory wakes when its questions are answered", async () => {
+    const h = harness();
+    const questions = [
+      {
+        question: "Which tone?",
+        header: "Tone",
+        options: [{ label: "Formal" }, { label: "Casual" }],
+      },
+    ];
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const planning = yield* makePlanning();
+        const ask = planning.tools.find((tool) => tool.name === "ask_question");
+        if (ask === undefined) {
+          return yield* Effect.die("No ask_question tool");
+        }
+        yield* planning.start("c1", undefined);
+        const parked = yield* planning.watchParked("c1");
+        const waiting = yield* Effect.forkChild(ask.execute({ questions }, { id: "call-1" }));
+        yield* parked;
+        const open = yield* planning.openQuestions("c1");
+        const callId = yield* planning.recordAnswer("c1", { kind: "answers", answers: [null] });
+        yield* planning.deliver(callId, { kind: "answers", answers: [null] });
+        return { open, text: yield* Fiber.join(waiting) };
+      }).pipe(Effect.provide(h.layer)),
+    );
+    expect(result.open?.questions).toEqual(questions);
+    expect(result.text).toStartWith("The person skipped your questions.");
   });
 
   test("a redelivered reply keeps the edits the interrupted delivery made", async () => {

@@ -42,6 +42,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
     maybeDraft: Option.none(),
     maybeSaved: Option.none(),
     maybePendingChat: Option.none(),
+    maybeQuestionnaire: Option.none(),
     runs: [],
     maybeRunPanel: Option.none(),
     runPoll: 0,

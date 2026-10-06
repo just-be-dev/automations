@@ -6,13 +6,21 @@ import { Bot, CircleAlert, CornerDownLeft, LoaderCircle } from "lucide";
 import { Bubble } from "@/components/ui/bubble";
 import { button } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
+import { markdown } from "@/components/markdown";
 import { Message as ChatMessage } from "@/components/ui/message";
 import { textarea } from "@/components/ui/textarea";
 import { componentName } from "@/lib/component";
 import { icon } from "@/lib/icons";
 import type { PendingChat } from "../../workflow.ts";
 import { Message } from "../message.ts";
-import { Activity, type Exchange, messageInputOf, type Model } from "../model.ts";
+import {
+  Activity,
+  type Exchange,
+  messageInputOf,
+  type Model,
+  openQuestionnaire,
+} from "../model.ts";
+import { answeredQuestionsView, openQuestionnaireView } from "./questionnaire.ts";
 import { characterCountView, submitShortcut } from "./shared.ts";
 
 export const conversationView = (model: Model, h: HtmlBuilder<Message>) =>
@@ -77,7 +85,7 @@ const conversationItems = (model: Model, h: HtmlBuilder<Message>): ReadonlyArray
   ...Array.map(model.conversation, (exchange) => exchangeView(exchange, h)),
   ...Option.match(model.maybePendingChat, {
     onNone: () => [],
-    onSome: (pending) => [pendingChatView(pending, model.maybeProgress, h)],
+    onSome: (pending) => [pendingChatView(model, pending, h)],
   }),
 ];
 
@@ -129,15 +137,22 @@ const exchangeView = (exchange: Exchange, h: HtmlBuilder<Message>) =>
     [componentName("exchange"), h.Class("flex flex-col gap-4")],
     [
       promptView(exchange.prompt, h),
-      replyView([h.span([h.Class("whitespace-pre-wrap")], [exchange.reply])], h),
+      replyView(
+        [
+          h.div(
+            [h.Class("flex flex-col gap-3")],
+            [
+              ...Array.map(exchange.asked, (asked) => answeredQuestionsView(asked, h)),
+              markdown(exchange.reply, h),
+            ],
+          ),
+        ],
+        h,
+      ),
     ],
   );
 
-const pendingChatView = (
-  pending: PendingChat,
-  maybeProgress: Option.Option<string>,
-  h: HtmlBuilder<Message>,
-) =>
+const pendingChatView = (model: Model, pending: PendingChat, h: HtmlBuilder<Message>) =>
   h.keyed("div")(
     pending.id,
     [componentName("pending-chat"), h.Class("flex flex-col gap-4")],
@@ -153,11 +168,27 @@ const pendingChatView = (
                   icon(h, LoaderCircle, "size-3.5 shrink-0 animate-spin text-signal"),
                   h.span(
                     [h.Class("truncate")],
-                    [Option.getOrElse(maybeProgress, () => "Thinking…")],
+                    [Option.getOrElse(model.maybeProgress, () => "Thinking…")],
                   ),
                 ],
               ),
             ],
+            asking: () =>
+              Option.match(openQuestionnaire(model), {
+                onNone: () => [],
+                onSome: ({ questions, questionnaire }) => [
+                  openQuestionnaireView(
+                    {
+                      chatId: questionnaire.chatId,
+                      questions,
+                      questionnaire,
+                      isBusy: Activity.guards.Working(model.activity),
+                      shortcutModifier: model.shortcutModifier,
+                    },
+                    h,
+                  ),
+                ],
+              }),
             failed: () => [
               h.span(
                 [h.Class("flex items-center gap-2 text-destructive")],
@@ -188,7 +219,9 @@ const composerView = (model: Model, h: HtmlBuilder<Message>) =>
               label: "Your message",
               labelClass: "sr-only",
               value: messageInputOf(model),
-              placeholder: "When an order arrives, summarize its contents and send the summary to…",
+              placeholder: Option.isSome(openQuestionnaire(model))
+                ? "Or answer the agent in your own words…"
+                : "When an order arrives, summarize its contents and send the summary to…",
               onInput: (value) => Message.UpdatedMessageInput({ value }),
               attributes: submitShortcut(model.shortcutModifier, Message.SubmittedMessage(), h),
               className:

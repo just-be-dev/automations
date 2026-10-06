@@ -2,11 +2,20 @@ import * as Array from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { Command, Http } from "foldkit";
+import { Command, Dom, Http } from "foldkit";
 import { load, pushUrl } from "foldkit/navigation";
 import { Role } from "../entities.ts";
-import { PendingChat, Permission, RunSummary, TitledRun, Workflow } from "../workflow.ts";
+import {
+  AskedQuestions,
+  PendingChat,
+  Permission,
+  QuestionsAnswer,
+  RunSummary,
+  TitledRun,
+  Workflow,
+} from "../workflow.ts";
 import { errorText, loadSubjectOptions, requestJson } from "./api.ts";
+import { ownAnswerId } from "./constant.ts";
 import { TaskAnswer } from "./domain/index.ts";
 import { Message } from "./message.ts";
 import { AutomationSummary } from "./model.ts";
@@ -29,7 +38,13 @@ const recoverRequest = (revision: number) =>
 const AutomationState = Schema.Struct({
   draft: Schema.OptionFromOptional(Workflow),
   saved: Schema.OptionFromOptional(Workflow),
-  conversation: Schema.Array(Schema.Struct({ prompt: Schema.String, reply: Schema.String })),
+  conversation: Schema.Array(
+    Schema.Struct({
+      prompt: Schema.String,
+      reply: Schema.String,
+      asked: Schema.optionalKey(Schema.Array(AskedQuestions)),
+    }),
+  ),
   pendingChat: Schema.OptionFromOptional(PendingChat),
   runs: Schema.Array(RunSummary),
   progress: Schema.OptionFromOptional(Schema.String),
@@ -42,7 +57,12 @@ const loadAutomation = (automationId: string, revision: number) =>
         revision,
         maybeDraft: state.draft,
         maybeSaved: state.saved,
-        conversation: Array.map(state.conversation, (exchange, id) => ({ id, ...exchange })),
+        conversation: Array.map(state.conversation, ({ prompt, asked = [], reply }, id) => ({
+          id,
+          prompt,
+          asked,
+          reply,
+        })),
         maybePendingChat: state.pendingChat,
         runs: state.runs,
         maybeProgress: state.progress,
@@ -126,6 +146,14 @@ export const LoadExternal = Command.define("LoadExternal", {
   execute: ({ href }) => load(href).pipe(Effect.as(Message.CompletedLoadExternal())),
 });
 
+export const FocusOwnAnswer = Command.define("FocusOwnAnswer", {
+  messages: [Message.CompletedFocusOwnAnswer],
+  execute: Dom.focus(`#${ownAnswerId}`).pipe(
+    Effect.ignore,
+    Effect.as(Message.CompletedFocusOwnAnswer()),
+  ),
+});
+
 export const ApplyTheme = Command.define("ApplyTheme", {
   args: { theme: Theme },
   messages: [Message.CompletedApplyTheme],
@@ -168,6 +196,21 @@ export const SendMessage = Command.define("SendMessage", {
           pendingChat: data.pendingChat,
         }),
       ),
+      recoverRequest(revision),
+      Effect.provide(Http.layer),
+    ),
+});
+
+/** Answers the questions the agent is waiting on, which resumes its reply. */
+export const SendAnswers = Command.define("SendAnswers", {
+  args: { ...requestArgs, chatId: Schema.String, answer: QuestionsAnswer },
+  messages: [Message.SucceededSendAnswers, Message.FailedRequest],
+  execute: ({ automationId, revision, chatId, answer }) =>
+    request(automationId, "/answers", Schema.Struct({ pendingChat: PendingChat }), {
+      chatId,
+      answer,
+    }).pipe(
+      Effect.map(({ pendingChat }) => Message.SucceededSendAnswers({ revision, pendingChat })),
       recoverRequest(revision),
       Effect.provide(Http.layer),
     ),

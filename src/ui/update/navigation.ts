@@ -17,6 +17,7 @@ const leaveAutomation = (model: Model, automationId: string): Model =>
     maybeDraft: () => Option.none(),
     maybeSaved: () => Option.none(),
     maybePendingChat: () => Option.none(),
+    maybeQuestionnaire: () => Option.none(),
     runs: () => [],
     maybeRunPanel: () => Option.none(),
     subjectChoices: () => SubjectChoices.NotNeeded(),

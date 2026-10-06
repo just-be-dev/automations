@@ -137,13 +137,25 @@ test("chat waits for the agent's reply, shows the draft, and saves that automati
       PollAutomation,
       automationLoaded({
         maybeDraft: Option.some(workflow),
-        conversation: [{ id: 0, prompt: "Summarize orders", reply: "Review these steps." }],
+        conversation: [
+          {
+            id: 0,
+            prompt: "Summarize orders",
+            reply: "Review these steps.",
+            asked: [],
+          },
+        ],
       }),
     ),
     Command.resolve(LoadAutomations, Message.SucceededLoadAutomations({ automations: [] })),
     model((current) => {
       expect(current.conversation).toEqual([
-        { id: 0, prompt: "Summarize orders", reply: "Review these steps." },
+        {
+          id: 0,
+          prompt: "Summarize orders",
+          reply: "Review these steps.",
+          asked: [],
+        },
       ]);
       expect(current.maybeDraft).toEqual(Option.some(workflow));
       expect(current.maybePendingChat).toEqual(Option.none());
@@ -700,7 +712,14 @@ test("a URL change loads that automation, restores its conversation, and leaves 
         revision: 1,
         maybeDraft: Option.some(workflow),
         maybeSaved: Option.some(workflow),
-        conversation: [{ id: 0, prompt: "Summarize orders", reply: "Review these steps." }],
+        conversation: [
+          {
+            id: 0,
+            prompt: "Summarize orders",
+            reply: "Review these steps.",
+            asked: [],
+          },
+        ],
         runs: [summaryOf(runOf({ status: "completed" }))],
       }),
     ),
@@ -708,7 +727,12 @@ test("a URL change loads that automation, restores its conversation, and leaves 
       expect(current.maybeDraft).toEqual(Option.some(workflow));
       expect(current.runs).toHaveLength(1);
       expect(current.conversation).toEqual([
-        { id: 0, prompt: "Summarize orders", reply: "Review these steps." },
+        {
+          id: 0,
+          prompt: "Summarize orders",
+          reply: "Review these steps.",
+          asked: [],
+        },
       ]);
     }),
   );

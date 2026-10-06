@@ -11,13 +11,14 @@ import {
   type ProgressPhrase,
 } from "../agents/planner/planner.ts";
 import { ProgressClassifier } from "../agents/planner/progress-classifier.ts";
+import type { QuestionsAnswer } from "../agents/planner/question.ts";
 import { PiAgent } from "../ai/pi.ts";
 import { findOperation } from "../connections/registry.ts";
 import { EntityStore } from "../entities/store.ts";
 import type { Permissions, Workflow } from "../workflow/model.ts";
 import { AutomationHost } from "./host.ts";
 import { AutomationIndex } from "./index.ts";
-import { AutomationError, Exchange, PendingChat } from "./model.ts";
+import { AutomationError, Exchange, type PendingChat, StoredPendingChat } from "./model.ts";
 import { makePlanning } from "./planning.ts";
 import type { WorkflowStore } from "./workflow-store.ts";
 
@@ -26,7 +27,7 @@ const PICK_EVERY_CHARS = 300;
 
 // Storage holds only values this automation wrote, so a decoding failure is a defect.
 const decodeStoredExchangeCount = Schema.decodeUnknownEffect(Schema.UndefinedOr(Schema.Int));
-const decodeStoredPendingChat = Schema.decodeUnknownEffect(Schema.UndefinedOr(PendingChat));
+const decodeStoredPendingChat = Schema.decodeUnknownEffect(Schema.UndefinedOr(StoredPendingChat));
 const decodeStoredExchanges = Schema.decodeUnknownEffect(Schema.Array(Exchange));
 
 // Each exchange gets its own key because a single storage value is capped at 128 KiB. The padding
@@ -106,18 +107,28 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
     const draft = yield* readWorkflow("draft");
     const saved = yield* readWorkflow("saved");
     const conversation = yield* readConversation;
-    const pendingChat = yield* readPendingChat;
+    const stored = yield* readPendingChat;
+    const open =
+      stored?.status === "working" ? yield* planning.openQuestions(stored.id) : undefined;
+    const pendingChat: PendingChat | undefined =
+      stored !== undefined && open !== undefined
+        ? { id: stored.id, prompt: stored.prompt, status: "asking", questions: open.questions }
+        : stored;
     const progress =
       pendingChat?.status === "working" ? yield* readProgress(pendingChat.id) : undefined;
     return { draft, saved, conversation, pendingChat, progress };
   });
 
-  const isWorking = (pending: PendingChat | undefined, chatId: string) =>
+  const isWorking = (pending: StoredPendingChat | undefined, chatId: string) =>
     pending?.id === chatId && pending.status === "working";
 
   // Delivery is at least once. A redelivered reply keeps the working copy the first delivery
   // started and reuses the pi request IDs, so the agent answers each message (and its one retry)
   // once, and only the delivery that still finds the message pending writes it.
+  //
+  // When the planner asks questions, its pi turn parks in the tool until they're answered, and the
+  // reply returns without writing anything: callbacks run one at a time, so waiting here would hold
+  // up every run. Answering delivers the reply again, which joins the same pi turn by request ID.
   const planReply = Effect.fn("Automation.planReply")(function* ({
     automationId,
     chatId,
@@ -128,13 +139,21 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
     }
     const draft = yield* readWorkflow("draft");
     yield* planning.start(chatId, draft);
+    const parked = yield* planning.watchParked(chatId);
+    if ((yield* planning.openQuestions(chatId)) !== undefined) {
+      return;
+    }
     const reply = yield* catalog.pipe(
       Effect.flatMap((current) =>
         planDraft(pi, planning.plan, current, draft, chatId, pending.prompt),
       ),
       Effect.result,
       Effect.raceFirst(trackProgress(chatId)),
+      Effect.raceFirst(parked.pipe(Effect.as("parked" as const))),
     );
+    if (reply === "parked") {
+      return;
+    }
     const wrote = yield* storage
       .transaction(
         Effect.gen(function* () {
@@ -142,7 +161,7 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
             return false;
           }
           if (Result.isFailure(reply)) {
-            const failed: PendingChat = {
+            const failed: StoredPendingChat = {
               id: chatId,
               prompt: pending.prompt,
               status: "failed",
@@ -166,10 +185,13 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
             (yield* storage
               .get("exchangeCount")
               .pipe(Effect.flatMap(decodeStoredExchangeCount), Effect.orDie)) ?? 0;
-          yield* storage.put(exchangeKey(exchangeCount), {
+          const asked = yield* planning.asked(chatId);
+          const exchange: Exchange = {
             prompt: pending.prompt,
+            ...(asked.length === 0 ? {} : { asked }),
             reply: reply.success.reply,
-          });
+          };
+          yield* storage.put(exchangeKey(exchangeCount), exchange);
           yield* storage.put("exchangeCount", exchangeCount + 1);
           yield* storage.delete("pendingChat");
           yield* storage.delete("plan");
@@ -184,11 +206,46 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
     }
   });
 
+  /**
+   * Answers the questions the planner's turn for `chatId` is parked on, and resumes the turn: the
+   * answer is stored and the reply delivered again in one transaction, then a turn still waiting
+   * in memory is woken. A turn pi resumes after a restart finds the answer in storage.
+   */
+  const answer = Effect.fn("Automation.answer")(function* (
+    automationId: string,
+    chatId: string,
+    given: QuestionsAnswer,
+  ) {
+    const resumed = yield* storage
+      .transaction(
+        Effect.gen(function* () {
+          const pending = yield* readPendingChat;
+          if (pending === undefined || !isWorking(pending, chatId)) {
+            return yield* new AutomationError({ message: "The agent isn't waiting for answers" });
+          }
+          const callId = yield* planning.recordAnswer(chatId, given);
+          yield* host.jobs.planReply(automationId, chatId);
+          return { pending, callId };
+        }),
+      )
+      .pipe(Effect.catchTag("AutomationStorageError", Effect.die));
+    yield* planning.deliver(resumed.callId, given);
+    return { pendingChat: resumed.pending };
+  });
+
   const chat = Effect.fn("Automation.chat")(function* (automationId: string, message: string) {
     if (!message.trim() || message.length > 10_000) {
       return yield* new AutomationError({ message: "Message must be 1–10,000 characters" });
     }
-    const pending: PendingChat = {
+    // A message sent while the planner waits for answers answers its questions in other words.
+    const current = yield* readPendingChat;
+    if (
+      current?.status === "working" &&
+      (yield* planning.openQuestions(current.id)) !== undefined
+    ) {
+      return yield* answer(automationId, current.id, { kind: "message", text: message });
+    }
+    const pending: StoredPendingChat = {
       id: crypto.randomUUID(),
       prompt: message,
       status: "working",
@@ -250,5 +307,5 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
       .pipe(Effect.catchTag("AutomationStorageError", Effect.die));
   });
 
-  return { inspect, chat, setPermissions, planReply };
+  return { inspect, chat, answer, setPermissions, planReply };
 });

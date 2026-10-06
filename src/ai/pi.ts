@@ -11,6 +11,12 @@ export class AgentToolError extends Schema.TaggedError<AgentToolError>()("AgentT
   message: Schema.String,
 }) {}
 
+/** One call of a tool. */
+export interface AgentToolCall {
+  /** Stays the same when pi runs the call again after a restart. */
+  readonly id: string;
+}
+
 /**
  * A tool the root conversation can call. pi may run a call again after a restart, so `execute`
  * must be idempotent. It decodes its own arguments; `parameters` is the JSON Schema the model sees.
@@ -19,8 +25,8 @@ export interface AgentTool {
   readonly name: string;
   readonly description: string;
   readonly parameters: Schema.JsonObject;
-  /** Resolves with the text the model reads. */
-  readonly execute: (args: unknown) => Effect.Effect<string, AgentToolError>;
+  /** Resolves with the text the model reads. It may wait, for example for the person's answers. */
+  readonly execute: (args: unknown, call: AgentToolCall) => Effect.Effect<string, AgentToolError>;
 }
 
 export interface PromptOptions {

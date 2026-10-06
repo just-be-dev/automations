@@ -5,6 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { PiAgent } from "../../ai/pi.ts";
 import { ClassifierError, ProgressClassifier } from "../../agents/planner/progress-classifier.ts";
+import { AnswerHub, makeAnswerHub } from "../../automation/answer-hub.ts";
 import { makeAutomation } from "../../automation/application.ts";
 import { AutomationHost, AutomationStorageError } from "../../automation/host.ts";
 import { makePlanning } from "../../automation/planning.ts";
@@ -78,8 +79,13 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
           cancelTick: withRuntime(Effect.suspend(() => tick.cancel(TICK_JOB))).pipe(Effect.orDie),
         },
       });
+      // One hub per instance, shared by the planner's tools and the operations that answer them.
+      const answers = yield* makeAnswerHub;
       // The planner's tools edit its working copy through the host, so pi opens with them.
-      const { tools } = yield* makePlanning().pipe(Effect.provideService(AutomationHost, host));
+      const { tools } = yield* makePlanning().pipe(
+        Effect.provideService(AutomationHost, host),
+        Effect.provideService(AnswerHub, answers),
+      );
       const pi = yield* openPiAgent({
         storage: state.raw.storage,
         ai: aiBinding,
@@ -96,6 +102,7 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
       });
       const { callbacks, ...operations } = yield* makeAutomation().pipe(
         Effect.provideService(AutomationHost, host),
+        Effect.provideService(AnswerHub, answers),
         Effect.provideService(PiAgent, pi),
         Effect.provideService(ProgressClassifier, classifier),
       );

@@ -6,6 +6,7 @@ import type { LiveAnswer, PiAgent } from "../../ai/pi.ts";
 import { InvalidWorkflow, type Workflow } from "../../workflow/model.ts";
 import { MAX_SCHEDULED_RUNS, MIN_SCHEDULE_GAP_MINUTES } from "../../workflow/schedule.ts";
 import { assemblePlan, planOf, planYaml, samePlan, type Plan } from "./plan.ts";
+import { MAX_OPTIONS, MAX_QUESTIONS, MIN_OPTIONS } from "./question.ts";
 
 /**
  * The planner agent: its system prompt instructions, how its edits and answer become a draft, and
@@ -20,7 +21,8 @@ export const plannerInstructions = (
 - remove_steps removes steps and the steps nested in them.
 - set_permissions sets permissions.
 - show_workflow shows the workflow after your changes, and check_workflow lists what is still wrong with it.
-Make every change the person asked for, then call check_workflow and fix everything it reports. Finally answer the person with a brief, helpful explanation of what you changed, or a question, in plain text: never JSON or YAML. If you need an answer before you can change anything, just ask. The person can't see your tool calls.
+- ask_question asks the person questions with answers to pick from, and returns their answers.
+Make every change the person asked for, then call check_workflow and fix everything it reports. Finally answer the person with a brief, helpful explanation of what you changed, or a question. Write it in Markdown for someone who doesn't build software: short paragraphs, with **bold** and lists where they help. Never write JSON, YAML, or code blocks. When a choice is the person's to make (a role, a time zone, which template, whether a step should wait for approval), ask with ask_question instead of guessing, as soon as you know you need it, so you don't build on a guess: up to ${MAX_QUESTIONS} questions in one call, each with ${MIN_OPTIONS}–${MAX_OPTIONS} options and a description of what each means, the option you recommend first. It waits for the person and returns their answers, then you carry on. They may skip a question or answer in their own words. Ask in your final answer only what can't be offered as options, such as a web address. The person can't see your tool calls or any text you write before your final answer.
 
 In tools, a step never contains other steps. Where a step holds a list of steps (a parallel step's branches, an if step's cases and otherwise, a decide step's options), the list names step IDs, and each of those steps is put separately. Every step is named in exactly one list: the workflow's top-level steps, or a list inside another step. A workflow has a name, a trigger, 1–20 top-level steps, and permissions.
 
@@ -165,6 +167,7 @@ const toolProgress: Readonly<Record<string, ProgressPhrase>> = {
   show_workflow: "planning",
   set_permissions: "people",
   check_workflow: "checking",
+  ask_question: "understanding",
 };
 
 /**
