@@ -79,6 +79,14 @@ It also creates `AutomationsDatabase`, a D1 database that lists the automations 
 
 Deploys also create a 30-day Access service token for machine testing. Send it as `CF-Access-Client-Id` / `CF-Access-Client-Secret`, and read it with `bun alchemy state`. Never commit it.
 
+### Cloudflare observability
+
+Alchemy enables persistent Workers Logs (including invocation logs) and Workers Traces on both `Studio` and `Api`, with 100% head sampling for this prototype. This increases observability usage; lower the sampling rates if traffic grows.
+
+`Api` and its three Durable Objects (`AutomationAgent`, `StudioAssistant`, and `ChangeCoordinator`) provide `Cloudflare.Telemetry({ headSamplingRate: 1, persist: true })` in their outer initialization Effects. Alchemy installs a fresh tracer for each request, RPC call, and alarm. Existing `Effect.fn` and `Effect.withSpan` spans appear alongside Cloudflare's native fetch, D1, and binding spans. Cloudflare owns sampling and export; no OTLP endpoint or API token is needed. Keep the host Worker's compatibility date at or after `2026-07-28`, which exposes the native tracing API. Studio's forwarding entry is async, so it needs only the native observability settings, not an Effect tracer.
+
+After deploying, call `GET /api/automations` and inspect `Api` under **Workers & Pages → Observability → Traces** for `AutomationIndex.list` with `effect.exit: success`. Open an existing automation to exercise its Durable Object (`Automation.inspectWorkflow` and `Automation.inspectDesign`), and inspect a planner or run callback's alarm trace after using it. The API and Durable Objects share the `Api` Worker; look there, not only at Studio's forwarding trace. Local `alchemy dev` requests check runtime compatibility but do not prove dashboard ingestion. These Workers Traces are operational telemetry, separate from the pi conversation records on the studio's `/traces` page.
+
 ## Usage
 
 Open the Studio URL, describe a process, review the steps, and save. The agent's replies are formatted (lists, bold, links). When it needs you to choose, such as which role approves an email, it stops and asks up to four questions. Answer them one at a time by picking an option or writing your own answer, review them, and send them together; the agent then carries on where it stopped. You can also skip them, or answer in the message box. Runs always use the last saved snapshot, not the current draft.

@@ -53,7 +53,14 @@ export default class ChangeCoordinator extends Cloudflare.DurableObject<ChangeCo
           changes.decide(owner, proposalId, approved),
       };
     }).pipe(Effect.provide(Layer.merge(index, subscribers)));
-  }).pipe(Effect.provide(Cloudflare.D1.QueryDatabaseBinding)),
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        Cloudflare.D1.QueryDatabaseBinding,
+        Cloudflare.Telemetry({ headSamplingRate: 1, persist: true }),
+      ),
+    ),
+  ),
 ) {}
 
 export const changesLayer = (namespace: Effect.Success<typeof ChangeCoordinator>) =>

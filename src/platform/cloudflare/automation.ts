@@ -127,7 +127,11 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
     }).pipe(Effect.provide(Layer.merge(entities, index)));
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(Cloudflare.Workers.AIBinding, Cloudflare.D1.QueryDatabaseBinding),
+      Layer.mergeAll(
+        Cloudflare.Workers.AIBinding,
+        Cloudflare.D1.QueryDatabaseBinding,
+        Cloudflare.Telemetry({ headSamplingRate: 1, persist: true }),
+      ),
     ),
   ),
 ) {}

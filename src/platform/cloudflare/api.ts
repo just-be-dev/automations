@@ -19,7 +19,15 @@ import ChangeCoordinator, { changesLayer } from "./changes.ts";
 /** Only the Access-protected Studio Worker can reach this private API. */
 export default class Api extends Cloudflare.Worker<Api>()(
   "Api",
-  { main: import.meta.url, compatibility: { date: "2026-10-04" }, workersDev: false },
+  {
+    main: import.meta.url,
+    compatibility: { date: "2026-10-04" },
+    workersDev: false,
+    observability: {
+      enabled: true,
+      logs: { enabled: true, invocationLogs: true, headSamplingRate: 1, persist: true },
+    },
+  },
   Effect.gen(function* () {
     const namespace = yield* Automation;
     const assistantNamespace = yield* StudioAssistant;
@@ -51,7 +59,11 @@ export default class Api extends Cloudflare.Worker<Api>()(
     return { fetch: handler.pipe(Effect.provide(services)) };
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(Cloudflare.Workers.AIBinding, Cloudflare.D1.QueryDatabaseBinding),
+      Layer.mergeAll(
+        Cloudflare.Workers.AIBinding,
+        Cloudflare.D1.QueryDatabaseBinding,
+        Cloudflare.Telemetry({ headSamplingRate: 1, persist: true }),
+      ),
     ),
   ),
 ) {}

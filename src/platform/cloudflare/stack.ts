@@ -37,6 +37,11 @@ export const Studio = Cloudflare.Website.Foldkit(
       env: { API: Api },
       assets: { runWorkerFirst: ["/api/*"] },
       compatibility: { date: "2026-10-04" },
+      observability: {
+        enabled: true,
+        logs: { enabled: true, invocationLogs: true, headSamplingRate: 1, persist: true },
+        traces: { enabled: true, headSamplingRate: 1, persist: true },
+      },
       access,
     };
   }),

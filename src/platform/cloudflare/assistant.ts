@@ -132,7 +132,11 @@ export default class StudioAssistant extends Cloudflare.DurableObject<StudioAssi
     }).pipe(Effect.provide(services));
   }).pipe(
     Effect.provide(
-      Layer.mergeAll(Cloudflare.Workers.AIBinding, Cloudflare.D1.QueryDatabaseBinding),
+      Layer.mergeAll(
+        Cloudflare.Workers.AIBinding,
+        Cloudflare.D1.QueryDatabaseBinding,
+        Cloudflare.Telemetry({ headSamplingRate: 1, persist: true }),
+      ),
     ),
   ),
 ) {}
