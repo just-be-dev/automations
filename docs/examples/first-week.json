@@ -1,0 +1,101 @@
+{
+  "name": "Launch a great first week",
+  "trigger": { "kind": "manual", "subject": "employee" },
+  "permissions": {
+    "calendar.findTimes": "auto",
+    "calendar.createEvent": "auto",
+    "slack.sendMessage": "auto",
+    "email.send": { "ask": "people_ops" }
+  },
+  "steps": [
+    {
+      "id": "prepare",
+      "title": "Get the first day ready",
+      "kind": "parallel",
+      "branches": [
+        [
+          {
+            "id": "find_time",
+            "title": "Find time for a manager welcome",
+            "kind": "action",
+            "use": "calendar.findTimes",
+            "with": {
+              "attendees": ["{{employee}}", "{{employee.manager}}"],
+              "after": "{{employee.start_date}}T09:00:00-05:00",
+              "duration": "30 minutes"
+            }
+          }
+        ],
+        [
+          {
+            "id": "notify_manager",
+            "title": "Give the manager a heads-up",
+            "kind": "action",
+            "use": "slack.sendMessage",
+            "with": {
+              "to": "{{employee.manager}}",
+              "text": "{{employee.name}} joins as {{employee.role}} on {{employee.start_date}}. Please pick a buddy and have their first project ready."
+            }
+          }
+        ]
+      ]
+    },
+    {
+      "id": "welcome",
+      "title": "Send the right welcome email",
+      "kind": "action",
+      "use": "email.send",
+      "with": { "to": "{{employee}}" },
+      "match": {
+        "on": "employee.role",
+        "cases": [
+          {
+            "when": { "op": "contains", "value": "engineer" },
+            "template": {
+              "use": "engineering_welcome_email",
+              "with": { "hire": "{{employee}}", "manager": "{{employee.manager}}" }
+            }
+          }
+        ],
+        "otherwise": {
+          "template": { "use": "welcome_email", "with": { "hire": "{{employee}}" } }
+        }
+      }
+    },
+    {
+      "id": "book_welcome",
+      "title": "Book their first conversation",
+      "kind": "action",
+      "use": "calendar.createEvent",
+      "with": {
+        "title": "Welcome aboard, {{employee.name}}",
+        "attendees": ["{{employee}}", "{{employee.manager}}"],
+        "start": "{{steps.find_time.times.0}}",
+        "duration": "30 minutes",
+        "description": "Meet your manager, choose a first project, and talk through the week ahead."
+      }
+    },
+    {
+      "id": "settle_in",
+      "title": "Give them three days to settle in",
+      "kind": "wait",
+      "until": "employee.start_date",
+      "offset": "3 days"
+    },
+    {
+      "id": "check_in",
+      "title": "Ask the manager how it is going",
+      "kind": "human",
+      "assignee": "employee.manager",
+      "notify": "slack",
+      "prompt": "How is {{employee.name}} settling in? Record their buddy, first project, and anything they need help with.",
+      "response": {
+        "fields": [
+          { "name": "buddy", "label": "Onboarding buddy", "type": "text" },
+          { "name": "first_project", "label": "First project", "type": "text" },
+          { "name": "support", "label": "Where can we help?", "type": "text" }
+        ]
+      }
+    }
+  ]
+}

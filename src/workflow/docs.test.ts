@@ -73,6 +73,19 @@ test("the documented template is seeded, and the match example checks against th
   expect(workflow.steps[0]).toMatchObject({ kind: "action", use: "email.send" });
 });
 
+test("the README's first-week workflow checks against the seeded catalog", async () => {
+  const { employee, role } = await documented();
+  const templates = seededTemplates(await read("../../migrations/0003_templates.sql"));
+  const workflow = await Effect.runPromise(
+    decodeWorkflow(JSON.parse(await read("../../docs/examples/first-week.json"))).pipe(
+      Effect.flatMap((decoded) =>
+        checkWorkflow({ types: [employee], templates, roles: [role] }, decoded),
+      ),
+    ),
+  );
+  expect(workflow.permissions?.["email.send"]).toEqual({ ask: "people_ops" });
+});
+
 test("the documented timed triggers decode and check against the employee type", async () => {
   const { blocks, employee } = await documented();
   const isKind = (kind: string) => (block: unknown) =>

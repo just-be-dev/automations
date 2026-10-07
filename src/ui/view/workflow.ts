@@ -13,6 +13,7 @@ import {
   ChevronDown,
   GitBranch,
   Hourglass,
+  LayoutTemplate,
   LoaderCircle,
   OctagonX,
   Scale,
@@ -23,9 +24,10 @@ import {
 } from "lucide";
 import { formatText, recordView } from "@/components/record";
 import { componentName } from "@/lib/component";
-import { withArticle } from "@/lib/format";
+import { labelFromName, withArticle } from "@/lib/format";
 import { icon, triggerIcon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
+import { findOperation, type InputType } from "../../connections.ts";
 import type { Role } from "../../entities.ts";
 import {
   type ActionInput,
@@ -71,21 +73,37 @@ const subjectRefView = (ref: string, h: HtmlBuilder<Message>) =>
     [ref],
   );
 
-const stepRefClass = cn(chipClass, "text-sand-11");
-
 const refView = (ref: string, h: HtmlBuilder<Message>) => {
-  const [root, ...path] = ref.split(".");
-  return root === "steps"
-    ? h.span(
-        [componentName("ref"), h.Class(stepRefClass), h.Title(`Recorded by step ${path[0] ?? ""}`)],
-        [path.join(".")],
-      )
-    : subjectRefView(ref, h);
+  const source = ref
+    .split(".")
+    .slice(0, ref.startsWith("steps.") ? 2 : 1)
+    .join(".");
+  const tone =
+    Array.reduce(source.split(""), 0, (sum, character) => sum + character.charCodeAt(0)) % 4;
+  return h.span(
+    [
+      componentName("ref"),
+      h.Class("reference-token"),
+      h.DataAttribute("tone", String(tone)),
+      h.Title(ref),
+    ],
+    [ref],
+  );
 };
 
 const templateView = (text: string, h: HtmlBuilder<Message>) =>
   Array.map(templateParts(text), (part) =>
     part.kind === "ref" ? refView(part.ref, h) : part.text,
+  );
+
+const readableRefView = (ref: string, h: HtmlBuilder<Message>) =>
+  h.span(
+    [
+      componentName("readable-ref"),
+      h.Class("text-foreground underline decoration-sand-8 decoration-dotted underline-offset-4"),
+      h.Title(ref),
+    ],
+    [(ref.startsWith("steps.") ? ref.slice(6) : ref).split(".").map(labelFromName).join(" → ")],
   );
 
 const joinedViews = (
@@ -372,7 +390,7 @@ const termView = (
   h: HtmlBuilder<Message>,
 ): ReadonlyArray<Html | string> => {
   if (term.kind === "test") {
-    return [refView(term.ref, h), " ", ...testParts(term, h)];
+    return [readableRefView(term.ref, h), " ", ...testParts(term, h)];
   }
   if (Array.isReadonlyArrayEmpty(term.terms)) {
     return [term.join === "all" ? "always" : "never"];
@@ -392,7 +410,7 @@ const termView = (
         !first.isNegated &&
         Array.every(tests, (test) => test.op === first.op && !test.isNegated);
       return [
-        refView(ref, h),
+        readableRefView(ref, h),
         " ",
         ...(isOneComparison
           ? [
@@ -460,53 +478,211 @@ const fieldChipsView = (names: ReadonlyArray<string>, h: HtmlBuilder<Message>) =
     " ",
   );
 
-const actionInputView = (value: ActionInput, h: HtmlBuilder<Message>) =>
+const inputTextView = (
+  value: string,
+  inputType: InputType | undefined,
+  h: HtmlBuilder<Message>,
+) => {
+  const parts = templateParts(value);
+  const [date, suffix] = parts;
+  const time =
+    inputType === "datetime" &&
+    parts.length === 2 &&
+    date?.kind === "ref" &&
+    suffix?.kind === "text"
+      ? /^T([01]\d|2[0-3]):([0-5]\d)(?::([0-5]\d))?(Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.exec(
+          suffix.text,
+        )
+      : null;
+  if (time !== null && date?.kind === "ref") {
+    const hour = Number(time[1]);
+    const seconds = time[3] === undefined || time[3] === "00" ? "" : `:${time[3]}`;
+    const zone = time[4] === "Z" ? "UTC" : `UTC${time[4]?.replace("-", "−")}`;
+    return [
+      refView(date.ref, h),
+      h.span(
+        [h.Title(value)],
+        [` at ${hour % 12 || 12}:${time[2]}${seconds} ${hour < 12 ? "AM" : "PM"} (${zone})`],
+      ),
+    ];
+  }
+  return templateView(value, h);
+};
+
+const actionInputView = (
+  value: ActionInput,
+  inputType: InputType | undefined,
+  h: HtmlBuilder<Message>,
+) =>
   Predicate.isString(value)
-    ? templateView(value, h)
+    ? inputTextView(value, inputType, h)
     : joinedViews(
-        Array.map(value, (item) => templateView(item, h)),
+        Array.map(value, (item) => inputTextView(item, inputType, h)),
         ", ",
       );
+
+const messageCardView = (
+  inputs: Readonly<Record<string, ActionInput>>,
+  messageField: "text" | "body",
+  isExpanded: boolean,
+  operationId: string,
+  h: HtmlBuilder<Message>,
+) =>
+  h.div(
+    [
+      componentName("message-card"),
+      h.Class("min-w-0 overflow-hidden rounded-lg bg-card shadow-card"),
+    ],
+    [
+      h.div(
+        [h.Class("flex flex-col gap-2 px-3.5 py-3")],
+        Array.map(
+          Object.entries(inputs).filter(([name]) => name !== messageField),
+          ([name, value]) =>
+            h.keyed("div")(
+              name,
+              [h.Class("flex flex-wrap items-baseline gap-x-2 gap-y-1")],
+              [
+                h.span(
+                  [h.Class("text-xs text-muted-foreground"), h.Title(name)],
+                  [labelFromName(name)],
+                ),
+                h.span(
+                  [h.Class("min-w-0 break-words")],
+                  actionInputView(
+                    value,
+                    findOperation(operationId)?.inputs.find((input) => input.name === name)?.type,
+                    h,
+                  ),
+                ),
+              ],
+            ),
+        ),
+      ),
+      h.div(
+        [h.Class("border-t border-border bg-sand-2 px-3.5 pt-3 pb-3.5")],
+        [
+          h.div([h.Class("mb-1.5 text-[11px] text-muted-foreground")], ["Message"]),
+          h.p(
+            [
+              h.Class(
+                cn("leading-6 break-words whitespace-pre-wrap", !isExpanded && "line-clamp-3"),
+              ),
+            ],
+            actionInputView(inputs[messageField] ?? "", "text", h),
+          ),
+        ],
+      ),
+    ],
+  );
 
 const inputListView = (
   label: string,
   inputs: Readonly<Record<string, ActionInput>>,
   isExpanded: boolean,
+  operationId: string | undefined,
   h: HtmlBuilder<Message>,
-) =>
-  h.ul(
-    [componentName("input-list"), h.AriaLabel(label), h.Class("flex flex-col gap-0.5 text-xs")],
-    Array.map(Object.entries(inputs), ([name, value]) =>
-      h.keyed("li")(
-        name,
-        [h.Class(cn("text-muted-foreground", isExpanded ? "break-words" : "line-clamp-1"))],
-        [h.span([h.Class("font-mono text-sand-11")], [`${name}: `]), ...actionInputView(value, h)],
+) => {
+  const messageField =
+    operationId === "slack.sendMessage"
+      ? "text"
+      : operationId === "email.send"
+        ? "body"
+        : undefined;
+  return h.ul(
+    [
+      componentName("input-list"),
+      h.AriaLabel(label),
+      h.Class(
+        operationId === undefined
+          ? "flex flex-col gap-1.5 text-xs"
+          : "mt-1 flex flex-col gap-2 text-[13px] leading-[22px]",
       ),
-    ),
+    ],
+    messageField !== undefined && inputs[messageField] !== undefined && operationId !== undefined
+      ? [h.li([], [messageCardView(inputs, messageField, isExpanded, operationId, h)])]
+      : Array.map(Object.entries(inputs), ([name, value]) => {
+          const inputType = findOperation(operationId ?? "")?.inputs.find(
+            (input) => input.name === name,
+          )?.type;
+          return h.keyed("li")(
+            name,
+            [h.Class("grid grid-cols-[4.5rem_minmax(0,1fr)] items-baseline gap-x-2.5")],
+            [
+              h.span(
+                [h.Class("break-words text-xs text-muted-foreground"), h.Title(name)],
+                [labelFromName(name)],
+              ),
+              h.span(
+                [
+                  h.Class(
+                    cn(
+                      "min-w-0 text-foreground whitespace-pre-wrap",
+                      isExpanded || inputType === "datetime" || Array.isArray(value)
+                        ? "break-words"
+                        : "line-clamp-1",
+                    ),
+                  ),
+                ],
+                actionInputView(value, inputType, h),
+              ),
+            ],
+          );
+        }),
   );
+};
 
 const templateUseView = (use: TemplateUse, h: HtmlBuilder<Message>) =>
-  h.p(
-    [componentName("template-use"), h.Class("text-xs text-muted-foreground")],
+  h.div(
     [
-      "Template ",
-      h.a(
+      componentName("template-use"),
+      h.Class("min-w-0 overflow-hidden rounded-lg bg-card shadow-card"),
+    ],
+    [
+      h.div(
         [
-          h.Href(templatesHref(Option.some(use.use))),
-          h.Title("Open the template"),
           h.Class(
             cn(
-              chipClass,
-              "text-foreground underline-offset-2 outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50",
+              "flex flex-wrap items-center gap-x-3 gap-y-2 bg-sand-2 px-3.5 py-3",
+              Array.isReadonlyArrayNonEmpty(Object.keys(use.with)) && "border-b border-border",
             ),
           ),
         ],
-        [use.use],
+        [
+          h.span([h.Class("text-xs text-muted-foreground")], ["Use template"]),
+          h.a(
+            [
+              h.Href(templatesHref(Option.some(use.use))),
+              h.Title(`Open template: ${use.use}`),
+              h.AriaLabel(`Open template: ${labelFromName(use.use)}`),
+              h.Class(
+                "inline-flex max-w-full items-center gap-1.5 rounded-full border border-border bg-secondary px-2.5 py-1 text-[13px] leading-5 font-medium text-foreground outline-none hover:bg-sand-4 focus-visible:ring-3 focus-visible:ring-ring/50",
+              ),
+            ],
+            [
+              icon(h, LayoutTemplate, "size-3.5 shrink-0"),
+              h.span([h.Class("min-w-0 break-words")], [labelFromName(use.use)]),
+            ],
+          ),
+        ],
       ),
-      ...Array.flatMap(Object.entries(use.with), ([slot, value]) => [
-        ` · ${slot}: `,
-        ...templateView(value, h),
-      ]),
+      Array.match(Object.entries(use.with), {
+        onEmpty: () => h.empty,
+        onNonEmpty: () =>
+          h.div(
+            [h.Class("flex flex-col gap-2 px-3.5 pt-3 pb-3.5")],
+            [
+              h.div([h.Class("text-[11px] font-normal text-sand-11/90")], ["Inputs"]),
+              inputListView(
+                `${labelFromName(use.use)} template inputs`,
+                use.with,
+                true,
+                undefined,
+                h,
+              ),
+            ],
+          ),
+      }),
     ],
   );
 
@@ -514,13 +690,16 @@ const inputSourceView = (
   label: string,
   source: InputSource,
   isExpanded: boolean,
+  operationId: string,
   h: HtmlBuilder<Message>,
 ) => [
   source.template === undefined ? h.empty : templateUseView(source.template, h),
-  source.with === undefined ? h.empty : inputListView(label, source.with, isExpanded, h),
+  source.with === undefined
+    ? h.empty
+    : inputListView(label, source.with, isExpanded, operationId, h),
 ];
 
-const matchCaseClass = "flex flex-col gap-1 border-l border-border pl-2.5";
+const matchCaseClass = "decision-branch flex min-w-0 flex-col gap-2 pl-6";
 
 const matchView = (
   action: ActionStep,
@@ -532,7 +711,7 @@ const matchView = (
     [
       componentName("match"),
       h.AriaLabel(`${action.title} cases`),
-      h.Class("flex flex-col gap-1.5"),
+      h.Class("mt-2 flex flex-col gap-5 text-[13px] leading-[22px] text-foreground"),
     ],
     [
       ...Array.map(match.cases, (branch, index) =>
@@ -540,18 +719,18 @@ const matchView = (
           [h.Class(matchCaseClass)],
           [
             h.div(
-              [h.Class("text-xs text-muted-foreground")],
+              [h.Class("break-words")],
               [ifConditionView(patternCondition(match.on, branch.when), h)],
             ),
-            ...inputSourceView(`Case ${index + 1} inputs`, branch, isExpanded, h),
+            ...inputSourceView(`Case ${index + 1} inputs`, branch, isExpanded, action.use, h),
           ],
         ),
       ),
       h.li(
         [h.Class(matchCaseClass)],
         [
-          h.div([h.Class("text-xs text-muted-foreground")], ["Otherwise"]),
-          ...inputSourceView("Otherwise inputs", match.otherwise, isExpanded, h),
+          h.div([], ["Otherwise"]),
+          ...inputSourceView("Otherwise inputs", match.otherwise, isExpanded, action.use, h),
         ],
       ),
     ],
@@ -627,7 +806,7 @@ const stepDetailView = (
                 permissionTagView(context.permissions[action.use], context.roles, h),
               ],
             ),
-            inputListView(`${action.title} inputs`, action.with, isExpanded, h),
+            inputListView(`${action.title} inputs`, action.with, isExpanded, action.use, h),
             action.template === undefined ? h.empty : templateUseView(action.template, h),
             action.match === undefined ? h.empty : matchView(action, action.match, isExpanded, h),
           ],

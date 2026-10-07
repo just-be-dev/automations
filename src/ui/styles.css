@@ -108,6 +108,14 @@
   --signal: #0090ff;
   --signal-foreground: #fff;
   --success: #30a46c;
+  --ref-blue-bg: #eaf1fc;
+  --ref-blue-text: #294b78;
+  --ref-violet-bg: #f0edfa;
+  --ref-violet-text: #59457b;
+  --ref-amber-bg: #faf0de;
+  --ref-amber-text: #735321;
+  --ref-green-bg: #eaf3ee;
+  --ref-green-text: #305b44;
 
   --card-shadow:
     0 0 0 1px #00000014, 0 1px 1px -0.5px #0000000f, 0 2px 2px -1px #0000000f,
@@ -142,6 +150,14 @@
     --chip: #ffffff11;
     --rail: #393939;
     --success: #3dd68c;
+    --ref-blue-bg: #26364b;
+    --ref-blue-text: #b8d3f5;
+    --ref-violet-bg: #383047;
+    --ref-violet-text: #d5c2f2;
+    --ref-amber-bg: #403625;
+    --ref-amber-text: #e8ce99;
+    --ref-green-bg: #293b31;
+    --ref-green-text: #b7dec7;
 
     --card-shadow:
       inset 0 1px 0 #ffffff0f, 0 0 0 1px #1f1f1f, 0 1px 1px -0.5px #0000004d,
@@ -167,6 +183,29 @@
   }
   [data-leave] {
     --tw-animation-fill-mode: both;
+  }
+}
+
+@utility reference-token {
+  padding: 1px 4px;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+  box-decoration-break: clone;
+  background-color: var(--ref-blue-bg);
+  color: var(--ref-blue-text);
+  &[data-tone="1"] {
+    background-color: var(--ref-violet-bg);
+    color: var(--ref-violet-text);
+  }
+  &[data-tone="2"] {
+    background-color: var(--ref-amber-bg);
+    color: var(--ref-amber-text);
+  }
+  &[data-tone="3"] {
+    background-color: var(--ref-green-bg);
+    color: var(--ref-green-text);
   }
 }
 
@@ -223,5 +262,31 @@
 @utility rail-start {
   & > :first-child {
     --rail-top: 0px;
+  }
+}
+
+/* Match branches use gap-5 and a 22px first line. Only adjacent branch points are connected. */
+@utility decision-branch {
+  position: relative;
+  &::before {
+    content: "";
+    position: absolute;
+    top: 7.5px;
+    left: 0;
+    width: 7px;
+    height: 7px;
+    border: 1px solid var(--sand-8);
+    border-radius: 2px;
+    background-color: var(--background);
+    z-index: 1;
+  }
+  &:not(:last-child)::after {
+    content: "";
+    position: absolute;
+    top: 11px;
+    bottom: -31px;
+    left: 3px;
+    width: 1px;
+    background-color: var(--rail);
   }
 }

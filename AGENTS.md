@@ -1,6 +1,6 @@
 # Automations studio
 
-A single-tenant prototype on Cloudflare: you design sequential automations in a chat, then run them in a Durable Object. Setup, deploy steps, and the HTTP API are in `README.md`. UI rules are in `src/ui/AGENTS.md`.
+A single-tenant prototype on Cloudflare: you design sequential automations in a chat, then run them in a Durable Object. The product introduction is in `README.md`; setup, deploy steps, and the HTTP API are in `docs/development.md`. `ARCHITECTURE.md` explains how the parts fit together. UI rules are in `src/ui/AGENTS.md`.
 
 ## Layout
 

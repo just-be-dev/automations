@@ -603,7 +603,7 @@ test("an entity trigger reads as the change that starts the run", () => {
     ),
     expect(
       text(
-        "When an employee is created or its start_date or manager changes, and employee.start_date is after now",
+        "When an employee is created or its start_date or manager changes, and Employee → Start date is after now",
       ),
     ).toExist(),
     expect(role("list", { name: "Reads" })).toHaveText("employee.start_date"),
@@ -616,7 +616,7 @@ test("action steps name their operation, list their inputs, and flag simulated c
     given(withDraft(onboarding)),
     expect(role("button", { name: "Send a Slack message: Tell the manager" })).toExist(),
     expect(role("list", { name: "Tell the manager inputs" })).toHaveText(
-      "to: employee.managertext: employee.name starts on employee.start_date",
+      "Toemployee.managerMessageemployee.name starts on employee.start_date",
     ),
     expect(text("Simulated")).toExist(),
     expect(text("Assignee: employee.manager")).toExist(),
@@ -626,6 +626,63 @@ test("action steps name their operation, list their inputs, and flag simulated c
     ),
   );
 });
+
+test.each([
+  ["T09:00:00-05:00", " at 9:00 AM (UTC−05:00)"],
+  ["T00:00:00Z", " at 12:00 AM (UTC)"],
+  ["T12:25:17+05:30", " at 12:25:17 PM (UTC+05:30)"],
+  ["T23:59:00-03:30", " at 11:59 PM (UTC−03:30)"],
+  ["T09:00:00.125Z", "T09:00:00.125Z"],
+  ["T25:00:00Z", "T25:00:00Z"],
+])(
+  "date references with %s retain their time and offset without rewriting message text",
+  (suffix, display) => {
+    const value = `{{employee.start_date}}${suffix}`;
+    scene(
+      { update, view },
+      given(
+        withDraft({
+          name: "Prepare a welcome",
+          trigger: { kind: "manual", subject: "employee" },
+          steps: [
+            {
+              id: "find_time",
+              kind: "action",
+              title: "Find a welcome slot",
+              use: "calendar.findTimes",
+              with: {
+                attendees: ["{{employee}}", "{{employee.manager}}"],
+                after: value,
+                duration: "30 minutes",
+              },
+            },
+            {
+              id: "notify",
+              kind: "action",
+              title: "Notify the manager",
+              use: "slack.sendMessage",
+              with: { to: "{{employee.manager}}", text: `Start: ${value}\nBring a buddy.` },
+            },
+          ],
+        }),
+      ),
+      expect(role("list", { name: "Find a welcome slot inputs" })).toHaveText(
+        `Attendeesemployee, employee.managerAfteremployee.start_date${display}Duration30 minutes`,
+      ),
+      expect(role("list", { name: "Notify the manager inputs" })).toHaveText(
+        `Toemployee.managerMessageStart: employee.start_date${suffix}\nBring a buddy.`,
+      ),
+      click(role("button", { name: "Send a Slack message: Notify the manager" })),
+      expect(role("button", { name: "Send a Slack message: Notify the manager" })).toHaveAttr(
+        "aria-expanded",
+        "true",
+      ),
+      expect(role("list", { name: "Notify the manager inputs" })).toHaveText(
+        `Toemployee.managerMessageStart: employee.start_date${suffix}\nBring a buddy.`,
+      ),
+    );
+  },
+);
 
 test("action steps show the template they use and the inputs each match case supplies", () => {
   const welcome: Workflow = {
@@ -660,18 +717,164 @@ test("action steps show the template they use and the inputs each match case sup
   scene(
     { update, view },
     given(withDraft(welcome)),
-    expect(role("list", { name: "Welcome the hire inputs" })).toHaveText("to: employee"),
+    expect(role("list", { name: "Welcome the hire inputs" })).toHaveText("Toemployee"),
     expect(role("list", { name: "Welcome the hire cases" })).toContainText(
-      "If employee.role contains “engineer”Template engineering_welcome_email · hire: employee · manager: employee.manager",
+      "If Employee → Role contains “engineer”Use templateEngineering welcome emailInputsHireemployeeManageremployee.manager",
     ),
     expect(role("list", { name: "Welcome the hire cases" })).toContainText(
-      "OtherwiseTemplate welcome_email · hire: employee",
+      "OtherwiseUse templateWelcome emailInputsHireemployee",
     ),
-    expect(role("list", { name: "Otherwise inputs" })).toHaveText("subject: Welcome"),
-    expect(role("link", { name: "welcome_email" })).toHaveAttr(
+    expect(role("list", { name: "Engineering welcome email template inputs" })).toHaveText(
+      "HireemployeeManageremployee.manager",
+    ),
+    expect(text("Employee → Role")).toHaveAttr("title", "employee.role"),
+    expect(role("list", { name: "Otherwise inputs" })).toHaveText("SubjectWelcome"),
+    expect(role("link", { name: "Open template: Engineering welcome email" })).toHaveAttr(
+      "href",
+      "/templates?template=engineering_welcome_email",
+    ),
+    expect(role("link", { name: "Open template: Welcome email" })).toHaveAttr(
       "href",
       "/templates?template=welcome_email",
     ),
+  );
+});
+
+test("templates without slots omit the inputs body and plain match inputs still render", () => {
+  scene(
+    { update, view },
+    given(
+      withDraft({
+        name: "Notices",
+        trigger: { kind: "manual", subject: "employee" },
+        steps: [
+          {
+            id: "notice",
+            kind: "action",
+            title: "Send a notice",
+            use: "email.send",
+            with: { to: "{{employee}}" },
+            template: { use: "company_notice", with: {} },
+          },
+          {
+            id: "welcome",
+            kind: "action",
+            title: "Choose a welcome",
+            use: "email.send",
+            with: {},
+            match: {
+              on: "employee.level",
+              cases: [
+                {
+                  when: { op: "equals", value: 2 },
+                  with: {
+                    body: "Hi {{employee.manager}}",
+                    to: ["{{employee}}", "ops@example.com"],
+                  },
+                },
+                {
+                  when: { op: "greaterThan", value: 3 },
+                  template: { use: "static_welcome", with: {} },
+                },
+              ],
+              otherwise: { with: { subject: "Default welcome" } },
+            },
+          },
+        ],
+      }),
+    ),
+    expect(role("link", { name: "Open template: Company notice" })).toHaveAttr(
+      "href",
+      "/templates?template=company_notice",
+    ),
+    expect(role("link", { name: "Open template: Static welcome" })).toHaveAttr(
+      "href",
+      "/templates?template=static_welcome",
+    ),
+    expect(text("Inputs")).not.toExist(),
+    expect(role("list", { name: "Company notice template inputs" })).not.toExist(),
+    expect(role("list", { name: "Static welcome template inputs" })).not.toExist(),
+    expect(role("list", { name: "Case 1 inputs" })).toHaveText(
+      "Toemployee, ops@example.comMessageHi employee.manager",
+    ),
+    expect(role("list", { name: "Choose a welcome cases" })).toContainText(
+      "If Employee → Level is more than 3Use templateStatic welcome",
+    ),
+    expect(role("list", { name: "Otherwise inputs" })).toHaveText("SubjectDefault welcome"),
+  );
+});
+
+test.each([false, true])(
+  "qualified tokens keep source tints stable when fields are reordered: %s",
+  (reversed) => {
+    const message = reversed
+      ? "{{team.name}} welcomes {{employee.name}}. Manager: {{employee.manager.name}}. Slot: {{steps.find_time.times.0}}. Note: {{steps.find_time.note}}."
+      : "{{employee.name}} joins {{team.name}}. Slot: {{steps.find_time.times.0}}. Manager: {{employee.manager.name}}. Note: {{steps.find_time.note}}.";
+    scene(
+      { update, view },
+      given(
+        withDraft({
+          name: "Welcome to the team",
+          trigger: { kind: "manual", subject: "employee" },
+          steps: [
+            {
+              id: "notify",
+              kind: "action",
+              title: "Tell the manager",
+              use: "slack.sendMessage",
+              with: { to: "{{employee.manager}}", text: message },
+            },
+          ],
+        }),
+      ),
+      expect(
+        within(role("list", { name: "Tell the manager inputs" }), text("employee.name")),
+      ).toHaveAttr("data-tone", "0"),
+      expect(
+        within(role("list", { name: "Tell the manager inputs" }), text("team.name")),
+      ).toHaveAttr("data-tone", "3"),
+      expect(
+        within(role("list", { name: "Tell the manager inputs" }), text("employee.manager.name")),
+      ).toHaveAttr("title", "employee.manager.name"),
+      expect(
+        within(role("list", { name: "Tell the manager inputs" }), text("steps.find_time.times.0")),
+      ).toHaveAttr("data-tone", "0"),
+      expect(
+        within(role("list", { name: "Tell the manager inputs" }), text("steps.find_time.note")),
+      ).toHaveAttr("data-tone", "0"),
+      expect(text("Fields from Employee")).not.toExist(),
+    );
+  },
+);
+
+test("email message cards retain the recipient and subject, preserve line breaks, and render markup as text", () => {
+  scene(
+    { update, view },
+    given(
+      withDraft({
+        name: "Welcome email",
+        trigger: { kind: "manual", subject: "employee" },
+        steps: [
+          {
+            id: "welcome",
+            kind: "action",
+            title: "Welcome the hire",
+            use: "email.send",
+            with: {
+              body: "Hi {{employee.name}}.\n<b>Welcome</b> to {{team.name}}.",
+              to: "{{employee}}",
+              subject: "Welcome {{employee.name}}",
+            },
+          },
+        ],
+      }),
+    ),
+    expect(role("list", { name: "Welcome the hire inputs" })).toHaveText(
+      "ToemployeeSubjectWelcome employee.nameMessageHi employee.name.\n<b>Welcome</b> to team.name.",
+    ),
+    click(role("button", { name: "Send an email: Welcome the hire" })),
+    expect(text("Hi employee.name.\n<b>Welcome</b> to team.name.")).not.toHaveClass("line-clamp-3"),
+    expect(text("Fields from Employee")).not.toExist(),
   );
 });
 
@@ -911,7 +1114,7 @@ test("nested steps render as labelled lanes with readable conditions and setting
     expect(role("button", { name: /Ask for cover$/ })).toExist(),
     expect(text("Assignee: employee.manager")).toExist(),
     expect(text("Times out after 2 days")).toExist(),
-    expect(text("If ask.approved is true")).toExist(),
+    expect(text("If Ask → Approved is true")).toExist(),
     expect(text("Pauses for 3 days")).toExist(),
     expect(role("list", { name: "Reads" })).toHaveText("employee.start_dateemployee.manager"),
   );
@@ -974,13 +1177,15 @@ test("conditions name a shared ref once, fold in not, and list long groups", () 
         ],
       }),
     ),
-    expect(text("If employee.role contains “engineer” or “Engineer”")).toExist(),
-    expect(text("If employee.manager is not set and employee.level is not more than 3")).toExist(),
-    expect(text(/^If all of these are true:/)).toExist(),
-    expect(role("listitem", { name: "employee.start_date is after now" })).toExist(),
-    expect(role("listitem", { name: "employee.start_date is before Nov 2, 2026" })).toExist(),
+    expect(text("If Employee → Role contains “engineer” or “Engineer”")).toExist(),
     expect(
-      role("listitem", { name: "employee.team is “ops” or employee.remote is true" }),
+      text("If Employee → Manager is not set and Employee → Level is not more than 3"),
+    ).toExist(),
+    expect(text(/^If all of these are true:/)).toExist(),
+    expect(role("listitem", { name: "Employee → Start date is after now" })).toExist(),
+    expect(role("listitem", { name: "Employee → Start date is before Nov 2, 2026" })).toExist(),
+    expect(
+      role("listitem", { name: "Employee → Team is “ops” or Employee → Remote is true" }),
     ).toExist(),
   );
 });
