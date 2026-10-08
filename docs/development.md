@@ -79,6 +79,27 @@ It also creates `AutomationsDatabase`, a D1 database that lists the automations 
 
 Deploys also create a 30-day Access service token for machine testing. Send it as `CF-Access-Client-Id` / `CF-Access-Client-Secret`, and read it with `bun alchemy state`. Never commit it.
 
+### GitHub Actions
+
+`.github/workflows/ci.yml` runs typecheck, lint, tests, formatting, and the UI build on pull requests, and can be run manually. It installs the committed lockfile with `bun install --frozen-lockfile`, including the dependency patches and `prepare` hook. Keep the Bun version in both workflows in sync with `mise.toml`. CI needs no Cloudflare credentials; real-model evals remain a separate local check as described above.
+
+`.github/workflows/deploy.yml` runs the same CI workflow on every push to `main`, then deploys the checked commit to Alchemy stage `prod`. **Deployments apply D1 migrations and update live Workers and Durable Objects.** The workflow can also be dispatched manually on `main`; other branches cannot deploy. Deploy runs are serialized without cancelling an active run; GitHub keeps only the newest pending run. There are no PR preview deployments or automatic destroy jobs.
+
+Before enabling deployments:
+
+1. Create a GitHub environment named `production` in the repository settings. Restrict its deployment branches to `main`, and add required reviewers if deployments should wait for approval.
+2. Create a Cloudflare API token scoped to the **same account as the existing production deployment**. It must manage Workers scripts and account settings, D1, Access applications/policies and service tokens, and read Workers AI. Alchemy's shared state store also needs **Secrets Store Write**, including on fresh CI runners that only read the state token through an edge-preview Worker. An ordinary Workers-only token is insufficient. Do not use a Global API Key or grant API-token-management rights to CI.
+3. Add these two Actions secrets to the `production` environment. These commands prompt for values rather than putting them in shell history:
+
+   ```sh
+   gh secret set CLOUDFLARE_API_TOKEN --env production --repo just-be-dev/automations
+   gh secret set CLOUDFLARE_ACCOUNT_ID --env production --repo just-be-dev/automations
+   ```
+
+4. Push the workflows, then inspect the **Deploy** run in GitHub Actions. The credential preflight checks required variables, not API permissions; the deployment must succeed to validate the token's scope. Once the workflow is enabled, subsequent pushes to `main` deploy automatically after checks pass.
+
+Alchemy uses the existing `Cloudflare.state()` store, so a fresh runner sees the same `automations` / `prod` state as a local production deploy. No `.alchemy/` files, local OAuth profile, or `ALCHEMY_PASSWORD` secret are uploaded. `--yes --no-input` makes deployment non-interactive and allows Alchemy to bootstrap or upgrade its account-level state store when needed. A first deployment also needs Cloudflare Zero Trust configured, as a local deploy does.
+
 ### Cloudflare observability
 
 Alchemy enables persistent Workers Logs (including invocation logs) and Workers Traces on both `Studio` and `Api`, with 100% head sampling for this prototype. This increases observability usage; lower the sampling rates if traffic grows.
