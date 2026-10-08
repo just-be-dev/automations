@@ -8,6 +8,7 @@ import { mcpRoutes } from "./mcp.ts";
 import { json } from "./response.ts";
 import { assistantRoutes } from "./assistant.ts";
 import { changeRoutes } from "./changes.ts";
+import { transcriptionRoutes } from "./transcription.ts";
 
 /** Routes use application services; hosting and request-scoped implementations belong to the host. */
 export const apiRoutes = Layer.mergeAll(
@@ -17,5 +18,6 @@ export const apiRoutes = Layer.mergeAll(
   mcpRoutes,
   assistantRoutes,
   changeRoutes,
+  transcriptionRoutes,
   HttpRouter.add("*", "*", json({ error: "Not found" }, 404)),
 );

@@ -1,8 +1,10 @@
 import * as Schema from "effect/Schema";
 import { defineMessageUnion } from "foldkit/message";
 import { AssistantState } from "../../assistant/model.ts";
+import * as Dictation from "../dictation/index.ts";
 
 export const Message = defineMessageUnion({
+  GotDictationMessage: { message: Dictation.Message },
   CompletedRestoreAssistant: { sessionId: Schema.String, collapsed: Schema.Boolean },
   FailedRestoreAssistant: { error: Schema.String },
   ClickedCollapse: {},

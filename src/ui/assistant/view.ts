@@ -26,6 +26,7 @@ import { Questionnaire } from "../domain/index.ts";
 import { Message } from "./message.ts";
 import { type Model, Request } from "./model.ts";
 import { trustedHref } from "./update.ts";
+import * as Dictation from "../dictation/index.ts";
 
 export const view = Submodel.defineView<Model, Message>((model, h) => {
   const busy = Request.guards.Sending(model.request);
@@ -326,24 +327,46 @@ export const view = Submodel.defineView<Model, Message>((model, h) => {
               h.div(
                 [h.Class("flex items-center justify-between gap-2")],
                 [
-                  h.span([h.Class("text-[11px] text-sand-10")], ["Changes need your confirmation"]),
-                  button(
-                    {
-                      type: "submit",
-                      size: "icon-sm",
-                      className:
-                        "aria-disabled:bg-secondary aria-disabled:text-sand-10 aria-disabled:opacity-100",
-                      attributes: [h.AriaLabel("Send to assistant"), h.Title("Send message")],
-                      isDisabled:
-                        busy ||
-                        model.sessionId === "" ||
-                        model.input.trim() === "" ||
-                        (state !== undefined &&
-                          state.status !== "idle" &&
-                          state.status !== "failed"),
-                    },
-                    [icon(h, Send, "size-3.5")],
-                    h,
+                  model.dictation.status._tag === "Idle"
+                    ? h.span(
+                        [h.Class("text-[11px] text-sand-10")],
+                        ["Changes need your confirmation"],
+                      )
+                    : h.submodel({
+                        slotId: "assistant-dictation-status",
+                        model: model.dictation,
+                        view: Dictation.statusView,
+                        toParentMessage: (message) => Message.GotDictationMessage({ message }),
+                      }),
+                  h.div(
+                    [h.Class("flex shrink-0 items-center gap-1")],
+                    [
+                      h.submodel({
+                        slotId: "assistant-dictation",
+                        model: model.dictation,
+                        view: Dictation.view,
+                        toParentMessage: (message) => Message.GotDictationMessage({ message }),
+                      }),
+                      button(
+                        {
+                          type: "submit",
+                          size: "icon-sm",
+                          className:
+                            "aria-disabled:bg-secondary aria-disabled:text-sand-10 aria-disabled:opacity-100",
+                          attributes: [h.AriaLabel("Send to assistant"), h.Title("Send message")],
+                          isDisabled:
+                            busy ||
+                            Dictation.active(model.dictation) ||
+                            model.sessionId === "" ||
+                            model.input.trim() === "" ||
+                            (state !== undefined &&
+                              state.status !== "idle" &&
+                              state.status !== "failed"),
+                        },
+                        [icon(h, Send, "size-3.5")],
+                        h,
+                      ),
+                    ],
                   ),
                 ],
               ),

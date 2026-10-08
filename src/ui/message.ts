@@ -10,8 +10,10 @@ import { SubjectOption } from "./api.ts";
 import { AutomationSummary, Exchange, WorkflowDisplay } from "./model.ts";
 import { Entities, Overview, Templates, Traces } from "./page/index.ts";
 import * as Assistant from "./assistant/index.ts";
+import * as Dictation from "./dictation/index.ts";
 
 export const Message = defineMessageUnion({
+  GotDictationMessage: { message: Dictation.Message },
   GotAssistantMessage: { message: Assistant.Message },
   ToggledPlannerHistory: { isOpen: Schema.Boolean },
   ClickedLink: { request: UrlRequest },

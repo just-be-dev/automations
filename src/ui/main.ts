@@ -21,6 +21,7 @@ import { showPage } from "./update/index.ts";
 import * as Assistant from "./assistant/index.ts";
 import { toAssistantMessage } from "./message.ts";
 import { Command } from "foldkit";
+import * as Dictation from "./dictation/index.ts";
 
 export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flags, url) => {
   const route = routeFromUrl(url);
@@ -34,6 +35,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
   });
   const model = Model.make({
     assistant: Assistant.initial,
+    dictation: Dictation.initial,
     maybeFollowHref: Option.none(),
     plannerHistoryOpen: false,
     maybeNavigationNotice: Option.none(),

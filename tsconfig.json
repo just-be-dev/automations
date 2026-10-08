@@ -25,6 +25,7 @@
               "src/ui/page/entities/command.ts",
               "src/http/**/*.ts",
               "src/platform/cloudflare/api.ts",
+              "src/platform/cloudflare/transcription.ts",
               "evals/framework/worker.ts",
               "src/platform/cloudflare/access.ts",
               "src/platform/cloudflare/access.test.ts",

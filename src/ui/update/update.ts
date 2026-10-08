@@ -45,6 +45,7 @@ import { Entities, Overview, Templates, Traces } from "../page/index.ts";
 import { routeFromUrl, runHref } from "../route.ts";
 import { nextTheme } from "../theme.ts";
 import { followRoute, openRunPanel, opensInPanel } from "./navigation.ts";
+import * as Dictation from "../dictation/index.ts";
 import { dirtyForms, foldAssistant, pageHref } from "./assistant.ts";
 import {
   createdAutomation,
@@ -125,9 +126,42 @@ const foldOverview = Update.foldChild({
 
 export const update = (model: Model, message: Message) =>
   Message.match<Update.Return<Model, Message>>(message, {
-    GotAssistantMessage: ({ message }) => foldAssistant(model, message),
+    GotDictationMessage: ({ message }) => {
+      const nextModel =
+        message._tag === "ClickedMicrophone" && !Dictation.active(model.dictation)
+          ? modifyFields(model, {
+              assistant: (assistant) => modifyFields(assistant, { dictation: Dictation.cancel }),
+            })
+          : model;
+      return Update.foldChild({
+        update: Dictation.update,
+        read: (model: Model) =>
+          Page.guards.Studio(model.page) ? Option.some(model.dictation) : Option.none(),
+        write: (model: Model, dictation: Dictation.Model) =>
+          modifyFields(model, { dictation: () => dictation }),
+        toParentMessage: (message) => Message.GotDictationMessage({ message }),
+        foldOutMessage: (outMessage) => (model: Model) =>
+          Dictation.OutMessage.match(outMessage, {
+            DraftedText: ({ previous, text }) => ({
+              model: modifyMessageInput(model, (input) => Dictation.draft(input, previous, text)),
+            }),
+          }),
+      })(nextModel, message);
+    },
+    GotAssistantMessage: ({ message }) =>
+      foldAssistant(
+        message._tag === "GotDictationMessage" &&
+          message.message._tag === "ClickedMicrophone" &&
+          !Dictation.active(model.assistant.dictation)
+          ? modifyFields(model, { dictation: Dictation.cancel })
+          : model,
+        message,
+      ),
     ToggledPlannerHistory: ({ isOpen }) => ({
-      model: modifyFields(model, { plannerHistoryOpen: () => isOpen }),
+      model: modifyFields(model, {
+        plannerHistoryOpen: () => isOpen,
+        dictation: (dictation) => (isOpen ? dictation : Dictation.cancel(dictation)),
+      }),
     }),
     ClickedLink: ({ request }) =>
       UrlRequest.match<Update.Return<Model, Message>>(request, {
@@ -200,8 +234,14 @@ export const update = (model: Model, message: Message) =>
       };
     },
     CompletedApplyTheme: () => ({ model }),
-    UpdatedMessageInput: ({ value }) => ({ model: modifyMessageInput(model, () => value) }),
-    SubmittedMessage: () => sendMessage(model, messageInputOf(model)),
+    UpdatedMessageInput: ({ value }) => ({
+      model: modifyFields(
+        modifyMessageInput(model, () => value),
+        { dictation: Dictation.edited },
+      ),
+    }),
+    SubmittedMessage: () =>
+      Dictation.active(model.dictation) ? { model } : sendMessage(model, messageInputOf(model)),
     ClickedQuestionStep: ({ chatId, step }) => showQuestionStep(model, chatId, step),
     ClickedQuestionOption: ({ chatId, question, label }) =>
       chooseOption(model, chatId, question, label),

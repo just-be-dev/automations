@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import { defineTaggedUnion } from "foldkit/schema";
 import { AssistantState } from "../../assistant/model.ts";
 import { Questionnaire } from "../domain/index.ts";
+import * as Dictation from "../dictation/index.ts";
 
 export const Request = defineTaggedUnion({
   Ready: {},
@@ -10,6 +11,7 @@ export const Request = defineTaggedUnion({
   Failed: { error: Schema.String },
 });
 export const Model = Schema.Struct({
+  dictation: Dictation.Model,
   sessionId: Schema.String,
   collapsed: Schema.Boolean,
   follow: Schema.Boolean,
@@ -22,6 +24,7 @@ export const Model = Schema.Struct({
 });
 export type Model = typeof Model.Type;
 export const initial = Model.make({
+  dictation: Dictation.initial,
   sessionId: "",
   collapsed: false,
   follow: false,

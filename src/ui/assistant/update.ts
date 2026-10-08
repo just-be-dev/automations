@@ -1,7 +1,7 @@
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import type { Update } from "foldkit";
+import { Update } from "foldkit";
 import { defineMessageUnion } from "foldkit/message";
 import { modifyFields } from "foldkit/struct";
 import type { PageContext } from "../../assistant/model.ts";
@@ -9,6 +9,7 @@ import { Questionnaire } from "../domain/index.ts";
 import { PersistCollapsed, RequestAssistant, RestoreAssistant } from "./command.ts";
 import { Message } from "./message.ts";
 import { type Model, Request } from "./model.ts";
+import * as Dictation from "../dictation/index.ts";
 
 export const OutMessage = defineMessageUnion({
   UpdatedResources: {},
@@ -43,6 +44,22 @@ export const update =
   (context: PageContext, dirty: boolean) =>
   (model: Model, message: Message): Return =>
     Message.match<Return>(message, {
+      GotDictationMessage: ({ message }) =>
+        Update.foldChild({
+          update: Dictation.update,
+          read: (model: Model) => Option.some(model.dictation),
+          write: (model: Model, dictation: Dictation.Model) =>
+            modifyFields(model, { dictation: () => dictation }),
+          toParentMessage: (message) => Message.GotDictationMessage({ message }),
+          foldOutMessage: (outMessage) => (model: Model) =>
+            Dictation.OutMessage.match(outMessage, {
+              DraftedText: ({ previous, text }) => ({
+                model: modifyFields(model, {
+                  input: (input) => Dictation.draft(input, previous, text),
+                }),
+              }),
+            }),
+        })(model, message),
       CompletedRestoreAssistant: ({ sessionId, collapsed }) => ({
         model: modifyFields(model, { sessionId: () => sessionId, collapsed: () => collapsed }),
         commands: [
@@ -60,7 +77,7 @@ export const update =
         model: modifyFields(model, { request: () => Request.Failed({ error }) }),
       }),
       ClickedCollapse: () => ({
-        model: modifyFields(model, { collapsed: (value) => !value }),
+        model: modifyFields(model, { collapsed: (value) => !value, dictation: Dictation.cancel }),
         commands: [PersistCollapsed({ collapsed: !model.collapsed })],
       }),
       CompletedPersistCollapsed: () => ({ model }),
@@ -103,8 +120,11 @@ export const update =
           ],
         };
       },
-      UpdatedInput: ({ value }) => ({ model: modifyFields(model, { input: () => value }) }),
+      UpdatedInput: ({ value }) => ({
+        model: modifyFields(model, { input: () => value, dictation: Dictation.edited }),
+      }),
       SubmittedChat: () =>
+        Dictation.active(model.dictation) ||
         model.input.trim() === "" ||
         Option.exists(
           model.maybeState,

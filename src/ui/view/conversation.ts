@@ -23,6 +23,7 @@ import {
 } from "../model.ts";
 import { answersView, askedQuestionsView, openQuestionnaireView } from "./questionnaire.ts";
 import { characterCountView, submitShortcut } from "./shared.ts";
+import * as Dictation from "../dictation/index.ts";
 
 export const conversationView = (model: Model, h: HtmlBuilder<Message>) =>
   h.section(
@@ -229,17 +230,41 @@ const composerView = (model: Model, h: HtmlBuilder<Message>) =>
             h,
           ),
           h.div(
-            [h.Class("flex items-center justify-between gap-3 pr-2 pb-2 pl-3.5")],
             [
-              characterCountView(messageInputOf(model).length, undefined, h),
-              button(
-                {
-                  onClick: Message.SubmittedMessage(),
-                  isDisabled: Activity.guards.Working(model.activity),
-                  attributes: [h.Id("send")],
-                },
-                ["Send message", icon(h, CornerDownLeft, "size-3.5", "inline-end")],
-                h,
+              h.Class(
+                `flex items-center justify-between gap-3 pb-2 pl-3.5 ${model.assistant.collapsed ? "pr-16 lg:pr-2" : "pr-2"}`,
+              ),
+            ],
+            [
+              model.dictation.status._tag === "Idle"
+                ? characterCountView(messageInputOf(model).length, undefined, h)
+                : h.submodel({
+                    slotId: "planner-dictation-status",
+                    model: model.dictation,
+                    view: Dictation.statusView,
+                    toParentMessage: (message) => Message.GotDictationMessage({ message }),
+                  }),
+              h.div(
+                [h.Class("flex shrink-0 items-center gap-1")],
+                [
+                  h.submodel({
+                    slotId: "planner-dictation",
+                    model: model.dictation,
+                    view: Dictation.view,
+                    toParentMessage: (message) => Message.GotDictationMessage({ message }),
+                  }),
+                  button(
+                    {
+                      onClick: Message.SubmittedMessage(),
+                      isDisabled:
+                        Activity.guards.Working(model.activity) ||
+                        Dictation.active(model.dictation),
+                      attributes: [h.Id("send")],
+                    },
+                    ["Send message", icon(h, CornerDownLeft, "size-3.5", "inline-end")],
+                    h,
+                  ),
+                ],
               ),
             ],
           ),

@@ -15,6 +15,8 @@ import { EntityStoreD1 } from "./entity-store-d1.ts";
 import { workersAiNamer } from "./workers-ai.ts";
 import StudioAssistant, { assistantsLayer } from "./assistant.ts";
 import ChangeCoordinator, { changesLayer } from "./changes.ts";
+import { Transcription } from "../../http/transcription.ts";
+import { workersAiTranscription } from "./transcription.ts";
 
 /** Only the Access-protected Studio Worker can reach this private API. */
 export default class Api extends Cloudflare.Worker<Api>()(
@@ -53,6 +55,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
       namer,
       assistantsLayer(assistantNamespace),
       changesLayer(changeNamespace),
+      Layer.effect(Transcription, Effect.map(ai.raw, workersAiTranscription)),
     );
     const handler = yield* HttpRouter.toHttpEffect(apiRoutes);
     // RuntimeContext and request headers exist only when this returned effect handles a request.
