@@ -10,6 +10,12 @@ import { TestClock } from "effect/testing";
 import { ProgressClassifier } from "../agents/planner/progress-classifier.ts";
 import { PiAgent, type PromptOptions } from "../ai/pi.ts";
 import { EntityStore, EntityStoreError, layerMemory } from "../entities/store.ts";
+import { EntitySubscribers } from "../entities/subscribers.ts";
+import { makeChanges } from "../changes/application.ts";
+import type { ChangeStorage } from "../changes/host.ts";
+import { deliverEvent } from "../events/delivery.ts";
+import type { Event } from "../events/model.ts";
+import { Events } from "../events/service.ts";
 import type { Workflow } from "../workflow/model.ts";
 import { ExecutionId, ExecutionValues } from "../workflow/execution.ts";
 import { RunId } from "../workflow/run.ts";
@@ -17,6 +23,7 @@ import { answerHubLayer } from "../ai/ask-question/answer-hub.ts";
 import { makeAutomation } from "./application.ts";
 import { AutomationHost } from "./host.ts";
 import { AutomationIndex, AutomationIndexError } from "./index.ts";
+import { Automations } from "./service.ts";
 import { makePlanning } from "./planning.ts";
 import { makeRunStore, StoredRun } from "./run-store.ts";
 
@@ -37,6 +44,7 @@ const harness = () => {
   const prompts: Array<PromptOptions> = [];
   const transcripts: Array<number | undefined> = [];
   const recorded: Array<{ id: string; name: string }> = [];
+  const emitted: Array<Event> = [];
   const lock = Semaphore.makeUnsafe(1);
   let failSchedule = false;
   const host = AutomationHost.of({
@@ -137,6 +145,7 @@ const harness = () => {
   );
   const services = Layer.mergeAll(
     answerHubLayer,
+    Layer.succeed(Events, { publish: (event) => Effect.sync(() => void emitted.push(event)) }),
     Layer.succeed(
       ProgressClassifier,
       ProgressClassifier.of({ classify: () => Effect.die("No reasoning to classify") }),
@@ -184,6 +193,7 @@ const harness = () => {
     prompts,
     transcripts,
     recorded,
+    emitted,
     failSchedule: () => {
       failSchedule = true;
     },
@@ -1075,6 +1085,389 @@ test("stable entity notification keys deduplicate concurrent delivery and surviv
       const second = yield* reopened.entityChanged({ name: "Sam" }, subject);
       expect(first.runId).not.toBe(second.runId);
       expect((yield* reopened.inspectWorkflow()).runs.length).toBe(3);
+    }).pipe(Effect.provide(h.layer)),
+  );
+});
+
+test("event filters, subjects and ignored receipts survive restart; a matching run emits the original payload once", async () => {
+  const h = harness();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const saved: Workflow = {
+        name: "Handle a paid order",
+        trigger: {
+          kind: "event",
+          event: "order.paid",
+          subject: "person",
+          when: { ref: "event.data.total", op: "greaterThan", value: 100 },
+        },
+        permissions: { "events.emit": "auto" },
+        steps: [
+          {
+            id: "emit",
+            title: "Hand off",
+            kind: "action",
+            use: "events.emit",
+            with: { name: "order.fulfilled", data: "{{event.data}}" },
+          },
+        ],
+      };
+      yield* h.host.storage.put("draft", saved);
+      const app = yield* makeAutomation();
+      yield* app.save("orders");
+      const subject = { type: "person", id: "sam", data: { name: "Original Sam" } };
+      const event: Event = {
+        id: "paid-81",
+        name: "order.paid",
+        data: { total: 137, items: ["book", "pen"] },
+        subject,
+        depth: 4,
+      };
+      expect(
+        yield* app.eventReceived({ ...event, id: "wrong-name", name: "order.refunded" }),
+      ).toEqual({ runId: null });
+      expect(
+        yield* app.eventReceived({
+          ...event,
+          id: "wrong-type",
+          subject: { ...subject, type: "invoice" },
+        }),
+      ).toEqual({ runId: null });
+      expect(yield* app.eventReceived({ ...event, id: "small", data: { total: 100 } })).toEqual({
+        runId: null,
+      });
+      expect(
+        yield* app.eventReceived({
+          id: "no-subject",
+          name: event.name,
+          data: event.data,
+          depth: 0,
+        }),
+      ).toEqual({ runId: null });
+      const results = yield* Effect.all([app.eventReceived(event), app.eventReceived(event)], {
+        concurrency: "unbounded",
+      });
+      expect(results).toEqual([
+        { runId: RunId.make("event-paid-81") },
+        { runId: RunId.make("event-paid-81") },
+      ]);
+      expect(h.advances).toHaveLength(1);
+      yield* (yield* EntityStore).putEntity("person", "sam", { name: "Changed Sam" });
+      yield* h.host.storage.delete(`event:${event.id}`);
+      const reopened = yield* makeAutomation();
+      yield* h.host.storage.put("saved", {
+        ...saved,
+        trigger: { kind: "event", event: "order.refunded" },
+      });
+      expect(yield* reopened.eventReceived(event)).toEqual(results[0]);
+      expect(h.advances).toHaveLength(1);
+      expect(
+        yield* reopened.eventReceived({ ...event, id: "wrong-name", name: "order.refunded" }),
+      ).toEqual({ runId: null });
+      const executionId = yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances[0]);
+      yield* reopened.callbacks.advance({ executionId });
+      yield* reopened.callbacks.advance({ executionId });
+      const run = yield* reopened.run(RunId.make("event-paid-81"));
+      expect(run?.status).toBe("completed");
+      expect(run?.event).toEqual(event);
+      expect(run?.subject).toEqual(subject);
+      expect(h.emitted).toEqual([
+        {
+          id: expect.stringMatching(/^action:/),
+          name: "order.fulfilled",
+          data: event.data,
+          subject,
+          depth: 5,
+        },
+      ]);
+      expect(run?.steps.emit?.record).toMatchObject({
+        eventId: h.emitted[0]?.id,
+        name: "order.fulfilled",
+      });
+    }).pipe(Effect.provide(h.layer)),
+  );
+});
+
+test("event-only runs need no subject; JSON strings from refs and matched inputs remain values", async () => {
+  const h = harness();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* h.host.storage.put("saved", {
+        name: "Relay",
+        trigger: { kind: "event", event: "message.received" },
+        permissions: { "events.emit": "auto" },
+        steps: [
+          {
+            id: "relay",
+            title: "Relay",
+            kind: "action",
+            use: "events.emit",
+            with: { name: "message.forwarded" },
+            match: {
+              on: "event.data",
+              cases: [{ when: { op: "equals", value: "hello" }, with: { data: "{{event.data}}" } }],
+              otherwise: { with: { data: '"fallback"' } },
+            },
+          },
+        ],
+      });
+      const app = yield* makeAutomation();
+      const result = yield* app.eventReceived({
+        id: "message-1",
+        name: "message.received",
+        data: "hello",
+        depth: 0,
+      });
+      expect(result.runId).toBe(RunId.make("event-message-1"));
+      yield* app.start(undefined).pipe(Effect.flip);
+      const executionId = yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances[0]);
+      yield* app.callbacks.advance({ executionId });
+      expect(h.emitted[0]).toMatchObject({ name: "message.forwarded", data: "hello", depth: 1 });
+      expect((yield* app.run(RunId.make("event-message-1")))?.subject).toBeNull();
+      const manual = yield* app.start(undefined, { data: "hello" });
+      yield* app.callbacks.advance({
+        executionId: yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances.at(-1)),
+      });
+      expect(h.emitted).toHaveLength(2);
+      expect(h.emitted[1]).toMatchObject({ name: "message.forwarded", data: "hello", depth: 1 });
+      expect((yield* app.run(manual.id))?.status).toBe("completed");
+    }).pipe(Effect.provide(h.layer)),
+  );
+});
+
+test("manual event runs retain supplied JSON, get fresh IDs, and never publish their input", async () => {
+  const h = harness();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* h.host.storage.put("saved", {
+        ...workflow,
+        trigger: { kind: "event", event: "order.paid" },
+      });
+      const app = yield* makeAutomation();
+      const missing = yield* app.start(undefined).pipe(Effect.flip);
+      expect(missing.message).toContain("Supply event data");
+      const payloads = [null, false, 17, "hello", [1, "two"], { total: 137 }];
+      const ids: Array<string> = [];
+      const eventIds: Array<string> = [];
+      for (const data of payloads) {
+        const started = yield* app.start(undefined, { data });
+        ids.push(started.id);
+        const run = yield* app.run(started.id);
+        expect(run?.event).toMatchObject({ name: "order.paid", data, depth: 0 });
+        expect(run?.event?.id).toMatch(/^[0-9a-f-]{36}$/);
+        expect(run?.subject).toBeNull();
+        if (run?.event === undefined) throw new Error("Run lost its event");
+        eventIds.push(run.event.id);
+        const executionId = yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances.at(-1));
+        yield* app.callbacks.advance({ executionId });
+        expect((yield* app.run(started.id))?.status).toBe("stopped");
+      }
+      expect(new Set(ids).size).toBe(payloads.length);
+      expect(new Set(eventIds).size).toBe(payloads.length);
+      expect(h.emitted).toEqual([]);
+      expect((yield* h.host.storage.list({ prefix: "event:" })).size).toBe(0);
+      const reopened = yield* makeAutomation();
+      const first = yield* Schema.decodeUnknownEffect(RunId)(ids[0]);
+      expect((yield* reopened.run(first))?.event?.data).toBeNull();
+      yield* h.host.storage.put("saved", {
+        ...workflow,
+        trigger: { kind: "event", event: "order.paid" },
+        steps: [
+          { id: "old", title: "Retired operation", kind: "action", use: "retired.send", with: {} },
+        ],
+      });
+      const failed = yield* reopened.start(undefined, { data: { total: 99 } });
+      expect(failed.status).toBe("failed");
+      expect((yield* reopened.run(failed.id))?.event).toMatchObject({
+        name: "order.paid",
+        data: { total: 99 },
+        depth: 0,
+      });
+    }).pipe(Effect.provide(h.layer)),
+  );
+});
+
+test("manual event runs require the saved subject and enforce the saved condition", async () => {
+  const h = harness();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* h.host.storage.put("saved", {
+        ...workflow,
+        trigger: {
+          kind: "event",
+          event: "order.paid",
+          subject: "person",
+          when: {
+            all: [
+              { ref: "event.data.total", op: "greaterThan", value: 100 },
+              { ref: "person.name", op: "equals", value: "Sam" },
+            ],
+          },
+        },
+      });
+      const app = yield* makeAutomation();
+      expect(
+        (yield* app.start(undefined, { data: { total: 137 } }).pipe(Effect.flip)).message,
+      ).toContain("Pick the person");
+      expect(
+        (yield* app.start("missing", { data: { total: 137 } }).pipe(Effect.flip)).message,
+      ).toContain("No person missing");
+      expect(
+        (yield* app.start("sam", { data: { total: 100 } }).pipe(Effect.flip)).message,
+      ).toContain("do not match");
+      expect((yield* app.start("sam", { data: null }).pipe(Effect.flip)).message).toContain(
+        "do not match",
+      );
+      expect(h.advances).toEqual([]);
+      const started = yield* app.start("sam", { data: { total: 101 } });
+      const run = yield* app.run(started.id);
+      expect(run?.subject).toEqual({
+        type: "person",
+        id: "sam",
+        data: { name: "Sam", email: "sam@example.com" },
+      });
+      expect(run?.event?.subject).toEqual({
+        type: "person",
+        id: "sam",
+        data: { name: "Sam", email: "sam@example.com" },
+      });
+      expect(run?.event?.data).toEqual({ total: 101 });
+      expect(h.emitted).toEqual([]);
+      yield* h.host.storage.put("saved", workflow);
+      expect((yield* app.start(undefined, { data: {} }).pipe(Effect.flip)).message).toContain(
+        "does not take event data",
+      );
+    }).pipe(Effect.provide(h.layer)),
+  );
+});
+
+test("legacy entity triggers retain event depth and cannot restart a bounded event cycle", async () => {
+  const h = harness();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* h.host.storage.put("saved", {
+        name: "Cycle",
+        trigger: { kind: "entity", entity: "person" },
+        permissions: { "events.emit": "auto" },
+        steps: [
+          {
+            id: "emit",
+            title: "Emit",
+            kind: "action",
+            use: "events.emit",
+            with: { name: "again", data: "{}" },
+          },
+        ],
+      });
+      const app = yield* makeAutomation();
+      const subject = { type: "person", id: "sam", data: { name: "Sam" } };
+      yield* app.entityChanged(undefined, subject, "last-hop", {
+        id: "origin",
+        name: "entity.put",
+        data: {},
+        depth: 16,
+      });
+      const executionId = yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances[0]);
+      yield* app.callbacks.advance({ executionId });
+      expect(h.emitted).toHaveLength(0);
+      expect((yield* app.run(RunId.make("entity-last-hop")))?.status).toBe("failed");
+    }).pipe(Effect.provide(h.layer)),
+  );
+});
+
+test("an entity fact starts an automation which emits an entity command through the shared writer; queue redelivery changes nothing twice", async () => {
+  const h = harness();
+  const data = new Map<string, Schema.Json>();
+  const storage: ChangeStorage = {
+    get: (key) => Effect.sync(() => structuredClone(data.get(key))),
+    put: (key, value) => Effect.sync(() => void data.set(key, structuredClone(value))),
+    list: (prefix) =>
+      Effect.sync(() =>
+        [...data]
+          .filter(([key]) => key.startsWith(prefix))
+          .map(([, value]) => structuredClone(value)),
+      ),
+    transaction: (effect) => effect,
+  };
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* h.host.storage.put("saved", {
+        name: "Welcome added people",
+        trigger: { kind: "event", event: "entity.created", subject: "person" },
+        permissions: { "events.emit": "auto" },
+        steps: [
+          {
+            id: "update",
+            title: "Record the greeting",
+            kind: "action",
+            use: "events.emit",
+            with: {
+              name: "entity.put",
+              data: '{"type":"person","id":"sam","data":{"name":"Welcomed {{person.name}}"}}',
+            },
+          },
+        ],
+      });
+      const app = yield* makeAutomation();
+      const index = yield* AutomationIndex;
+      const clients = Automations.of({ get: () => app });
+      const layers = Layer.mergeAll(
+        Layer.succeed(AutomationIndex, {
+          ...index,
+          list: Effect.succeed([{ id: "welcome", name: "Welcome", updatedAt: 0 }]),
+        }),
+        Layer.succeed(Automations, clients),
+        EntitySubscribers.layer((_id, change, key, event) =>
+          app.entityChanged(change.before, change.after, key, event),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const changes = yield* makeChanges(storage, yield* Events);
+        const proposal = yield* changes.prepare("owner", {
+          kind: "putEntity",
+          type: "person",
+          id: "ada",
+          data: { name: "Ada" },
+        });
+        yield* changes.decide("owner", proposal.id, true);
+        const fact = h.emitted[0];
+        if (fact === undefined) return yield* Effect.die("Entity fact not emitted");
+        const consume = (event: Event) =>
+          deliverEvent(event, (origin, command) =>
+            Effect.gen(function* () {
+              const owner = `event:${origin.id}`;
+              const change = yield* changes.prepare(
+                owner,
+                { kind: "putEntity", ...command },
+                origin.id,
+                origin,
+              );
+              yield* changes.decide(owner, change.id, true);
+            }),
+          );
+        yield* consume(fact);
+        yield* consume(fact);
+        expect(h.advances).toHaveLength(1);
+        yield* app.callbacks.advance({
+          executionId: yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances[0]),
+        });
+        const command = h.emitted[1];
+        if (command === undefined) return yield* Effect.die("Entity command not emitted");
+        expect(command).toMatchObject({
+          name: "entity.put",
+          depth: 1,
+          data: { type: "person", id: "sam", data: { name: "Welcomed Ada" } },
+        });
+        yield* consume(command);
+        yield* consume(command);
+        expect((yield* (yield* EntityStore).getEntity("person", "sam"))?.data).toEqual({
+          name: "Welcomed Ada",
+          email: "sam@example.com",
+        });
+        expect(h.emitted).toHaveLength(3);
+        expect(h.emitted[2]).toMatchObject({ name: "entity.updated", depth: 2 });
+        expect(h.advances).toHaveLength(1);
+      }).pipe(Effect.provide(layers));
     }).pipe(Effect.provide(h.layer)),
   );
 });

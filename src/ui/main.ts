@@ -60,6 +60,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
     runPoll: 0,
     subjectChoices: SubjectChoices.NotNeeded(),
     maybeSubjectId: Option.none(),
+    maybeEventInput: Option.none(),
     maybeProgress: Option.none(),
     expandedStepIds: [],
     workflowDisplay: "Steps",

@@ -92,6 +92,10 @@ Saving validates the draft, commits the snapshot and its timed-trigger job toget
 
 ## A run executes its own snapshot and replays from a journal
 
+Named events are an application capability in `src/events/`, hosted by a Cloudflare Queue. The private Api Worker consumes the queue, applies `entity.put` through the same tenant-wide change coordinator, and fans each event out through `Automations.eventReceived`. Each automation serializes receipt checks and remembers matched and ignored IDs; a matching run journals the original event along with its saved workflow and subject. `events.emit` is a normal permission-controlled action whose publication ID stays stable across activity retries.
+
+Confirmed entity creations, updates and deletions publish lifecycle facts from the coordinator's original before/after snapshots. Queue acceptance precedes the terminal change receipt, so a failed send leaves the persisted applying intent recoverable. Authorized event commands persist that intent during preparation, preventing a restart before application from making the command stale. Event depth follows commands, lifecycle facts and legacy entity-triggered runs, and stops publication at 16 hops. See [events and entity commands](docs/workflow-dsl.md#publishing-events-and-entity-commands) for authorization and delivery semantics.
+
 Runs start from the **saved workflow**, never the draft. [Run coordination](src/automation/runs.ts) checks it against the current catalog and expands stored templates into plain action inputs. The expanded workflow travels in the execution payload, so template edits cannot change a run already in flight.
 
 ```diagram

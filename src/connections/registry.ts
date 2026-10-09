@@ -61,6 +61,29 @@ const input = (
 
 export const connections: ReadonlyArray<Connection> = [
   {
+    id: "events",
+    title: "Events",
+    simulated: false,
+    operations: [
+      {
+        id: "events.emit",
+        title: "Emit an event",
+        description:
+          "Publishes a named event asynchronously. Listening automations can start runs. entity.put requests a validated entity update; permission to emit it authorizes that write. Entity lifecycle facts cannot be published here.",
+        inputs: [
+          input("name", "text", "Event name, such as onboarding.completed or entity.put"),
+          input(
+            "data",
+            "json",
+            "Payload: one {{ref}} or JSON text. For entity.put: {type, id, data}.",
+          ),
+        ],
+        records: '{"eventId": string, "name": string}',
+        recordFields: ["eventId", "name"],
+      },
+    ],
+  },
+  {
     id: "email",
     title: "Email",
     simulated: true,

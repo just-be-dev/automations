@@ -14,6 +14,7 @@ import {
   LoadAutomations,
   LoadExternal,
   LoadRuns,
+  LoadEventInput,
   NavigateInternal,
   PollAutomation,
   PollRun,
@@ -21,7 +22,7 @@ import {
   SetPermission,
   StartRun,
 } from "../command.ts";
-import { AutomationId, TaskAnswer } from "../domain/index.ts";
+import { AutomationId, EventInput, TaskAnswer } from "../domain/index.ts";
 import {
   Message,
   toEntitiesMessage,
@@ -303,6 +304,33 @@ export const update = (model: Model, message: Message) =>
         maybeSubjectId: () => (subjectId === "" ? Option.none() : Option.some(subjectId)),
       }),
     }),
+    GotEventInputMessage: ({ message }) => ({
+      model: Activity.guards.Working(model.activity)
+        ? model
+        : modifyFields(model, {
+            maybeEventInput: (maybeEditor) =>
+              Option.map(maybeEditor, (editor) => EventInput.update(editor, message)),
+          }),
+    }),
+    SucceededLoadEventInput: ({ revision, editor }) =>
+      revision !== model.revision
+        ? { model }
+        : {
+            model: modifyFields(model, {
+              maybeEventInput: (maybeEditor) =>
+                Option.map(maybeEditor, (current) => (current.revision === 0 ? editor : current)),
+            }),
+          },
+    FailedLoadEventInput: () => ({ model }),
+    ClickedCancelStart: () =>
+      Activity.guards.Working(model.activity)
+        ? { model }
+        : {
+            model: modifyFields(model, {
+              maybeEventInput: () => Option.none(),
+              activity: () => Activity.Ready({ notice: "" }),
+            }),
+          },
     ClickedStart: () => {
       if (Activity.guards.Working(model.activity)) {
         return { model };
@@ -312,6 +340,22 @@ export const update = (model: Model, message: Message) =>
       }
       if (Option.isNone(model.maybeSaved)) {
         return fail(model, "Save the draft before running it");
+      }
+      const isEvent = model.maybeSaved.value.trigger.kind === "event";
+      if (isEvent && Option.isNone(model.maybeEventInput)) {
+        const saved = model.maybeSaved.value;
+        return {
+          model: modifyFields(model, {
+            maybeEventInput: () => Option.some(EventInput.initial(saved.trigger, saved)),
+          }),
+          commands: [
+            LoadEventInput({ automationId: model.automationId, revision: model.revision }),
+          ],
+        };
+      }
+      const parsedEvent = Option.map(model.maybeEventInput, EventInput.data);
+      if (isEvent && Option.isSome(parsedEvent) && Result.isFailure(parsedEvent.value)) {
+        return fail(model, parsedEvent.value.failure);
       }
       const maybeEntityType = savedSubjectType(model.maybeSaved);
       if (Option.isSome(maybeEntityType) && Option.isNone(model.maybeSubjectId)) {
@@ -326,6 +370,9 @@ export const update = (model: Model, message: Message) =>
             automationId: model.automationId.trim(),
             revision: model.revision,
             maybeSubjectId: Option.isSome(maybeEntityType) ? model.maybeSubjectId : Option.none(),
+            ...(isEvent && Option.isSome(parsedEvent) && Result.isSuccess(parsedEvent.value)
+              ? { event: { data: parsedEvent.value.success } }
+              : {}),
           }),
         ],
       };

@@ -17,6 +17,7 @@ import { badge } from "@/components/ui/badge";
 import { button, buttonClass } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
 import { inputClass } from "@/components/ui/input";
+import { eventInputView } from "../../components/event-input.ts";
 import { componentName } from "@/lib/component";
 import {
   formatTime,
@@ -201,6 +202,8 @@ export const triggerSummary = (trigger: Trigger) =>
         manual.subject === undefined
           ? "Started by hand"
           : `Started by hand for ${withArticle(manual.subject)}`,
+      event: (event) =>
+        `When ${event.event} occurs${event.subject === undefined ? "" : ` for ${withArticle(event.subject)}`}${event.when === undefined ? "" : ", if its condition holds"}`,
       entity: (entity) => {
         const changes =
           entity.fields === undefined || Array.isReadonlyArrayEmpty(entity.fields)
@@ -346,58 +349,42 @@ const launchRowClass = "flex flex-wrap items-center gap-2 pl-[34px] text-xs";
 const launchView = (automation: Automation, launch: Launch, h: HtmlBuilder<Message>): Html =>
   Launch.match(launch, {
     Idle: () => h.empty,
-    Choosing: ({ entityType, subjects, maybeSubjectId }) =>
-      Subjects.match(subjects, {
-        Loading: () =>
-          h.p(
-            [componentName("launch"), h.Class(cn(launchRowClass, "text-muted-foreground"))],
-            [`Loading ${entityType.replaceAll("_", " ")} records…`],
-          ),
-        Unavailable: ({ error }) =>
+    Choosing: (form) =>
+      h.div(
+        [componentName("launch"), h.Class(cn(launchRowClass, "flex-col items-start pt-3"))],
+        [
+          Option.match(form.maybeEventInput, {
+            onNone: () => h.empty,
+            onSome: (value) =>
+              Option.match(automation.maybeTrigger, {
+                onNone: () => h.empty,
+                onSome: (trigger) =>
+                  trigger.kind === "event"
+                    ? eventInputView(
+                        trigger,
+                        value,
+                        (message) => Message.GotEventInputMessage({ message }),
+                        false,
+                        h,
+                      )
+                    : h.empty,
+              }),
+          }),
+          launchSubjectView(automation.id, form, h),
+          Option.match(form.maybeError, {
+            onNone: () => h.empty,
+            onSome: (error) => h.p([h.Role("alert"), h.Class("text-xs text-destructive")], [error]),
+          }),
           h.div(
-            [componentName("launch"), h.Class(launchRowClass)],
+            [h.Class("flex items-center gap-2")],
             [
-              h.span(
-                [h.Class("text-destructive"), h.Title(error)],
-                [`Couldn't load ${entityType.replaceAll("_", " ")} records`],
-              ),
-              cancelView(h),
-            ],
-          ),
-        Ready: ({ label, subjects: options }) =>
-          h.div(
-            [componentName("launch"), h.Class(launchRowClass)],
-            [
-              h.label([h.For(`subject-${automation.id}`), h.Class("sr-only")], [label]),
-              h.select(
-                [
-                  h.Id(`subject-${automation.id}`),
-                  h.Value(Option.getOrElse(maybeSubjectId, () => "")),
-                  h.OnChange((subjectId) => Message.SelectedSubject({ subjectId })),
-                  h.Class(cn(inputClass, "h-7 w-56 bg-background md:text-[13px]")),
-                ],
-                [
-                  h.option(
-                    [h.Value(""), h.Selected(Option.isNone(maybeSubjectId))],
-                    [`Choose ${withArticle(entityType)}…`],
-                  ),
-                  ...Array.map(options, (subject) =>
-                    h.keyed("option")(
-                      subject.id,
-                      [
-                        h.Value(subject.id),
-                        h.Selected(Option.exists(maybeSubjectId, (id) => id === subject.id)),
-                      ],
-                      [subject.title],
-                    ),
-                  ),
-                ],
-              ),
               button(
                 {
                   onClick: Message.ClickedStart(),
-                  isDisabled: Option.isNone(maybeSubjectId),
+                  isDisabled:
+                    Option.isSome(form.maybeEntityType) && Option.isNone(form.maybeSubjectId),
                   size: "sm",
+                  className: "shadow-card",
                 },
                 "Start run",
                 h,
@@ -405,7 +392,8 @@ const launchView = (automation: Automation, launch: Launch, h: HtmlBuilder<Messa
               cancelView(h),
             ],
           ),
-      }),
+        ],
+      ),
     Starting: () =>
       h.p(
         [
@@ -436,6 +424,63 @@ const launchView = (automation: Automation, launch: Launch, h: HtmlBuilder<Messa
         [icon(h, CircleAlert, "size-3.5"), error],
       ),
   });
+
+const launchSubjectView = (
+  automationId: string,
+  { maybeEntityType, subjects, maybeSubjectId }: Extract<Launch, { _tag: "Choosing" }>,
+  h: HtmlBuilder<Message>,
+) => {
+  const entityType = Option.getOrElse(maybeEntityType, () => "record");
+  return Subjects.match(subjects, {
+    NotNeeded: () => h.empty,
+    Loading: () =>
+      h.p(
+        [componentName("launch-subject"), h.Class("text-muted-foreground")],
+        [`Loading ${entityType.replaceAll("_", " ")} records…`],
+      ),
+    Unavailable: ({ error }) =>
+      h.div(
+        [componentName("launch-subject")],
+        [
+          h.span(
+            [h.Class("text-destructive"), h.Title(error)],
+            [`Couldn't load ${entityType.replaceAll("_", " ")} records`],
+          ),
+        ],
+      ),
+    Ready: ({ label, subjects: options }) =>
+      h.div(
+        [componentName("launch-subject")],
+        [
+          h.label([h.For(`subject-${automationId}`), h.Class("sr-only")], [label]),
+          h.select(
+            [
+              h.Id(`subject-${automationId}`),
+              h.Value(Option.getOrElse(maybeSubjectId, () => "")),
+              h.OnChange((subjectId) => Message.SelectedSubject({ subjectId })),
+              h.Class(cn(inputClass, "h-7 w-56 bg-background md:text-[13px]")),
+            ],
+            [
+              h.option(
+                [h.Value(""), h.Selected(Option.isNone(maybeSubjectId))],
+                [`Choose ${withArticle(entityType)}…`],
+              ),
+              ...Array.map(options, (subject) =>
+                h.keyed("option")(
+                  subject.id,
+                  [
+                    h.Value(subject.id),
+                    h.Selected(Option.exists(maybeSubjectId, (id) => id === subject.id)),
+                  ],
+                  [subject.title],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+  });
+};
 
 const cancelView = (h: HtmlBuilder<Message>) =>
   button(

@@ -36,6 +36,44 @@ export default defineEval({
     ),
   },
   cases: {
+    "event-relay": {
+      input: {
+        message:
+          "When the event order.paid arrives, emit order.fulfilled with exactly the same JSON payload. No entity subject is needed. Allow this event publication automatically.",
+      },
+      checks: {
+        ...drafts,
+        "listens for the named event": (output) =>
+          expect(output.workflow?.trigger).toEqual({ kind: "event", event: "order.paid" }),
+        "passes the payload through unchanged": (output) =>
+          expect(actions(output, "events.emit")).toContainEqual(
+            expect.objectContaining({ with: { name: "order.fulfilled", data: "{{event.data}}" } }),
+          ),
+        "publication is authorized": (output) =>
+          expect(permission(output, "events.emit")).toBe("auto"),
+      },
+    },
+    "entity-created-event": {
+      input: {
+        message:
+          "Listen specifically for entity.created events about employee records. Publish onboarding.started with the creation event's payload. Allow this publication automatically; don't start this on updates or by hand.",
+      },
+      checks: {
+        ...drafts,
+        "uses a creation-only event trigger": (output) =>
+          expect(output.workflow?.trigger).toMatchObject({
+            kind: "event",
+            event: "entity.created",
+            subject: "employee",
+          }),
+        "emits the handoff": (output) =>
+          expect(actions(output, "events.emit")).toContainEqual(
+            expect.objectContaining({
+              with: expect.objectContaining({ name: "onboarding.started" }),
+            }),
+          ),
+      },
+    },
     onboarding: {
       input: {
         message:

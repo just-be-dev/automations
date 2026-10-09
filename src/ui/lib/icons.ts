@@ -83,6 +83,7 @@ export const icon = <M>(
 export const triggerIcon = (trigger: Trigger): IconNode => {
   switch (trigger.kind) {
     case "entity":
+    case "event":
       return Radio;
     case "schedule":
       return CalendarClock;

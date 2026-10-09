@@ -462,3 +462,41 @@ test("describes object types and operations for the planner", () => {
   );
   expect(description).toContain("- people_ops (People Ops): 1 member");
 });
+
+test("event refs work in conditions and nested steps only for event workflows", () => {
+  const step = agent("read", "Read {{event.data.customer.name}}");
+  expect(
+    problems([step], {
+      kind: "event",
+      event: "order.paid",
+      when: { ref: "event.data.total", op: "greaterThan", value: 50 },
+    }),
+  ).toEqual([]);
+  expect(
+    problems(
+      [
+        {
+          id: "branches",
+          title: "Branches",
+          kind: "parallel",
+          branches: [[step], [agent("other", "Read {{event.name}}")]],
+        },
+      ],
+      { kind: "event", event: "order.paid" },
+    ),
+  ).toEqual([]);
+  expect(problems([step], { kind: "manual" })).not.toEqual([]);
+  expect(
+    problems([agent("bad", "Read {{event.unknown}}")], { kind: "event", event: "order.paid" }),
+  ).not.toEqual([]);
+  expect(problems([step], { kind: "event", event: "order.paid", subject: "missing" })).not.toEqual(
+    [],
+  );
+  expect(
+    problems([step], {
+      kind: "event",
+      event: "order.paid",
+      when: { ref: "steps.read.output", op: "exists" },
+    }),
+  ).not.toEqual([]);
+});

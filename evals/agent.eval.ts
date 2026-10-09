@@ -12,6 +12,27 @@ export default defineEval({
     "answers in the shape the step asks for": (output) => expect(output.problem).toBeUndefined(),
   },
   cases: {
+    "event-payload": {
+      input: {
+        title: "Read the upgrade event",
+        instruction:
+          "Extract the requested plan and seat count from the triggering event's payload.",
+        fields: { plan: "text", seats: "number" },
+        state: {
+          ...values(null),
+          event: {
+            id: "upgrade-81",
+            name: "subscription.upgrade",
+            data: { message: "Move us to Team and add 17 seats." },
+            depth: 0,
+          },
+        },
+      },
+      checks: {
+        "reads the event without a subject": (output) =>
+          expect(output.result).toEqual({ plan: expect.stringMatching(/team/i), seats: 17 }),
+      },
+    },
     "date-arithmetic": {
       input: {
         title: "Work out the check-in date",

@@ -263,6 +263,7 @@ export const readRef = <E, R>(
   known: {
     readonly subject: Subject | null;
     readonly steps: Readonly<Record<string, Schema.Json>>;
+    readonly event?: Schema.Json;
   },
   ref: string,
   load: LoadEntity<E, R>,
@@ -270,6 +271,9 @@ export const readRef = <E, R>(
   const [root, ...path] = ref.split(".");
   if (root === "steps") {
     return Effect.succeed(readJsonPath(known.steps, path));
+  }
+  if (root === "event" && known.event !== undefined) {
+    return Effect.succeed(readJsonPath(known.event, path));
   }
   return known.subject !== null && root === known.subject.type
     ? readEntityPath(types, known.subject, path, load)

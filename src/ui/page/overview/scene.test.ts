@@ -1,9 +1,21 @@
 /** Exercises the overview's run listings, subject picker, launch feedback, and empty state. */
 import { test } from "bun:test";
 import * as Option from "effect/Option";
-import { Command, change, click, expect, given, label, role, scene, text } from "foldkit/scene";
+import {
+  Command,
+  change,
+  click,
+  expect,
+  given,
+  label,
+  role,
+  scene,
+  text,
+  type,
+} from "foldkit/scene";
 import { onboarding, runOf, summaryOf } from "../../fixtures.ts";
 import {
+  LoadEventInput,
   LoadOverview,
   LoadSubjects,
   Message,
@@ -137,5 +149,113 @@ test("an empty overview offers only a way to make an automation", () => {
     expect(role("button", { name: "New automation" })).toExist(),
     expect(text("Nothing is running right now.")).not.toExist(),
     expect(role("heading", { name: "Automations" })).not.toExist(),
+  );
+});
+
+test("event automations collect payload and subject, preserving input across loads and failures", () => {
+  scene(
+    { update, view },
+    given(
+      update(
+        init(0).model,
+        Message.SucceededLoadOverview({
+          session: 0,
+          poll: 0,
+          automations: [
+            {
+              id: "paid-orders",
+              name: "Paid orders",
+              maybeTrigger: Option.some({
+                kind: "event",
+                event: "order.paid",
+                subject: "employee",
+                when: { ref: "event.data.total", op: "greaterThan", value: 100 },
+              }),
+              activeRuns: [],
+              maybeNextRunAt: Option.none(),
+              maybeLastRun: Option.none(),
+              maybeError: Option.none(),
+            },
+          ],
+        }),
+      ).model,
+    ),
+    expect(text("When order.paid occurs for an employee, if its condition holds")).toExist(),
+    click(role("button", { name: "Run Paid orders" })),
+    Command.resolve(
+      LoadEventInput,
+      Message.FailedLoadEventInput({ automationId: "paid-orders", error: "Offline" }),
+    ),
+    Command.resolve(
+      LoadSubjects,
+      Message.SucceededLoadSubjects({
+        automationId: "paid-orders",
+        entityType: "employee",
+        label: "Employee",
+        subjects: [{ id: "emp-2", title: "Ari Cho" }],
+      }),
+    ),
+    type(label("Total"), "137"),
+    expect(label("Total")).toHaveValue("137"),
+    expect(role("button", { name: "Start run" })).toHaveAttr("aria-disabled", "true"),
+    change(label("Employee"), "emp-2"),
+    click(role("button", { name: "Start run" })),
+    Command.expectExact(
+      StartRun({
+        automationId: "paid-orders",
+        maybeSubjectId: Option.some("emp-2"),
+        event: { data: { total: 137 } },
+      }),
+    ),
+    Command.resolve(
+      StartRun,
+      Message.FailedStartRun({ automationId: "paid-orders", error: "Offline" }),
+    ),
+    expect(role("alert")).toHaveText("Offline"),
+    expect(label("Total")).toHaveValue("137"),
+    expect(label("Employee")).toHaveValue("emp-2"),
+    click(role("button", { name: "Cancel" })),
+    expect(label("Total")).not.toExist(),
+  );
+});
+
+test("an event without a subject validates field names and supports an empty value visually", () => {
+  scene(
+    { update, view },
+    given(
+      update(
+        init(0).model,
+        Message.SucceededLoadOverview({
+          session: 0,
+          poll: 0,
+          automations: [
+            {
+              id: "ping",
+              name: "Ping",
+              maybeTrigger: Option.some({ kind: "event", event: "ping.received" }),
+              activeRuns: [],
+              maybeNextRunAt: Option.none(),
+              maybeLastRun: Option.none(),
+              maybeError: Option.none(),
+            },
+          ],
+        }),
+      ).model,
+    ),
+    click(role("button", { name: "Run Ping" })),
+    Command.resolve(
+      LoadEventInput,
+      Message.FailedLoadEventInput({ automationId: "ping", error: "Offline" }),
+    ),
+    click(role("button", { name: "Add field to Event data" })),
+    click(role("button", { name: "Start run" })),
+    expect(role("alert")).toHaveText("Give each field in Event data a different name"),
+    Command.expectNone(),
+    change(label("Event data type"), "null"),
+    click(role("button", { name: "Start run" })),
+    Command.expectExact(
+      StartRun({ automationId: "ping", maybeSubjectId: Option.none(), event: { data: null } }),
+    ),
+    Command.resolve(StartRun, Message.FailedStartRun({ automationId: "ping", error: "Offline" })),
   );
 });

@@ -13,6 +13,8 @@ import { messageOf } from "../error.ts";
 import type { ChangeStorage } from "./host.ts";
 import { ChangeAction, ChangeDecision, ChangeProposal } from "./model.ts";
 import { ChangeError, Changes } from "./service.ts";
+import { Event } from "../events/model.ts";
+import type { Events } from "../events/service.ts";
 
 const Snapshot = Schema.Struct({
   types: Schema.Array(EntityType),
@@ -25,6 +27,7 @@ const Snapshot = Schema.Struct({
 const Stored = Schema.Struct({
   owner: Schema.String,
   requestId: Schema.optionalKey(Schema.String),
+  sourceEvent: Schema.optionalKey(Event),
   proposal: ChangeProposal,
   before: Snapshot,
   after: Snapshot,
@@ -81,7 +84,10 @@ const mutate = Effect.fn("Changes.mutate")(function* (
   }
 });
 
-export const makeChanges = Effect.fn("Changes.make")(function* (storage: ChangeStorage) {
+export const makeChanges = Effect.fn("Changes.make")(function* (
+  storage: ChangeStorage,
+  events?: Events["Service"],
+) {
   const store = yield* EntityStore;
   const index = yield* AutomationIndex;
   const automations = yield* Automations;
@@ -169,8 +175,34 @@ export const makeChanges = Effect.fn("Changes.make")(function* (storage: ChangeS
       const triggered = yield* subscribers.notify(
         { before: before?.data, after: { type: after.type, id: after.id, data: after.data } },
         `change:${record.proposal.id}`,
+        record.sourceEvent === undefined
+          ? undefined
+          : { ...record.sourceEvent, depth: record.sourceEvent.depth + 1 },
       );
       result = { entity: { type: after.type, id: after.id, data: after.data }, triggered };
+    }
+    if (events !== undefined && (action.kind === "putEntity" || action.kind === "deleteEntity")) {
+      const before = record.before.entities.find(
+        (entity) => entity.type === action.type && entity.id === action.id,
+      );
+      const after = record.after.entities.find(
+        (entity) => entity.type === action.type && entity.id === action.id,
+      );
+      const entity = after ?? before;
+      if (entity !== undefined) {
+        yield* events.publish({
+          id: `change:${record.proposal.id}`,
+          name:
+            action.kind === "deleteEntity"
+              ? "entity.deleted"
+              : before === undefined
+                ? "entity.created"
+                : "entity.updated",
+          data: { before: before?.data ?? null, after: after?.data ?? null },
+          subject: { type: entity.type, id: entity.id, data: entity.data },
+          depth: record.sourceEvent === undefined ? 0 : record.sourceEvent.depth + 1,
+        });
+      }
     }
     const receipt: ChangeDecision = { status: "applied", result };
     yield* write({ ...record, state: "terminal", receipt });
@@ -181,8 +213,11 @@ export const makeChanges = Effect.fn("Changes.make")(function* (storage: ChangeS
   });
   return Changes.of({
     prepare: Effect.fn("Changes.prepare")(
-      function* (owner: string, input: ChangeAction, requestId?: string) {
+      function* (owner: string, input: ChangeAction, requestId?: string, sourceEvent?: Event) {
         const action = yield* Schema.decodeUnknownEffect(ChangeAction)(input);
+        if (sourceEvent !== undefined && sourceEvent.depth >= 16) {
+          return yield* fail("Event chain limit reached");
+        }
         if (requestId !== undefined) {
           const existing = (yield* records).find(
             (record) => record.owner === owner && record.requestId === requestId,
@@ -264,9 +299,12 @@ export const makeChanges = Effect.fn("Changes.make")(function* (storage: ChangeS
           action.kind === "putEntity"
             ? [
                 `This edit may start matching saved automations watching ${action.type}: ${(before.subscriptions[action.type] ?? []).join(", ") || "none currently subscribed"}.`,
+                "This edit emits entity.created or entity.updated and may start automations listening for it.",
               ]
             : action.kind === "deleteEntity"
-              ? ["Deletion starts no runs. References to this entity will read as empty."]
+              ? [
+                  "Deletion emits entity.deleted and may start automations listening for it. References to this entity will read as empty.",
+                ]
               : action.kind === "deleteType"
                 ? [
                     "This empty type will no longer be available to drafts or new runs. Existing runs keep their snapshots.",
@@ -308,11 +346,16 @@ export const makeChanges = Effect.fn("Changes.make")(function* (storage: ChangeS
         yield* write({
           owner,
           ...(requestId === undefined ? {} : { requestId }),
+          ...(sourceEvent === undefined
+            ? {}
+            : { sourceEvent: yield* Schema.decodeUnknownEffect(Event)(sourceEvent) }),
           proposal,
           before,
           after: preview.after,
           result: preview.result,
-          state: "pending",
+          // An event command is already authorized by its producer's permission. Persist the
+          // applying intent now, so a restart between prepare and decide cannot make it stale.
+          state: sourceEvent === undefined ? "pending" : "applying",
         });
         return proposal;
       },

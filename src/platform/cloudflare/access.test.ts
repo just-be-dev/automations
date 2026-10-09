@@ -33,6 +33,7 @@ test("Access identity is request-scoped and reaches the automation's approval op
         setPermissions: unused,
         start: unused,
         entityChanged: unused,
+        eventReceived: unused,
         run: unused,
         plannerTrace: unused,
         runTrace: unused,

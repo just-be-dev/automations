@@ -4,6 +4,7 @@ import * as Schema from "effect/Schema";
 import { defineTaggedUnion } from "foldkit/schema";
 import { RunSummary, Trigger } from "../../../workflow.ts";
 import { SubjectOption } from "../../api.ts";
+import { EventInput } from "../../domain/index.ts";
 
 export const Automation = Schema.Struct({
   id: Schema.String,
@@ -28,21 +29,26 @@ export const Listing = defineTaggedUnion({
 });
 
 export const Subjects = defineTaggedUnion({
+  NotNeeded: {},
   Loading: {},
   Ready: { label: Schema.String, subjects: Schema.Array(SubjectOption) },
   Unavailable: { error: Schema.String },
 });
 
+const LaunchForm = Schema.Struct({
+  automationId: Schema.String,
+  maybeEntityType: Schema.Option(Schema.String),
+  subjects: Subjects,
+  maybeSubjectId: Schema.Option(Schema.String),
+  maybeEventInput: Schema.Option(EventInput.Model),
+  maybeError: Schema.Option(Schema.String),
+});
+
 /** Starting a run by hand. One automation at a time: choosing its subject, then starting it. */
 export const Launch = defineTaggedUnion({
   Idle: {},
-  Choosing: {
-    automationId: Schema.String,
-    entityType: Schema.String,
-    subjects: Subjects,
-    maybeSubjectId: Schema.Option(Schema.String),
-  },
-  Starting: { automationId: Schema.String },
+  Choosing: LaunchForm.fields,
+  Starting: { automationId: Schema.String, maybeForm: Schema.Option(LaunchForm) },
   Started: { automationId: Schema.String, runId: Schema.String },
   Failed: { automationId: Schema.String, error: Schema.String },
 });

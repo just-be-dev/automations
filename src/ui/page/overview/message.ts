@@ -2,12 +2,16 @@
 import * as Schema from "effect/Schema";
 import { defineMessageUnion } from "foldkit/message";
 import { SubjectOption } from "../../api.ts";
+import { EventInput } from "../../domain/index.ts";
 import { Automation } from "./model.ts";
 
 export const Message = defineMessageUnion({
   ClickedNewAutomation: {},
   ClickedRunNow: { automationId: Schema.String },
   SelectedSubject: { subjectId: Schema.String },
+  GotEventInputMessage: { message: EventInput.Message },
+  SucceededLoadEventInput: { automationId: Schema.String, editor: EventInput.Model },
+  FailedLoadEventInput: { automationId: Schema.String, error: Schema.String },
   ClickedStart: {},
   ClickedCancelStart: {},
   SucceededLoadOverview: {

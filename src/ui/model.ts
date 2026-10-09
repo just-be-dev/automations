@@ -8,7 +8,7 @@ import * as Dialog from "@/components/ui/dialog";
 import { AskedQuestions, PendingChat, Run, RunSummary, Workflow } from "../workflow.ts";
 import { Role } from "../entities.ts";
 import { SubjectOption } from "./api.ts";
-import { Questionnaire, TaskAnswer } from "./domain/index.ts";
+import { EventInput, Questionnaire, TaskAnswer } from "./domain/index.ts";
 import { Entities, Overview, Templates, Traces } from "./page/index.ts";
 import { ShortcutModifier } from "./platform.ts";
 import { Theme } from "./theme.ts";
@@ -150,6 +150,7 @@ export const Model = Schema.Struct({
   runPoll: Schema.Int,
   subjectChoices: SubjectChoices,
   maybeSubjectId: Schema.Option(Schema.String),
+  maybeEventInput: Schema.Option(EventInput.Model),
   /** What the agent is doing while it answers, as the server last described it. */
   maybeProgress: Schema.Option(Schema.String),
   expandedStepIds: Schema.Array(Schema.String),

@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { EntityName } from "../entities/model.ts";
+import { EventName } from "../events/model.ts";
 import {
   cronProblem,
   dailyCron,
@@ -255,6 +256,14 @@ export const EntityTrigger = Schema.Struct({
   when: Schema.optionalKey(Condition),
 });
 
+/** Listens for a named event; an optional subject constrains its attached entity type. */
+export const EventTrigger = Schema.Struct({
+  kind: Schema.Literal("event"),
+  event: EventName,
+  subject: Schema.optionalKey(EntityName),
+  when: Schema.optionalKey(Condition),
+});
+
 const TimeZone = Schema.String.check(
   Schema.makeFilter(isTimeZone, {
     message: 'Time zones are IANA names, such as "Europe/London" or "America/New_York"',
@@ -298,7 +307,13 @@ export const DateTrigger = Schema.Struct({
   when: Schema.optionalKey(Condition),
 });
 
-export const Trigger = Schema.Union([ManualTrigger, EntityTrigger, ScheduleTrigger, DateTrigger]);
+export const Trigger = Schema.Union([
+  ManualTrigger,
+  EntityTrigger,
+  EventTrigger,
+  ScheduleTrigger,
+  DateTrigger,
+]);
 export type Trigger = typeof Trigger.Type;
 
 /** Triggers that start runs at times of their own, through the automation's schedule. */
@@ -309,7 +324,7 @@ export const isTimed = (trigger: Trigger): trigger is TimedTrigger =>
 
 /** The entity type a run is about, which is also the root of refs to it. */
 export const subjectType = (trigger: Trigger) =>
-  trigger.kind === "manual" ? trigger.subject : trigger.entity;
+  trigger.kind === "manual" || trigger.kind === "event" ? trigger.subject : trigger.entity;
 
 /** The condition a trigger checks against an entity before it starts a run for it. */
 export const triggerCondition = (trigger: Trigger) =>

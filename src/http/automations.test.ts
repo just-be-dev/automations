@@ -7,11 +7,13 @@ import { AutomationNamer, NamerError } from "../agents/namer/namer.ts";
 import { AutomationIndex } from "../automation/index.ts";
 import { Automations } from "../automation/service.ts";
 import type { Workflow } from "../workflow/model.ts";
+import { RunId } from "../workflow/run.ts";
 import { automationRoutes } from "./automations.ts";
 import { RequestIdentity } from "./identity.ts";
 
-test("HTTP delegates the complete save without an entity store or directory writes", async () => {
+test("HTTP delegates save and supplied manual event data without an entity store or directory writes", async () => {
   const calls: Array<ReadonlyArray<string>> = [];
+  const starts: Array<unknown> = [];
   const saved: Workflow = {
     name: "Watch people",
     trigger: { kind: "entity", entity: "person" },
@@ -40,8 +42,13 @@ test("HTTP delegates the complete save without an entity store or directory writ
             return { saved };
           }),
         setPermissions: unused,
-        start: unused,
+        start: (subject, event) =>
+          Effect.sync(() => {
+            starts.push({ id, subject, event });
+            return { id: RunId.make("run-1"), status: "running" as const };
+          }),
         entityChanged: unused,
+        eventReceived: unused,
         run: unused,
         respond: unused,
         plannerTrace: unused,
@@ -60,6 +67,23 @@ test("HTTP delegates the complete save without an entity store or directory writ
     expect(response.status).toBe(200);
     expect(await response.text()).toBe(JSON.stringify({ saved }));
     expect(calls).toEqual([["a1", "a1"]]);
+    const start = (body: unknown) =>
+      handler(
+        new Request("http://studio/api/automations/a1/start", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+    expect((await start({ event: { data: null } })).status).toBe(202);
+    expect((await start({ subject: "sam", event: { data: { total: 137 } } })).status).toBe(202);
+    expect((await start({ event: {} })).status).toBe(400);
+    expect((await start({})).status).toBe(202);
+    expect(starts).toEqual([
+      { id: "a1", subject: undefined, event: { data: null } },
+      { id: "a1", subject: "sam", event: { data: { total: 137 } } },
+      { id: "a1", subject: undefined, event: undefined },
+    ]);
   } finally {
     await dispose();
   }
@@ -112,6 +136,7 @@ test("creating an automation names it, lists it, and sends its description as th
         setPermissions: unused,
         start: unused,
         entityChanged: unused,
+        eventReceived: unused,
         run: unused,
         respond: unused,
         plannerTrace: unused,
@@ -192,6 +217,7 @@ test("traces come from the planner, or from a run's agent steps, and an unknown 
         setPermissions: unused,
         start: unused,
         entityChanged: unused,
+        eventReceived: unused,
         run: unused,
         respond: unused,
         plannerTrace: () => Effect.succeed(trace),

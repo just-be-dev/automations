@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import { Command, Dom, Http } from "foldkit";
 import { load, pushUrl } from "foldkit/navigation";
 import { Role } from "../entities.ts";
+import { SuppliedEvent } from "../events/model.ts";
 import {
   AskedQuestions,
   PendingChat,
@@ -16,7 +17,7 @@ import {
   TitledRun,
   Workflow,
 } from "../workflow.ts";
-import { errorText, loadSubjectOptions, requestJson } from "./api.ts";
+import { errorText, loadEventInput, loadSubjectOptions, requestJson } from "./api.ts";
 import { ownAnswerId } from "./constant.ts";
 import { TaskAnswer } from "./domain/index.ts";
 import { Message } from "./message.ts";
@@ -243,17 +244,32 @@ export const SetPermission = Command.define("SetPermission", {
 });
 
 export const StartRun = Command.define("StartRun", {
-  args: { ...requestArgs, maybeSubjectId: Schema.Option(Schema.String) },
+  args: {
+    ...requestArgs,
+    maybeSubjectId: Schema.Option(Schema.String),
+    event: Schema.optionalKey(SuppliedEvent),
+  },
   messages: [Message.SucceededStartRun, Message.FailedRequest],
-  execute: ({ automationId, revision, maybeSubjectId }) =>
-    request(
-      automationId,
-      "/start",
-      Schema.Struct({ id: Schema.String }),
-      Option.match(maybeSubjectId, { onNone: () => ({}), onSome: (subject) => ({ subject }) }),
-    ).pipe(
+  execute: ({ automationId, revision, maybeSubjectId, event }) =>
+    request(automationId, "/start", Schema.Struct({ id: Schema.String }), {
+      ...Option.match(maybeSubjectId, { onNone: () => ({}), onSome: (subject) => ({ subject }) }),
+      ...(event === undefined ? {} : { event }),
+    }).pipe(
       Effect.map(({ id }) => Message.SucceededStartRun({ revision, runId: id })),
       recoverRequest(revision),
+      Effect.provide(Http.layer),
+    ),
+});
+
+export const LoadEventInput = Command.define("LoadEventInput", {
+  args: requestArgs,
+  messages: [Message.SucceededLoadEventInput, Message.FailedLoadEventInput],
+  execute: ({ automationId, revision }) =>
+    loadEventInput(automationId).pipe(
+      Effect.map((editor) => Message.SucceededLoadEventInput({ revision, editor })),
+      Effect.catch((error) =>
+        Effect.succeed(Message.FailedLoadEventInput({ revision, error: errorText(error) })),
+      ),
       Effect.provide(Http.layer),
     ),
 });

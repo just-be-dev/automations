@@ -25,6 +25,8 @@ import {
   type PermissionRequest,
 } from "../workflow/interpreter.ts";
 import { EntityStore } from "../entities/store.ts";
+import { Event, SuppliedEvent } from "../events/model.ts";
+import { Events } from "../events/service.ts";
 import {
   changedFields,
   isEmailField,
@@ -95,6 +97,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
   const host = yield* AutomationHost;
   const storage = host.storage;
   const entities = yield* EntityStore;
+  const events = yield* Events;
   const pi = yield* PiAgent;
   const { read: readWorkflow, catalog } = workflows;
   const records = yield* makeRunStore();
@@ -198,7 +201,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
         return yield* agentOutput(step, answer);
       }).pipe(Effect.mapError(stepFailed(step.id))),
     action: ({ step, inputs, state: known }, idempotencyKey) =>
-      runAction(step, inputs, known, idempotencyKey),
+      runAction(step, inputs, known, idempotencyKey).pipe(Effect.provideService(Events, events)),
     decide: ({ step, question, state: known }) =>
       Effect.gen(function* () {
         const conversation = yield* conversationFor(known.runId);
@@ -260,11 +263,13 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     workflow: Workflow,
     subject: Subject | null,
     error: string,
+    event?: Event,
   ) {
     const run: StoredRun = {
       id,
       workflow,
       subject,
+      ...(event === undefined ? {} : { event }),
       status: "failed",
       steps: {},
       tasks: [],
@@ -285,6 +290,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     saved: Workflow,
     subject: Subject | null,
     id: RunId = RunId.make(crypto.randomUUID()),
+    event?: Event,
   ) {
     const startedAt = yield* Clock.currentTimeMillis;
     const current = yield* catalog;
@@ -298,15 +304,17 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
         saved,
         subject,
         `The saved workflow no longer fits the entity types and templates. Update it and save again.\n${prepared.failure.message}`,
+        event,
       );
     }
     const workflow = prepared.success;
-    const payload = { runId: id, workflow, subject };
+    const payload = { runId: id, workflow, subject, ...(event === undefined ? {} : { event }) };
     const executionId = ExecutionId.make(yield* RunAutomation.executionId(payload));
     const run: StoredRun = {
       id,
       workflow,
       subject,
+      ...(event === undefined ? {} : { event }),
       status: "running",
       steps: {},
       tasks: [],
@@ -332,22 +340,55 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     return runs.map((run) => summary(types, run));
   });
 
-  /** Starts the saved workflow by hand, for the entity `subjectId` names when it has a subject. */
-  const start = Effect.fn("Automation.start")(function* (subjectId: string | undefined) {
+  /** Runs only this saved workflow, with supplied event data rather than publishing an event. */
+  const start = Effect.fn("Automation.start")(function* (
+    subjectId: string | undefined,
+    suppliedEvent?: SuppliedEvent,
+  ) {
     const saved = yield* readWorkflow("saved");
     if (saved === undefined) {
       return yield* new AutomationError({ message: "Save the workflow before starting it" });
     }
+    const trigger = saved.trigger;
+    if (trigger.kind === "event" && suppliedEvent === undefined) {
+      return yield* new AutomationError({
+        message: `Supply event data for ${trigger.event} to run this workflow`,
+      });
+    }
+    if (trigger.kind !== "event" && suppliedEvent !== undefined) {
+      return yield* new AutomationError({ message: "This workflow does not take event data" });
+    }
     const type = subjectType(saved.trigger);
-    if (type === undefined) {
-      return yield* beginRun(saved, null);
-    }
-    if (subjectId === undefined) {
-      return yield* new AutomationError({ message: `Pick the ${type} this run is about` });
-    }
-    const subject = yield* loadEntity(type, subjectId);
-    if (subject === undefined) {
-      return yield* new AutomationError({ message: `No ${type} ${subjectId}` });
+    const subject = yield* Effect.gen(function* () {
+      if (type === undefined) return null;
+      if (subjectId === undefined) {
+        return yield* new AutomationError({ message: `Pick the ${type} this run is about` });
+      }
+      const loaded = yield* loadEntity(type, subjectId);
+      if (loaded === undefined) {
+        return yield* new AutomationError({ message: `No ${type} ${subjectId}` });
+      }
+      return loaded;
+    });
+    if (trigger.kind === "event" && suppliedEvent !== undefined) {
+      const supplied = yield* Schema.decodeUnknownEffect(SuppliedEvent)(suppliedEvent);
+      const event: Event = {
+        id: crypto.randomUUID(),
+        name: trigger.event,
+        data: supplied.data,
+        depth: 0,
+        ...(subject === null ? {} : { subject }),
+      };
+      if (trigger.when !== undefined) {
+        const values = yield* resolve(conditionRefs(trigger.when), { subject, event, steps: {} });
+        const now = yield* Clock.currentTimeMillis;
+        if (!holds(trigger.when, (ref) => values[ref], now)) {
+          return yield* new AutomationError({
+            message: "The supplied event and subject do not match the saved trigger's condition",
+          });
+        }
+      }
+      return yield* beginRun(saved, subject, undefined, event);
     }
     return yield* beginRun(saved, subject);
   });
@@ -357,8 +398,42 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
    * or a watched field changed, and the trigger's condition holds for the new version.
    */
   const notificationLock = Semaphore.makeUnsafe(1);
+  const eventReceived = Effect.fn("Automation.eventReceived")(
+    function* (input: unknown) {
+      const event = yield* Schema.decodeUnknownEffect(Event)(input);
+      const key = `event:${event.id}`;
+      const receipt = yield* storage.get(key);
+      if (receipt !== undefined)
+        return yield* Schema.decodeUnknownEffect(Schema.Struct({ runId: Schema.NullOr(RunId) }))(
+          receipt,
+        );
+      const id = RunId.make(`event-${event.id}`);
+      // The run and its journal can commit before the receipt. Recover that window first.
+      if ((yield* readRun(id)) !== undefined) return { runId: id };
+      const saved = yield* readWorkflow("saved");
+      const trigger = saved?.trigger;
+      let runId: RunId | null = null;
+      if (
+        saved !== undefined &&
+        trigger?.kind === "event" &&
+        trigger.event === event.name &&
+        (trigger.subject === undefined || event.subject?.type === trigger.subject)
+      ) {
+        const subject = trigger.subject === undefined ? null : (event.subject ?? null);
+        const refs = conditionRefs(trigger.when ?? { all: [] });
+        const values = yield* resolve(refs, { subject, event, steps: {} });
+        const now = yield* Clock.currentTimeMillis;
+        if (trigger.when === undefined || holds(trigger.when, (ref) => values[ref], now)) {
+          runId = (yield* beginRun(saved, subject, id, event)).id;
+        }
+      }
+      yield* storage.put(key, { runId });
+      return { runId };
+    },
+    (effect) => notificationLock.withPermit(effect),
+  );
   const entityChanged = Effect.fn("Automation.entityChanged")(
-    function* (before: EntityData | undefined, after: Subject, key?: string) {
+    function* (before: EntityData | undefined, after: Subject, key?: string, event?: Event) {
       const id = key === undefined ? undefined : RunId.make(`entity-${key}`);
       // Check before re-evaluating a trigger: its workflow or referenced values may have changed.
       if (id !== undefined && (yield* readRun(id)) !== undefined) return { runId: id };
@@ -379,7 +454,9 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
           return { runId: null };
         }
       }
-      const started = yield* beginRun(saved, after, id);
+      const origin =
+        event === undefined ? undefined : yield* Schema.decodeUnknownEffect(Event)(event);
+      const started = yield* beginRun(saved, after, id, origin);
       return { runId: started.id };
     },
     (effect) => notificationLock.withPermit(effect),
@@ -498,6 +575,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     summaries: runSummaries,
     start,
     entityChanged,
+    eventReceived,
     respond,
     run,
     runTrace,

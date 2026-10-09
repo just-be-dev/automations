@@ -156,7 +156,7 @@ Rules for the whole tree:
 
 Decoding checks the shape. Before a draft is accepted, on save, and again when a run starts, `checkWorkflow` checks it against the catalog: the entity types and templates in the store, and the connections.
 
-- Every ref starts at the subject's type or at `steps`, and every field on its path exists.
+- Every ref starts at the subject's type or at `steps`, or at `event` in an event-triggered workflow. Entity and step fields are checked; event payloads are arbitrary JSON.
 - A step only reads steps that finish before it on every path. Steps inside a `parallel` step's branches are readable after the `parallel` step. Steps inside an `if` or `decide` branch are readable only later in that same branch, because the branch may not run.
 - Action steps name a known operation. On every path through their `match`, each input comes from exactly one place (`with`, a template, or the case), every required input is there, and no unknown ones are. `people` inputs are lists, `person` inputs point at an entity with a text field named `email` (or at that field) or are an email address, and `url` inputs are literal public HTTPS URLs.
 - Templates exist and still check against the entity types, every slot is filled, and an entity slot gets exactly one `{{ref}}` to an entity of its type. A template only fills `text` inputs.
@@ -174,7 +174,25 @@ The planner can check its working copy with `check_workflow` while it works. Whe
 
 Starts a run when an entity of that type is created, or when one of `fields` changes. If `fields` is omitted, any field counts. `when` is optional and must hold for the new version. The entity becomes the run's subject, and refs to it start with its type: `employee.…`.
 
-Saving the automation subscribes it to the type in the entity store. `PUT /api/entities/:type/:id` writes the entity and asks each subscribed automation whether its trigger matches. Every trigger that names an entity type (`entity`, `schedule` and `date` with their `entity`, and `manual` with its `subject`) subscribes to it, so the type can't be deleted while a saved automation uses it; only entity triggers start runs on a change.
+Saving the automation subscribes it to the type in the entity store. Confirmed entity writes ask each subscribed automation whether its trigger matches. Every trigger that names an entity type (`entity`, `schedule` and `date` with their `entity`, and `manual` and `event` with their `subject`) subscribes to it, so the type can't be deleted while a saved automation uses it; only entity triggers start runs through these direct notifications.
+
+### `event`
+
+```json
+{
+  "kind": "event",
+  "event": "order.paid",
+  "when": { "ref": "event.data.total", "op": "greaterThan", "value": 100 }
+}
+```
+
+Starts when a named event arrives. Names are lowercase, start with a letter, and contain letters, digits, dots, underscores or hyphens (at most 120 characters). `when` is optional and can read the event payload. An optional `subject: "employee"` requires the event to carry an employee snapshot, makes it the run's subject, and allows `employee.…` refs. Without `subject`, the run has none, even if the event carries an entity.
+
+The Run button also allows a targeted manual invocation with supplied JSON event data and, when required, an entity picked as its subject. `POST /api/automations/:id/start` accepts `{ "event": { "data": <any JSON value> }, "subject": "<entity id>" }` (omit `subject` when not required). The server uses the saved trigger's event name, generates a fresh event ID at depth 0, and snapshots the selected entity. The saved `when` condition must hold; a mismatch returns an error. This input event is **not published**, so it starts only this automation and never applies an `entity.put` command by itself. The workflow's normal actions still execute, including any event publications or entity commands they emit. Each invocation creates a separate run; it does not use delivery receipts.
+
+Every event has `{id, name, data, subject?, depth}`. `data` is any JSON value. Runs retain the original event and subject snapshots across replay. Each automation remembers both started and ignored event IDs, so redelivery does not re-evaluate a previously delivered event against a newer workflow. Delivery is asynchronous and at least once, not ordered; it matches the saved workflow present on first delivery.
+
+Confirmed entity writes publish `entity.created`, `entity.updated`, or `entity.deleted`, with `data: {before, after}` (the old/new entity data, or `null`) and the entity snapshot as `subject`. Deletion carries the last snapshot. Only the shared entity writer can publish these facts. Use `entity.created` for creation-only workflows, or `entity.deleted` for removal workflows; the existing `entity` trigger continues to watch creations and updates.
 
 ### `schedule`
 
@@ -279,6 +297,7 @@ A ref is a dotted path with up to 5 segments after its root:
 - `employee.start_date` reads a field of the subject.
 - `employee.manager` reads a whole entity through a `ref` field, and `employee.manager.email` reads one of its fields. `employee.id` is the subject's ID.
 - `steps.<id>.<field>…` reads what an earlier step recorded, for example `steps.confirm-time.values.start`. Numeric segments index arrays.
+- In an event workflow, `event.data.…` reads its JSON payload; `event.id`, `event.name`, `event.subject` and `event.depth` read the envelope. Numeric segments index arrays. Missing payload fields have no value.
 
 A ref is written bare where one is expected (`until`, `assignee`, conditions, `match.on`); `{{employee.start_date}}` is unwrapped there. In text (titles, instructions, prompts, questions, action inputs, field defaults, and what fills a template's slots), refs are written as `{{employee.name}}`. The code calls such text a template string (`renderTemplate`); the stored, reusable [templates](#templates) are a different thing.
 
@@ -298,7 +317,7 @@ Every step has an `id`, a `title` (non-blank, at most 120 characters), and a `ki
 }
 ```
 
-An AI agent does work that needs judgment or writing. The instruction can be up to 4000 characters. The agent sees the subject and what earlier steps recorded, but it can't contact anyone; action steps do that with its answer.
+An AI agent does work that needs judgment or writing. The instruction can be up to 4000 characters. The agent sees the subject, the triggering event when present, and what earlier steps recorded, but it can't contact anyone; action steps do that with its answer.
 
 - Without `output`, it records `{ "output": text }`.
 - With `output`, it answers with those fields, checked against their types (`text`, `number`, `boolean`, `date`, `datetime`), and records `{ "output": { field: value } }`.
@@ -431,8 +450,32 @@ An action can also take inputs from a [template](#templates) with `template: { "
 | `calendar.findTimes`   | `attendees` people, `after` datetime, `duration`                                     | `times`, a few open start times          |
 | `calendar.createEvent` | `title`, `attendees` people, `start` datetime, `duration`, `description?`, `repeat?` | `eventId`, `start`                       |
 | `http.post`            | `url` (literal), `body?` JSON                                                        | `status`, `body` (up to 4000 characters) |
+| `events.emit`          | `name`, `data` JSON text or one exact `{{ref}}`                                      | `eventId`, `name`                        |
 
 Email, Slack, and Calendar are **simulated**: there are no credentials yet, so their operations contact nothing. They succeed and record what they would have sent, with `simulated: true`. Their IDs derive from the step's idempotency key. `calendar.findTimes` offers weekday slots at 10:00 and 14:00 UTC.
+
+### Publishing events and entity commands
+
+`events.emit` really publishes to the durable queue. For example, `with: { "name": "order.fulfilled", "data": "{{event.data}}" }` passes the payload through unchanged. Literal data is JSON text, such as `"{\"total\":137}"`; an exact ref preserves objects, arrays, numbers and strings without parsing them again. The current run subject travels with the publication. Its ID is stable across retries, and the action succeeds on queue acceptance, not on downstream execution. It uses the usual operation permission and approval tasks.
+
+The built-in command `entity.put` merges a validated update through the same tenant-wide change coordinator used by manual, assistant and MCP edits:
+
+```json
+{
+  "id": "update-hire",
+  "title": "Record the onboarding status",
+  "kind": "action",
+  "use": "events.emit",
+  "with": {
+    "name": "entity.put",
+    "data": "{\"type\":\"employee\",\"id\":\"ada\",\"data\":{\"role\":\"Engineer\"}}"
+  }
+}
+```
+
+Permission to emit this command **authorizes the entity write**, with no second confirmation. Use an ask-first role unless automatic writes were explicitly authorized. Unknown types, invalid fields and role-member constraints still fail validation. Duplicate delivery returns the existing receipt instead of overwriting a newer edit. Lifecycle names cannot be emitted by actions or HTTP callers.
+
+Event chains carry a depth from 0 to 16. Publication increments it; an entity command's resulting fact and legacy entity-triggered runs also increment it. At depth 16, runs may finish but cannot emit again, and entity commands are refused. Delivery failures retry and eventually enter a dead-letter queue; the depth bound stops cycles, not all possible fan-out.
 
 ### Permissions
 
@@ -526,7 +569,7 @@ A comparison between mismatched types is false. Conditions never call a model; u
 
 ## Run state and execution
 
-A run executes the saved workflow with its templates expanded. It starts with `{ "runId", "subject": { "type", "id", "data" } | null, "steps": {} }`, and each step adds its record under `steps.<id>`. The subject is a snapshot taken when the run starts; refs through `ref` fields load the current version when the step runs.
+A run executes the saved workflow with its templates expanded. It starts with `{ "runId", "subject": { "type", "id", "data" } | null, "event"?: Event, "steps": {} }`, and each step adds its record under `steps.<id>`. The event and subject are snapshots taken when the run starts; refs through entity `ref` fields load the current version when the step runs.
 
 `RunAutomation` maps the tree onto `effect/workflow` primitives:
 

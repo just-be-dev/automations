@@ -55,6 +55,7 @@ const automationsLayer = Layer.merge(
       setPermissions: unused,
       start: unused,
       entityChanged: unused,
+      eventReceived: unused,
       plannerTrace: unused,
       runTrace: unused,
       run: unused,

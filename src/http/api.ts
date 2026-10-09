@@ -9,6 +9,7 @@ import { json } from "./response.ts";
 import { assistantRoutes } from "./assistant.ts";
 import { changeRoutes } from "./changes.ts";
 import { transcriptionRoutes } from "./transcription.ts";
+import { eventRoutes } from "./events.ts";
 
 /** Routes use application services; hosting and request-scoped implementations belong to the host. */
 export const apiRoutes = Layer.mergeAll(
@@ -19,5 +20,6 @@ export const apiRoutes = Layer.mergeAll(
   assistantRoutes,
   changeRoutes,
   transcriptionRoutes,
+  eventRoutes,
   HttpRouter.add("*", "*", json({ error: "Not found" }, 404)),
 );

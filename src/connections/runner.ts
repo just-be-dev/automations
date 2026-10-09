@@ -4,19 +4,23 @@ import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
-import type * as Schema from "effect/Schema";
+import * as Schema from "effect/Schema";
+import { EntityPut, PublishEvent } from "../events/model.ts";
+import { Events } from "../events/service.ts";
 import { StepFailed } from "../workflow/interpreter.ts";
 import {
   durationMillis,
   isDuration,
   isPublicHttpsUrl,
+  loneRef,
   type ActionStep,
 } from "../workflow/model.ts";
 import type { ExecutionValues } from "../workflow/execution.ts";
 
 /**
- * Executes connection operations for action steps. `http.post` really sends; the other
- * connections have no credentials yet, so they are simulated: they succeed, contact nothing, and
+ * Executes connection operations for action steps. `http.post` really sends and `events.emit`
+ * really publishes. Email, Slack and Calendar have no credentials yet, so they are simulated:
+ * they succeed, contact nothing, and
  * record what they would have sent with `simulated: true`. Their IDs derive from the step's
  * idempotency key, so a retried step records the same thing.
  */
@@ -124,6 +128,27 @@ export const runAction = Effect.fn("Connections.runAction")(function* (
 ) {
   const simulatedId = `sim_${idempotencyKey.slice(0, 16)}`;
   switch (step.use) {
+    case "events.emit": {
+      return yield* Effect.gen(function* () {
+        const events = yield* Events;
+        const source = step.with["data"];
+        const isReference = typeof source === "string" && loneRef(source) !== undefined;
+        const data =
+          typeof inputs["data"] === "string" && !isReference
+            ? yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(inputs["data"])
+            : inputs["data"];
+        const event = yield* Schema.decodeUnknownEffect(PublishEvent)({
+          id: `action:${idempotencyKey}`,
+          name: text(inputs, "name"),
+          data,
+          ...(state.subject === null ? {} : { subject: state.subject }),
+          depth: state.event === undefined ? 0 : state.event.depth + 1,
+        });
+        if (event.name === "entity.put") yield* Schema.decodeUnknownEffect(EntityPut)(event.data);
+        yield* events.publish(event);
+        return recorded({ eventId: event.id, name: event.name });
+      }).pipe(Effect.mapError((error) => fail(step, String(error))));
+    }
     case "email.send": {
       const to = yield* recipient(step, "to", inputs["to"]);
       return recorded({

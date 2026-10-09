@@ -77,6 +77,8 @@ The first deploy offers to bootstrap Alchemy's Cloudflare-hosted state store. Al
 
 It also creates `AutomationsDatabase`, a D1 database that lists the automations and holds the entity types, the entities, the templates, and which automations subscribe to each type. Alchemy applies the migrations in `migrations/` on every deploy. They seed an `employee` type, two employees, and two welcome-email templates.
 
+The `Events` Cloudflare Queue accepts named events from the API, automation actions and confirmed entity writes. `Api` consumes it, routes `entity.put` commands through `ChangeCoordinator`, then delivers each event to the automation directory. It acknowledges individual messages only after successful fan-out, retries failures (10 retries, 30-second backoff), and dead-letters exhausted messages to `automations-<stage>-failed-events`. Inspect failed deliveries in the Api logs and the queue dashboard; dead-letter replay is manual. The prototype visits every listed automation rather than maintaining a separate event subscription index.
+
 Deploys also create a 30-day Access service token for machine testing. Send it as `CF-Access-Client-Id` / `CF-Access-Client-Secret`, and read it with `bun alchemy state`. Never commit it.
 
 ### Cloudflare observability
@@ -125,6 +127,24 @@ curl -X POST "$STUDIO_URL/api/changes/<proposal-id>/decision" \
 
 Only the confirmed decision writes the entity. Its `result.triggered` lists the runs or subscriber errors. Send `approved:false` to cancel. People answer human steps from the run in the studio, or with `POST .../tasks/:stepId`.
 
+### Named events
+
+An automation can listen for `entity.created`, `entity.updated`, `entity.deleted`, or any custom name using an [event trigger](workflow-dsl.md#event), and publish with [`events.emit`](workflow-dsl.md#publishing-events-and-entity-commands). Confirmed HTTP, MCP and assistant entity writes emit the same lifecycle facts. Event listeners run asynchronously, so they are not included in a change decision's `result.triggered` (that lists legacy entity-triggered runs).
+
+Publish an authenticated event with a tenant-unique ID. Keep that ID and payload unchanged when retrying; each automation starts at most one run for it, including after restart:
+
+```sh
+curl -X POST "$STUDIO_URL/api/events" \
+  -H "Cookie: CF_Authorization=$CF_ACCESS_JWT" -H "Content-Type: application/json" \
+  -d '{"id":"order-81-paid","name":"order.paid","data":{"total":137}}'
+```
+
+The response is `202 {"eventId":"order-81-paid","status":"accepted"}` after queue acceptance, not after downstream work finishes. The body accepts `{id, name, data, subject?}`; `subject` is an optional `{type, id, data}` snapshot. HTTP publications start at depth 0. Lifecycle names are reserved for the entity writer. `entity.put` is an authorized command with `data: {type, id, data}`: it merges a validated entity update without another confirmation. API access therefore grants command publication; an automation uses its `events.emit` permission, including ask-first approval when configured.
+
+Delivery is at least once and unordered. Each automation records ignored IDs too: retrying an event after saving a new trigger does not make an already visited automation re-evaluate it. Entity publication uses a persisted applying intent before the D1 write; failure after writing retries the original fact before a terminal receipt. Event chains stop at depth 16, including chains passing through legacy entity triggers. Receipts currently remain indefinitely in prototype storage.
+
+To run just one event automation manually, use its Run button or `POST /api/automations/:id/start` with `{ "event": { "data": { "total": 137 } } }`. Add `"subject": "<entity id>"` if its saved trigger requires one. This does not publish the input event to other listeners or apply it as an entity command. The saved trigger's condition must match, and normal workflow actions still execute. JSON `null`, scalars, arrays and objects are all accepted as event data; omitting it is an error.
+
 A saved automation with a schedule trigger runs on a cron schedule in a time zone, such as every weekday at 9:00 in London. It can start one run each time, or one for every entity of a type that meets a condition, such as each employee who starts in the coming week. The overview shows the schedule in words and when it next runs (see [Triggers](workflow-dsl.md#schedule)). A date trigger starts a run on, before, or after a date each entity holds, such as three days after each employee's start date, and follows the date if it changes (see [`date`](workflow-dsl.md#date)). One occurrence starts at most 50 runs; one that matches more starts none and records a failed run saying so, and a save that already matches more is refused.
 
 Templates hold approved wording, such as the standard welcome email, with slots the automation fills (`hire → employee`). The planner uses a template whenever one fits instead of writing the text, and picks one per case with a `match`, for example a different welcome email by role. Manage them on the studio's **Templates** page (`/templates`), which also lists the automations whose saved workflow or draft uses each one, or prepare a `putTemplate` or `deleteTemplate` action through `/api/changes` (see [Templates](workflow-dsl.md#templates)). Editing a template changes runs that start afterwards; runs already going keep the wording they started with. Deleting a referenced template prevents new runs from validating until the references are fixed.
@@ -132,6 +152,7 @@ Templates hold approved wording, such as the standard welcome email, with slots 
 | Endpoint                                                 | Purpose                                                                                                               |
 | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `GET /api/overview`                                      | Each automation's trigger, its next scheduled run, and runs in flight                                                 |
+| `POST /api/events`                                       | Publish `{ "id", "name", "data", "subject"? }`; returns 202 on durable acceptance                                     |
 | `GET /api/automations`                                   | List automations                                                                                                      |
 | `POST /api/automations`                                  | Create an automation from a description, which becomes its first chat message (`{ "description": "…" }`)              |
 | `GET /api/automations/:id`                               | Inspect an automation and its recent runs                                                                             |

@@ -7,6 +7,7 @@ import * as Dialog from "@/components/ui/dialog";
 import { Role } from "../entities.ts";
 import { PendingChat, Permission, Run, RunSummary, Workflow } from "../workflow.ts";
 import { SubjectOption } from "./api.ts";
+import { EventInput } from "./domain/index.ts";
 import { AutomationSummary, Exchange, WorkflowDisplay } from "./model.ts";
 import { Entities, Overview, Templates, Traces } from "./page/index.ts";
 import * as Assistant from "./assistant/index.ts";
@@ -43,6 +44,10 @@ export const Message = defineMessageUnion({
   ClickedSave: {},
   SelectedPermission: { operation: Schema.String, permission: Permission },
   SelectedSubject: { subjectId: Schema.String },
+  GotEventInputMessage: { message: EventInput.Message },
+  SucceededLoadEventInput: { revision: Schema.Int, editor: EventInput.Model },
+  FailedLoadEventInput: { revision: Schema.Int, error: Schema.String },
+  ClickedCancelStart: {},
   ClickedStart: {},
   ClickedCloseRunPanel: {},
   ClickedExpandRunPanel: {},

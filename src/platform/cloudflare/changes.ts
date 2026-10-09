@@ -13,6 +13,9 @@ import Automation from "./automation.ts";
 import { automationsLayer } from "./automations.ts";
 import { AutomationIndexD1 } from "./automation-index-d1.ts";
 import { EntityStoreD1 } from "./entity-store-d1.ts";
+import { EventsQueue } from "./events.ts";
+import { EntityPut, Event } from "../../events/model.ts";
+import { Events, EventError } from "../../events/service.ts";
 
 export default class ChangeCoordinator extends Cloudflare.DurableObject<ChangeCoordinator>()(
   "ChangeCoordinator",
@@ -21,12 +24,13 @@ export default class ChangeCoordinator extends Cloudflare.DurableObject<ChangeCo
     const namespace = yield* Automation;
     const index = yield* AutomationIndexD1;
     const entities = yield* EntityStoreD1;
+    const events = yield* EventsQueue;
     const automations = automationsLayer(namespace);
     const subscribers = Layer.unwrap(
       Automations.use((service) =>
         Effect.succeed(
-          EntitySubscribers.layer((id, change, key) =>
-            service.get(id).entityChanged(change.before, change.after, key),
+          EntitySubscribers.layer((id, change, key, event) =>
+            service.get(id).entityChanged(change.before, change.after, key, event),
           ),
         ),
       ),
@@ -37,14 +41,35 @@ export default class ChangeCoordinator extends Cloudflare.DurableObject<ChangeCo
       const runtime = yield* Alchemy.RuntimeContext;
       const remote = <A, E, R>(effect: Effect.Effect<A, E, R | Alchemy.RuntimeContext>) =>
         Effect.provideService(effect, Alchemy.RuntimeContext, runtime);
-      const changes = yield* makeChanges({
-        get: (key) => remote(state.storage.get(key)),
-        put: (key, value) => remote(state.storage.put(key, value)),
-        list: (prefix) =>
-          remote(state.storage.list({ prefix })).pipe(Effect.map((values) => [...values.values()])),
-        transaction: (effect) => remote(state.storage.transaction(effect)),
-      });
+      const publisher = yield* Events;
+      const changes = yield* makeChanges(
+        {
+          get: (key) => remote(state.storage.get(key)),
+          put: (key, value) => remote(state.storage.put(key, value)),
+          list: (prefix) =>
+            remote(state.storage.list({ prefix })).pipe(
+              Effect.map((values) => [...values.values()]),
+            ),
+          transaction: (effect) => remote(state.storage.transaction(effect)),
+        },
+        publisher,
+      );
       return {
+        applyEvent: Effect.fn("Changes.applyEvent")(function* (input: unknown) {
+          const event = yield* Schema.decodeUnknownEffect(Event)(input);
+          if (event.name !== "entity.put" || event.depth === 16) {
+            return yield* new EventError({ message: "Not an accepted entity command" });
+          }
+          const command = yield* Schema.decodeUnknownEffect(EntityPut)(event.data);
+          const owner = `event:${event.id}`;
+          const proposal = yield* changes.prepare(
+            owner,
+            { kind: "putEntity", ...command },
+            event.id,
+            event,
+          );
+          yield* changes.decide(owner, proposal.id, true);
+        }),
         prepare: (owner: string, action: unknown, requestId?: string) =>
           Schema.decodeUnknownEffect(ChangeAction)(action).pipe(
             Effect.flatMap((decoded) => changes.prepare(owner, decoded, requestId)),
@@ -52,11 +77,12 @@ export default class ChangeCoordinator extends Cloudflare.DurableObject<ChangeCo
         decide: (owner: string, proposalId: string, approved: boolean) =>
           changes.decide(owner, proposalId, approved),
       };
-    }).pipe(Effect.provide(Layer.merge(index, subscribers)));
+    }).pipe(Effect.provide(Layer.mergeAll(index, subscribers, events)));
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
         Cloudflare.D1.QueryDatabaseBinding,
+        Cloudflare.Queues.WriteQueueBinding,
         Cloudflare.Telemetry({ headSamplingRate: 1, persist: true }),
       ),
     ),
@@ -72,7 +98,7 @@ export const changesLayer = (namespace: Effect.Success<typeof ChangeCoordinator>
       const remote = <A, E>(effect: Effect.Effect<A, E, Alchemy.RuntimeContext>) =>
         Effect.provideService(effect, Alchemy.RuntimeContext, runtime);
       return Changes.of({
-        prepare: (...args) => remote(stub.prepare(...args)),
+        prepare: (owner, action, requestId) => remote(stub.prepare(owner, action, requestId)),
         decide: (...args) => remote(stub.decide(...args)),
       });
     }),

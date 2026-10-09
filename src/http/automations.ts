@@ -10,6 +10,7 @@ import { createAutomation } from "../automation/creation.ts";
 import { AutomationIndex } from "../automation/index.ts";
 import type { AutomationOverview } from "../automation/model.ts";
 import { EntityId } from "../entities/model.ts";
+import { SuppliedEvent } from "../events/model.ts";
 import { HumanResponse } from "../workflow/interpreter.ts";
 import { Permissions } from "../workflow/model.ts";
 import { RunId } from "../workflow/run.ts";
@@ -25,7 +26,10 @@ const TaskParams = Schema.Struct({ ...RunParams.fields, stepId: Schema.String })
 const CreateBody = Schema.Struct({ description: Schema.String });
 const ChatBody = Schema.Struct({ message: Schema.optionalKey(Schema.String) });
 const AnswersBody = Schema.Struct({ chatId: Schema.String, answer: QuestionsAnswer });
-const StartBody = Schema.Struct({ subject: Schema.optionalKey(EntityId) });
+const StartBody = Schema.Struct({
+  subject: Schema.optionalKey(EntityId),
+  event: Schema.optionalKey(SuppliedEvent),
+});
 const PermissionsBody = Schema.Struct({ permissions: Permissions });
 const automationParams = pathParams(AutomationParams);
 
@@ -174,7 +178,7 @@ export const automationRoutes = Layer.merge(
             const { id } = yield* automationParams;
             const body = yield* limitedBody(StartBody);
             const automations = yield* Automations;
-            return yield* automations.get(id).start(body.subject);
+            return yield* automations.get(id).start(body.subject, body.event);
           }),
           202,
         ),

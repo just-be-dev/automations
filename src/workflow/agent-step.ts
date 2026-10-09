@@ -11,6 +11,7 @@ export class AgentAnswerError extends Schema.TaggedError<AgentAnswerError>()("Ag
 const context = (state: ExecutionValues) =>
   [
     `The run is about: ${state.subject === null ? "nothing in particular" : JSON.stringify(state.subject)}`,
+    ...(state.event === undefined ? [] : [`The triggering event: ${JSON.stringify(state.event)}`]),
     `Earlier steps recorded: ${JSON.stringify(state.steps)}`,
   ].join("\n");
 

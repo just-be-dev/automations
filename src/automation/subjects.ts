@@ -20,7 +20,7 @@ export const makeSubjects = Effect.fn("Automation.makeSubjects")(function* () {
 
   const resolve = (
     refs: ReadonlyArray<string>,
-    known: Pick<ExecutionValues, "subject" | "steps">,
+    known: Pick<ExecutionValues, "subject" | "steps" | "event">,
   ) =>
     Effect.gen(function* () {
       const types = yield* entities.listTypes;

@@ -7,6 +7,7 @@ import { badge } from "@/components/ui/badge";
 import { button } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
 import { inputClass } from "@/components/ui/input";
+import { eventInputView } from "../components/event-input.ts";
 import { componentName } from "@/lib/component";
 import {
   formatTime,
@@ -55,6 +56,28 @@ export const workflowPanelView = (model: Model, h: HtmlBuilder<Message>) =>
         [h.Id("graph"), h.AriaLive("polite"), h.Class("flex-1 px-6 py-6 lg:overflow-y-auto")],
         [draftView(model, h)],
       ),
+      Option.match(model.maybeEventInput, {
+        onNone: () => h.empty,
+        onSome: (value) =>
+          Option.match(model.maybeSaved, {
+            onNone: () => h.empty,
+            onSome: (saved) =>
+              saved.trigger.kind !== "event"
+                ? h.empty
+                : h.div(
+                    [h.Class("max-h-[65vh] shrink-0 overflow-y-auto border-t px-6 py-4")],
+                    [
+                      eventInputView(
+                        saved.trigger,
+                        value,
+                        (message) => Message.GotEventInputMessage({ message }),
+                        Activity.guards.Working(model.activity),
+                        h,
+                      ),
+                    ],
+                  ),
+          }),
+      }),
       h.div(
         [h.Class("flex flex-wrap items-center gap-x-4 gap-y-2 border-t px-6 py-3")],
         [
@@ -73,13 +96,28 @@ export const workflowPanelView = (model: Model, h: HtmlBuilder<Message>) =>
                 h,
               ),
               subjectPickerView(model, h),
+              Option.isSome(model.maybeEventInput)
+                ? button(
+                    {
+                      onClick: Message.ClickedCancelStart(),
+                      variant: "ghost",
+                      isDisabled: Activity.guards.Working(model.activity),
+                    },
+                    "Cancel",
+                    h,
+                  )
+                : h.empty,
               button(
                 {
                   onClick: Message.ClickedStart(),
                   isDisabled: Activity.guards.Working(model.activity),
+                  className: "shadow-card",
                   attributes: [h.Id("start")],
                 },
-                [icon(h, Play, "size-3.5", "inline-start"), "Run saved version"],
+                [
+                  icon(h, Play, "size-3.5", "inline-start"),
+                  Option.isSome(model.maybeEventInput) ? "Start run" : "Run saved version",
+                ],
                 h,
               ),
             ],

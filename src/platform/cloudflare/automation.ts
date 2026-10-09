@@ -13,6 +13,7 @@ import { makePlanning } from "../../automation/planning.ts";
 import { ExecutionId } from "../../workflow/execution.ts";
 import { AutomationIndexD1 } from "./automation-index-d1.ts";
 import { EntityStoreD1 } from "./entity-store-d1.ts";
+import { EventsQueue } from "./events.ts";
 import { openPiAgent } from "./pi.ts";
 import { openPiStorage } from "./pi-storage.ts";
 import { PLANNER_MODEL, workersAiClassifier } from "./workers-ai.ts";
@@ -33,6 +34,7 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
     const ai = yield* Cloudflare.Workers.AI();
     const index = yield* AutomationIndexD1;
     const entities = yield* EntityStoreD1;
+    const events = yield* EventsQueue;
 
     // @effect-diagnostics-next-line returnEffectInGen:off
     return Effect.gen(function* () {
@@ -124,12 +126,13 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         ),
       );
       return operations;
-    }).pipe(Effect.provide(Layer.merge(entities, index)));
+    }).pipe(Effect.provide(Layer.mergeAll(entities, index, events)));
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
         Cloudflare.Workers.AIBinding,
         Cloudflare.D1.QueryDatabaseBinding,
+        Cloudflare.Queues.WriteQueueBinding,
         Cloudflare.Telemetry({ headSamplingRate: 1, persist: true }),
       ),
     ),

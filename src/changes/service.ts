@@ -2,6 +2,7 @@
 import * as Context from "effect/Context";
 import type * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import type { Event } from "../events/model.ts";
 import type { ChangeAction, ChangeDecision, ChangeProposal } from "./model.ts";
 
 export class ChangeError extends Schema.TaggedError<ChangeError>()("ChangeError", {
@@ -15,6 +16,8 @@ export class Changes extends Context.Service<
       owner: string,
       action: ChangeAction,
       requestId?: string,
+      /** Trusted event consumer only; persisted to carry the chain limit through recovery. */
+      sourceEvent?: Event,
     ) => Effect.Effect<ChangeProposal, unknown>;
     readonly decide: (
       owner: string,

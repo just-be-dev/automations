@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { messageOf } from "../error.ts";
+import type { Event } from "../events/model.ts";
 import { EntityStore, type EntityChange, type EntityStoreError } from "./store.ts";
 
 /** A run an entity write started, or why an automation watching the type couldn't start one. */
@@ -22,6 +23,7 @@ export class EntitySubscribers extends Context.Service<
     readonly notify: (
       change: EntityChange,
       key?: string,
+      event?: Event,
     ) => Effect.Effect<ReadonlyArray<Triggered>, EntityStoreError>;
   }
 >()("automations/EntitySubscribers") {
@@ -30,6 +32,7 @@ export class EntitySubscribers extends Context.Service<
       automationId: string,
       change: EntityChange,
       key?: string,
+      event?: Event,
     ) => Effect.Effect<{ readonly runId: string | null }, unknown>,
   ) =>
     Layer.effect(
@@ -40,10 +43,11 @@ export class EntitySubscribers extends Context.Service<
           notify: Effect.fn("Api.notifySubscribers")(function* (
             change: EntityChange,
             key?: string,
+            event?: Event,
           ) {
             const subscribers = yield* entities.subscribers(change.after.type);
             return yield* Effect.forEach(subscribers, (automationId) =>
-              notify(automationId, change, key).pipe(
+              notify(automationId, change, key, event).pipe(
                 Effect.map(({ runId }) => ({ automation: automationId, runId, error: null })),
                 Effect.catch((error: unknown) =>
                   Effect.succeed({

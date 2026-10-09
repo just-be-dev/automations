@@ -31,6 +31,7 @@ import {
   CreateAutomation,
   FocusOwnAnswer,
   LoadAutomations,
+  LoadEventInput,
   LoadRun,
   NavigateInternal,
   PollAutomation,
@@ -51,6 +52,7 @@ import {
 import { init } from "./main.ts";
 import { Message, toOverviewMessage } from "./message.ts";
 import type { Model } from "./model.ts";
+import { EventInput } from "./domain/index.ts";
 import { Entities, Overview, Templates, Traces } from "./page/index.ts";
 import { update } from "./update/index.ts";
 import { view } from "./view/index.ts";
@@ -1486,5 +1488,84 @@ test("the traces page opens the trace of the run the URL names, and keeps the ru
       "href",
       "/?automation=my-automation&run=run-9",
     ),
+  );
+});
+
+test("the studio runs an event workflow with supplied data and retains it on errors", () => {
+  const workflow: Workflow = {
+    name: "Paid orders",
+    trigger: {
+      kind: "event",
+      event: "order.paid",
+      when: { ref: "event.data.total", op: "greaterThan", value: 100 },
+    },
+    permissions: { "events.emit": "auto" },
+    steps: [
+      {
+        id: "relay",
+        title: "Notify fulfillment",
+        kind: "action",
+        use: "events.emit",
+        with: { name: "order.fulfilled", data: "{{event.data}}" },
+      },
+    ],
+  };
+  scene(
+    { update, view },
+    given(
+      update(
+        loaded,
+        automationLoaded({ maybeDraft: Option.some(workflow), maybeSaved: Option.some(workflow) }),
+      ).model,
+    ),
+    expect(text("When order.paid occurs")).toExist(),
+    expect(text("event.data.total")).toExist(),
+    expect(text("Emit an event")).toExist(),
+    expect(text("Simulated")).not.toExist(),
+    click(role("button", { name: "Run saved version" })),
+    Command.resolve(
+      LoadEventInput,
+      Message.SucceededLoadEventInput({
+        revision: 0,
+        editor: EventInput.initial(workflow.trigger, workflow),
+      }),
+    ),
+    expect(label("Total")).toExist(),
+    expect(text("Must match: Total is more than 100")).toExist(),
+    click(role("button", { name: "Start run" })),
+    Command.expectNone(),
+    expect(text("Enter a number for Event data.total")).toExist(),
+    type(label("Total"), "100"),
+    click(role("button", { name: "Start run" })),
+    Command.expectExact(
+      StartRun({
+        automationId: "my-automation",
+        revision: 0,
+        maybeSubjectId: Option.none(),
+        event: { data: { total: 100 } },
+      }),
+    ),
+    Command.resolve(
+      StartRun,
+      Message.FailedRequest({
+        revision: 0,
+        error: "The supplied event and subject do not match the saved trigger's condition",
+      }),
+    ),
+    expect(label("Total")).toHaveValue("100"),
+    type(label("Total"), "137"),
+    click(role("button", { name: "Start run" })),
+    Command.expectExact(
+      StartRun({
+        automationId: "my-automation",
+        revision: 0,
+        maybeSubjectId: Option.none(),
+        event: { data: { total: 137 } },
+      }),
+    ),
+    Command.resolve(StartRun, Message.FailedRequest({ revision: 0, error: "Offline" })),
+    click(role("button", { name: "Cancel" })),
+    expect(label("Total")).not.toExist(),
+    expect(role("button", { name: "Run saved version" })).toExist(),
   );
 });

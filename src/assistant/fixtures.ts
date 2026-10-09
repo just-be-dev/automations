@@ -166,6 +166,7 @@ export const assistantFixture = Effect.gen(function* () {
     start: forbidden,
     setPermissions: forbidden,
     entityChanged: forbidden,
+    eventReceived: forbidden,
     respond: forbidden,
     run: forbidden,
     plannerTrace: forbidden,

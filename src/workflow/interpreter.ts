@@ -12,6 +12,7 @@ import {
 } from "effect/workflow";
 import { permissionOf } from "../connections/registry.ts";
 import { Subject } from "../entities/model.ts";
+import { Event } from "../events/model.ts";
 import {
   actionTemplates,
   durationMillis,
@@ -160,7 +161,12 @@ export class StepRunner extends Context.Service<
 >()("automations/StepRunner") {}
 
 export const RunAutomation = EffectWorkflow.make("RunAutomation", {
-  payload: { runId: RunId, workflow: Workflow, subject: Schema.NullOr(Subject) },
+  payload: {
+    runId: RunId,
+    workflow: Workflow,
+    subject: Schema.NullOr(Subject),
+    event: Schema.optionalKey(Event),
+  },
   idempotencyKey: ({ runId }) => runId,
   success: ExecutionValues,
   error: Schema.Union([StepFailed, RunStopped]),
@@ -305,7 +311,10 @@ const runResolved = (
           success: Schema.Json,
           error: StepFailed,
           execute: Effect.flatMap(Activity.idempotencyKey(step.id), (key) =>
-            runner.action({ step, inputs, state }, key),
+            runner.action(
+              { step: { ...step, with: { ...step.with, ...source?.with } }, inputs, state },
+              key,
+            ),
           ),
         }).pipe(Activity.retry(retried));
         return yield* record(state, step, output);
@@ -498,8 +507,13 @@ export const respondToHuman = (token: DurableDeferred.Token, response: HumanResp
     { token, value: response },
   );
 
-export const RunAutomationLive = RunAutomation.toLayer(({ runId, workflow, subject }) =>
-  runSteps(workflow.steps, { runId, subject, steps: {} }).pipe(
+export const RunAutomationLive = RunAutomation.toLayer(({ runId, workflow, subject, event }) =>
+  runSteps(workflow.steps, {
+    runId,
+    subject,
+    ...(event === undefined ? {} : { event }),
+    steps: {},
+  }).pipe(
     Effect.provideService(RunPermissions, {
       of: (operationId) => permissionOf(workflow, operationId),
     }),

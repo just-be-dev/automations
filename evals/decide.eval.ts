@@ -24,6 +24,25 @@ export default defineEval({
     },
   },
   cases: {
+    "event-payload": {
+      input: {
+        question: "Which team should handle the triggering event?",
+        options: { billing: "Charges and refunds", technical: "Outages and bugs" },
+        state: {
+          ...values(null),
+          event: {
+            id: "ticket-81",
+            name: "ticket.opened",
+            data: { message: "My invoice charged me twice. Please refund the extra charge." },
+            depth: 0,
+          },
+        },
+      },
+      checks: {
+        "routes from the event without a subject": (output) =>
+          expect(output.choice).toBe("billing"),
+      },
+    },
     "role-engineer": {
       input: { question: "Which welcome fits this hire?", options: welcomes, state: values(ada) },
       checks: { "picks engineer": (output) => expect(output.choice).toBe("engineer") },

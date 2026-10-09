@@ -10,6 +10,8 @@ import { EntitySubscribers } from "../entities/subscribers.ts";
 import type { EntityType } from "../entities/model.ts";
 import { makeChanges } from "./application.ts";
 import type { ChangeStorage } from "./host.ts";
+import type { Event } from "../events/model.ts";
+import { EventError } from "../events/service.ts";
 
 const person: EntityType = {
   name: "person",
@@ -39,6 +41,7 @@ const harness = () => {
   let failReceipt = false;
   let failApplying = false;
   const keys: string[] = [];
+  const origins: Array<Event | undefined> = [];
   const storage: ChangeStorage = {
     get: (key) => Effect.sync(() => structuredClone(data.get(key))),
     put: (key, value) =>
@@ -95,6 +98,7 @@ const harness = () => {
         setPermissions: unused,
         start: unused,
         entityChanged: unused,
+        eventReceived: unused,
         plannerTrace: unused,
         runTrace: unused,
         run: unused,
@@ -102,9 +106,10 @@ const harness = () => {
       }),
     }),
     Layer.succeed(EntitySubscribers, {
-      notify: (_change, key) =>
+      notify: (_change, key, event) =>
         Effect.sync(() => {
           keys.push(key ?? "");
+          origins.push(event);
           return [{ automation: "a", runId: `entity-${key}`, error: null }];
         }),
     }),
@@ -114,6 +119,7 @@ const harness = () => {
     layer,
     data,
     keys,
+    origins,
     usages,
     receiptFailure: (value: boolean) => {
       failReceipt = value;
@@ -331,6 +337,173 @@ test("metadata normalization never hides a template-content change named updated
         result: next.template,
       });
       expect((yield* store.getTemplate("welcome"))?.content).toEqual({ updatedAt: "Replacement" });
+    }).pipe(Effect.provide(h.layer)),
+  );
+});
+
+test("confirmed entity creations, updates and deletions emit immutable facts; cancellation emits nothing", async () => {
+  const h = harness();
+  const emitted: Array<Event> = [];
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const changes = yield* makeChanges(h.storage, {
+        publish: (event) => Effect.sync(() => void emitted.push(event)),
+      });
+      const created = yield* changes.prepare("owner", {
+        ...action,
+        id: "sam",
+        data: { name: "Sam", email: "sam@example.com" },
+      });
+      yield* changes.decide("owner", created.id, true);
+      const updated = yield* changes.prepare("owner", {
+        ...action,
+        id: "sam",
+        data: { name: "Samuel" },
+      });
+      yield* changes.decide("owner", updated.id, true);
+      const cancelled = yield* changes.prepare("owner", {
+        ...action,
+        id: "sam",
+        data: { name: "Never written" },
+      });
+      yield* changes.decide("owner", cancelled.id, false);
+      const deleted = yield* changes.prepare("owner", {
+        kind: "deleteEntity",
+        type: "person",
+        id: "sam",
+      });
+      yield* changes.decide("owner", deleted.id, true);
+      expect(emitted).toEqual([
+        {
+          id: `change:${created.id}`,
+          name: "entity.created",
+          data: { before: null, after: { name: "Sam", email: "sam@example.com" } },
+          subject: { type: "person", id: "sam", data: { name: "Sam", email: "sam@example.com" } },
+          depth: 0,
+        },
+        {
+          id: `change:${updated.id}`,
+          name: "entity.updated",
+          data: {
+            before: { name: "Sam", email: "sam@example.com" },
+            after: { name: "Samuel", email: "sam@example.com" },
+          },
+          subject: {
+            type: "person",
+            id: "sam",
+            data: { name: "Samuel", email: "sam@example.com" },
+          },
+          depth: 0,
+        },
+        {
+          id: `change:${deleted.id}`,
+          name: "entity.deleted",
+          data: { before: { name: "Samuel", email: "sam@example.com" }, after: null },
+          subject: {
+            type: "person",
+            id: "sam",
+            data: { name: "Samuel", email: "sam@example.com" },
+          },
+          depth: 0,
+        },
+      ]);
+      expect(yield* (yield* EntityStore).getEntity("person", "sam")).toBeUndefined();
+      expect(h.keys).toEqual([`change:${created.id}`, `change:${updated.id}`]);
+    }).pipe(Effect.provide(h.layer)),
+  );
+});
+
+test("publication failure after an entity write recovers the original event and depth before acknowledging the command", async () => {
+  const h = harness();
+  const attempts: Array<Event> = [];
+  let unavailable = true;
+  const publisher = {
+    publish: (event: Event) =>
+      Effect.gen(function* () {
+        attempts.push(event);
+        if (unavailable) return yield* new EventError({ message: "Queue unavailable" });
+      }),
+  };
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const changes = yield* makeChanges(h.storage, publisher);
+      const origin: Event = {
+        id: "command-81",
+        name: "entity.put",
+        data: { type: "person", id: "ada", data: action.data },
+        depth: 5,
+      };
+      const proposal = yield* changes.prepare("event:command-81", action, origin.id, origin);
+      yield* changes.decide("event:command-81", proposal.id, true).pipe(Effect.flip);
+      expect((yield* (yield* EntityStore).getEntity("person", "ada"))?.data.name).toBe(
+        "Ada Lovelace",
+      );
+      expect(h.data.get(`proposal:${proposal.id}`)).toMatchObject({ state: "applying" });
+      unavailable = false;
+      const reopened = yield* makeChanges(h.storage, publisher);
+      expect((yield* reopened.decide("event:command-81", proposal.id, true)).status).toBe(
+        "applied",
+      );
+      const expected = {
+        id: `change:${proposal.id}`,
+        name: "entity.updated",
+        data: {
+          before: { name: "Ada", email: "ada@example.com", old: "removed" },
+          after: { name: "Ada Lovelace", email: "ada@example.com" },
+        },
+        subject: {
+          type: "person",
+          id: "ada",
+          data: { name: "Ada Lovelace", email: "ada@example.com" },
+        },
+        depth: 6,
+      };
+      expect(attempts).toEqual([expected, expected]);
+      expect(h.origins).toEqual([
+        { ...origin, depth: 6 },
+        { ...origin, depth: 6 },
+      ]);
+      yield* reopened.decide("event:command-81", proposal.id, true);
+      expect(attempts).toHaveLength(2);
+    }).pipe(Effect.provide(h.layer)),
+  );
+});
+
+test("authorized command intents recover before later writers; redelivery cannot overwrite a newer edit", async () => {
+  const h = harness();
+  const emitted: Array<Event> = [];
+  const publisher = { publish: (event: Event) => Effect.sync(() => void emitted.push(event)) };
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const changes = yield* makeChanges(h.storage, publisher);
+      const origin: Event = {
+        id: "command-1",
+        name: "entity.put",
+        data: { type: "person", id: "ada", data: action.data },
+        depth: 15,
+      };
+      const command = yield* changes.prepare("event:command-1", action, origin.id, origin);
+      // Crash after recording the authorized intent, before deciding it.
+      const reopened = yield* makeChanges(h.storage, publisher);
+      const later = yield* reopened.prepare("owner", { ...action, data: { name: "Later edit" } });
+      expect((yield* (yield* EntityStore).getEntity("person", "ada"))?.data.name).toBe(
+        "Ada Lovelace",
+      );
+      expect(emitted).toHaveLength(1);
+      expect(emitted[0]?.depth).toBe(16);
+      yield* reopened.decide("owner", later.id, true);
+      expect(yield* reopened.prepare("event:command-1", action, origin.id, origin)).toEqual(
+        command,
+      );
+      expect((yield* reopened.decide("event:command-1", command.id, true)).status).toBe("applied");
+      expect((yield* (yield* EntityStore).getEntity("person", "ada"))?.data.name).toBe(
+        "Later edit",
+      );
+      expect(emitted).toHaveLength(2);
+      yield* reopened
+        .prepare("event:too-deep", action, "too-deep", { ...origin, depth: 16 })
+        .pipe(Effect.flip);
+      expect(emitted).toHaveLength(2);
     }).pipe(Effect.provide(h.layer)),
   );
 });

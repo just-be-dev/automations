@@ -31,6 +31,7 @@ const leaveAutomation = (model: Model, automationId: string): Model =>
     maybeRunPanel: () => Option.none(),
     subjectChoices: () => SubjectChoices.NotNeeded(),
     maybeSubjectId: () => Option.none(),
+    maybeEventInput: () => Option.none(),
     maybeProgress: () => Option.none(),
     expandedStepIds: () => [],
     conversation: () => [],

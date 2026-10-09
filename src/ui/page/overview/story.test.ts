@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import { Command, given, message, model, story } from "foldkit/story";
 import { onboarding, runOf, summaryOf } from "../../fixtures.ts";
+import { EventInput } from "../../domain/index.ts";
 import {
   LoadOverview,
   LoadSubjects,
@@ -24,6 +25,93 @@ const ordersRow = {
   maybeLastRun: Option.none(),
   maybeError: Option.none(),
 };
+
+test("late subject loads preserve event data and cancelled forms ignore them", () => {
+  const listing = update(
+    init(0).model,
+    Message.SucceededLoadOverview({
+      session: 0,
+      poll: 0,
+      automations: [
+        {
+          ...ordersRow,
+          maybeTrigger: Option.some({ kind: "event", event: "order.paid", subject: "employee" }),
+        },
+      ],
+    }),
+  ).model;
+  const choosing = update(listing, Message.ClickedRunNow({ automationId: "orders" })).model;
+  const edited = update(
+    choosing,
+    Message.GotEventInputMessage({ message: EventInput.Message.ClickedAdd({ id: 0 }) }),
+  ).model;
+  const loaded = update(
+    edited,
+    Message.SucceededLoadSubjects({
+      automationId: "orders",
+      entityType: "employee",
+      label: "Employee",
+      subjects: [{ id: "emp-2", title: "Ari" }],
+    }),
+  ).model;
+  expect(loaded.launch).toMatchObject({
+    _tag: "Choosing",
+    maybeEventInput: Option.some(
+      EventInput.update(
+        EventInput.initial({ kind: "event", event: "order.paid" }),
+        EventInput.Message.ClickedAdd({ id: 0 }),
+      ),
+    ),
+  });
+  const failed = update(
+    edited,
+    Message.FailedLoadSubjects({
+      automationId: "orders",
+      entityType: "employee",
+      error: "Offline",
+    }),
+  ).model;
+  expect(failed.launch).toMatchObject({
+    _tag: "Choosing",
+    maybeEventInput: Option.some(
+      EventInput.update(
+        EventInput.initial({ kind: "event", event: "order.paid" }),
+        EventInput.Message.ClickedAdd({ id: 0 }),
+      ),
+    ),
+    subjects: { _tag: "Unavailable" },
+  });
+  const cancelled = update(edited, Message.ClickedCancelStart()).model;
+  expect(
+    update(
+      edited,
+      Message.SucceededLoadEventInput({
+        automationId: "orders",
+        editor: EventInput.initial({ kind: "event", event: "other" }),
+      }),
+    ).model,
+  ).toEqual(edited);
+  expect(
+    update(
+      cancelled,
+      Message.SucceededLoadEventInput({
+        automationId: "orders",
+        editor: EventInput.initial({ kind: "event", event: "other" }),
+      }),
+    ).model,
+  ).toEqual(cancelled);
+  expect(
+    update(
+      cancelled,
+      Message.SucceededLoadSubjects({
+        automationId: "orders",
+        entityType: "employee",
+        label: "Employee",
+        subjects: [],
+      }),
+    ).model,
+  ).toBe(cancelled);
+});
 
 const onboardingRow = {
   id: "onboarding",

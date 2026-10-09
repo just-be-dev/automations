@@ -6,6 +6,8 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { EntityRecord, EntityType } from "../entities.ts";
+import { Workflow } from "../workflow.ts";
+import { EventInput } from "./domain/index.ts";
 
 const ErrorResponse = Schema.Struct({ error: Schema.String });
 
@@ -40,6 +42,27 @@ export const requestJson = <T, E>(url: string, schema: Schema.Codec<T, E>, body?
 
 export const errorText = (error: unknown) =>
   error instanceof Error ? error.message : "Unexpected error";
+
+/** Uses the saved workflow and known entity types to suggest the visual event form. */
+export const loadEventInput = (automationId: string) =>
+  Effect.gen(function* () {
+    const [{ saved }, types] = yield* Effect.all(
+      [
+        requestJson(
+          `/api/automations/${automationId}`,
+          Schema.Struct({ saved: Schema.OptionFromOptional(Workflow) }),
+        ),
+        requestJson("/api/entities/types", Schema.Array(EntityType)).pipe(
+          Effect.orElseSucceed(() => []),
+        ),
+      ],
+      { concurrency: 2 },
+    );
+    if (Option.isNone(saved) || saved.value.trigger.kind !== "event") {
+      return yield* new ApiError({ message: "The saved workflow no longer takes event data" });
+    }
+    return EventInput.initial(saved.value.trigger, saved.value, types);
+  });
 
 /** An entity a run can be started for, labelled by its type's title field. */
 export const SubjectOption = Schema.Struct({ id: Schema.String, title: Schema.String });

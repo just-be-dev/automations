@@ -1,6 +1,7 @@
 /** Defines public run records, step results, human tasks, and summaries separately from replay state. */
 import * as Schema from "effect/Schema";
 import { Subject } from "../entities/model.ts";
+import { Event } from "../events/model.ts";
 import { HumanResponseSpec, Workflow } from "./model.ts";
 
 /** Identifies the application run record, never a replay execution. Encodes as a string. */
@@ -55,6 +56,7 @@ export const Run = Schema.Struct({
   id: Schema.String,
   workflow: Workflow,
   subject: Schema.NullOr(Subject),
+  event: Schema.optionalKey(Event),
   status: RunStatus,
   steps: Schema.Record(Schema.String, RunStep),
   tasks: Schema.Array(HumanTask),

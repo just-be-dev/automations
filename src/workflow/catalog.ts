@@ -58,8 +58,16 @@ const refProblems = (
   available: ReadonlyMap<string, Step>,
   ref: string,
   where: string,
+  eventTrigger = false,
 ): ReadonlyArray<string> => {
   const [root = "", ...path] = ref.split(".");
+  if (root === "event" && eventTrigger) {
+    return path.length === 0 || ["id", "name", "data", "subject", "depth"].includes(path[0] ?? "")
+      ? []
+      : [
+          `${where}: ${ref} must read event.id, event.name, event.data, event.subject, or event.depth`,
+        ];
+  }
   if (root === "steps") {
     const [stepId] = path;
     if (stepId === undefined) {
@@ -326,9 +334,10 @@ const ownProblems = (
   subject: EntityType | undefined,
   available: ReadonlyMap<string, Step>,
   step: Step,
+  eventTrigger: boolean,
 ): ReadonlyArray<string> => [
   ...stepRefs(step).flatMap((ref) =>
-    refProblems(catalog, subject, available, ref, `Step ${step.id}`),
+    refProblems(catalog, subject, available, ref, `Step ${step.id}`, eventTrigger),
   ),
   ...(step.kind === "action" ? actionProblems(catalog, subject, step) : []),
   ...(step.kind === "human" &&
@@ -353,15 +362,16 @@ const checkSequence = (
   subject: EntityType | undefined,
   steps: ReadonlyArray<Step>,
   available: ReadonlyMap<string, Step>,
+  eventTrigger: boolean,
 ): Checked =>
   steps.reduce<Checked>(
     (checked, step) => {
-      const own = ownProblems(catalog, subject, checked.available, step);
+      const own = ownProblems(catalog, subject, checked.available, step, eventTrigger);
       const before =
         step.kind === "parallel"
           ? checked.available
           : new Map([...checked.available, [step.id, step] as const]);
-      const children = childResults(catalog, subject, step, before);
+      const children = childResults(catalog, subject, step, before, eventTrigger);
       const after =
         step.kind === "parallel"
           ? new Map([
@@ -383,16 +393,21 @@ const childResults = (
   subject: EntityType | undefined,
   step: Step,
   available: ReadonlyMap<string, Step>,
+  eventTrigger: boolean,
 ): ReadonlyArray<Checked> => {
   switch (step.kind) {
     case "parallel":
-      return step.branches.map((branch) => checkSequence(catalog, subject, branch, available));
+      return step.branches.map((branch) =>
+        checkSequence(catalog, subject, branch, available, eventTrigger),
+      );
     case "if":
       return [...step.cases.map((branch) => branch.steps), step.otherwise ?? []].map((branch) =>
-        checkSequence(catalog, subject, branch, available),
+        checkSequence(catalog, subject, branch, available, eventTrigger),
       );
     case "decide":
-      return step.options.map((option) => checkSequence(catalog, subject, option.steps, available));
+      return step.options.map((option) =>
+        checkSequence(catalog, subject, option.steps, available, eventTrigger),
+      );
     default:
       return [];
   }
@@ -402,6 +417,19 @@ const triggerProblems = (catalog: Catalog, workflow: Workflow): ReadonlyArray<st
   const { trigger } = workflow;
   const name = subjectType(trigger);
   const when = triggerCondition(trigger);
+  if (trigger.kind === "event") {
+    const subject = findType(catalog, name);
+    return [
+      ...(name !== undefined && subject === undefined
+        ? [`The trigger names unknown entity type ${name}`]
+        : []),
+      ...conditionRefs(when ?? { all: [] }).flatMap((ref) =>
+        ref.startsWith("steps.")
+          ? [`The trigger's condition can't read ${ref}; no step has run yet`]
+          : refProblems(catalog, subject, new Map(), ref, "The trigger's condition", true),
+      ),
+    ];
+  }
   if (name === undefined) {
     return when === undefined
       ? []
@@ -487,7 +515,8 @@ export const workflowProblems = (catalog: Catalog, workflow: Workflow): Readonly
   const subject = findType(catalog, subjectType(workflow.trigger));
   return [
     ...triggerProblems(catalog, workflow),
-    ...checkSequence(catalog, subject, workflow.steps, new Map()).problems,
+    ...checkSequence(catalog, subject, workflow.steps, new Map(), workflow.trigger.kind === "event")
+      .problems,
     ...unreachableProblems(workflow.steps),
     ...permissionProblems(catalog, workflow),
   ];

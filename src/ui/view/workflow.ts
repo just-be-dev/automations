@@ -155,6 +155,11 @@ const triggerTextView = (trigger: Trigger, h: HtmlBuilder<Message>): ReadonlyArr
         manual.subject === undefined
           ? ["Manual start"]
           : [`Manual start for ${withArticle(manual.subject)}`],
+      event: (event) => [
+        `When ${event.event} occurs`,
+        ...(event.subject === undefined ? [] : [` for ${withArticle(event.subject)}`]),
+        ...(event.when === undefined ? [] : [", if ", ...conditionView(event.when, h)]),
+      ],
       entity: (entity) => [
         `When ${withArticle(entity.entity)} is created or `,
         ...changedFieldsView(entity.fields, h),
