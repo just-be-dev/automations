@@ -58,7 +58,9 @@ test("editing a template warns that it changes the runs that start afterwards", 
     { update, view },
     given(welcomeOpen),
     click(role("button", { name: "Edit template" })),
-    expect(label("Name")).toHaveAttr("data-readonly"),
+    expect(label("ID")).toHaveAttr("data-readonly"),
+    type(label("Name"), "Welcome aboard"),
+    expect(label("ID")).toHaveValue("welcome_email"),
     expect(text(/2 automations use this template/)).toExist(),
     type(label("Text (subject)"), "Welcome, {{hire.name}}!"),
     submit(role("form", { name: "Edit welcome_email" })),
@@ -66,6 +68,7 @@ test("editing a template warns that it changes the runs that start afterwards", 
       SaveTemplate({
         template: {
           ...welcome,
+          label: "Welcome aboard",
           content: { ...welcome.content, subject: "Welcome, {{hire.name}}!" },
         },
         isNew: false,
@@ -104,5 +107,45 @@ test("with no template chosen, the page explains templates", () => {
     ),
     expect(text("No templates yet.")).toExist(),
     expect(role("button", { name: "New template" })).toExist(),
+  );
+});
+
+test("creating a template derives an editable ID and removes only the chosen content", () => {
+  scene(
+    { update, view },
+    given(
+      update(init(Option.none()).model, Message.SucceededLoadCatalog({ templates: [], types: [] }))
+        .model,
+    ),
+    click(role("button", { name: "New template" })),
+    expect(role("heading", { name: "Create template" })).toExist(),
+    type(label("Name"), "Café Welcome Email!"),
+    expect(label("ID")).toHaveValue("cafe_welcome_email"),
+    type(label("ID"), "Employee-Welcome V2"),
+    expect(label("ID")).toHaveValue("employee_welcome_v2"),
+    expect(label("Name")).toHaveValue("Café Welcome Email!"),
+    type(label("Description"), "Welcome wording for new employees."),
+    type(label("Input name (new input)"), "body"),
+    type(label("Text (body)"), "This content will be removed."),
+    click(role("button", { name: "Add input" })),
+    type(label("Input name (new input)"), "subject"),
+    type(label("Text (subject)"), "Welcome aboard!"),
+    click(role("button", { name: "Remove input body" })),
+    expect(label("Text (body)")).not.toExist(),
+    expect(label("Text (subject)")).toHaveValue("Welcome aboard!"),
+    submit(role("form", { name: "New template" })),
+    Command.expectExact(
+      SaveTemplate({
+        template: {
+          name: "employee_welcome_v2",
+          label: "Café Welcome Email!",
+          description: "Welcome wording for new employees.",
+          slots: [],
+          content: { subject: "Welcome aboard!" },
+        },
+        isNew: true,
+      }),
+    ),
+    Command.resolve(SaveTemplate, Message.FailedRequest({ error: "Try again" })),
   );
 });

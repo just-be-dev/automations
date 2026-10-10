@@ -64,7 +64,7 @@ export const newAutomationDialogView = (model: Model, h: HtmlBuilder<Message>) =
                       isDisabled: isCreating,
                       isInvalid: Option.isSome(maybeError),
                       onInput: (value) => Message.UpdatedNewAutomationDescription({ value }),
-                      className: "max-h-72 min-h-28 resize-none bg-background",
+                      className: "max-h-72 min-h-28 resize-none",
                       attributes: submitShortcut(
                         model.shortcutModifier,
                         Message.SubmittedNewAutomation(),

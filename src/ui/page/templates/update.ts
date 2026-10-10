@@ -7,6 +7,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { Update } from "foldkit";
 import { modifyFields } from "foldkit/struct";
+import { snakeCaseId } from "@/lib/format";
 import { FieldType, Template } from "../../../entities.ts";
 import * as Change from "../../change/index.ts";
 import { templatesHref, templatesPath } from "../../route.ts";
@@ -127,9 +128,17 @@ export const update = (model: Model, message: Message): UpdateReturn => {
       model: modifyFields(model, { editor: () => Editor.Closed() }),
     }),
     UpdatedTemplateName: ({ value }) =>
-      withDraft(model, (draft) => modifyFields(draft, { name: () => value })),
+      Editor.guards.Creating(model.editor)
+        ? withDraft(model, (draft) => modifyFields(draft, { name: () => snakeCaseId(value) }))
+        : { model },
     UpdatedTemplateLabel: ({ value }) =>
-      withDraft(model, (draft) => modifyFields(draft, { label: () => value })),
+      withDraft(model, (draft) =>
+        modifyFields(draft, {
+          label: () => value,
+          name: (name) =>
+            Editor.guards.Creating(model.editor) ? snakeCaseId(value).replace(/_$/, "") : name,
+        }),
+      ),
     UpdatedTemplateDescription: ({ value }) =>
       withDraft(model, (draft) => modifyFields(draft, { description: () => value })),
     ClickedAddSlot: () =>

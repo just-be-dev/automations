@@ -260,7 +260,6 @@ const taskFieldView = (
           type: fieldInputType[field.type],
           value: field.type === "datetime" ? localDateTimeText(text) : text,
           onInput: toMessage,
-          className: "bg-background",
           wrapperAttributes: [componentName("task-field")],
         },
         h,

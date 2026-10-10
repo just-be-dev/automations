@@ -121,6 +121,8 @@ test("renaming the title field keeps it the title", () => {
     update,
     given(employeesOpen),
     message(Message.ClickedEditType()),
+    message(Message.UpdatedTypeLabel({ value: "Team member" })),
+    message(Message.UpdatedTypeName({ value: "must_not_rename" })),
     message(Message.UpdatedFieldName({ key: 0, value: "full_name" })),
     message(Message.ClickedRemoveField({ key: 1 })),
     message(Message.SubmittedType()),
@@ -128,6 +130,7 @@ test("renaming the title field keeps it the title", () => {
       SaveType({
         type: {
           ...employee,
+          label: "Team member",
           title: "full_name",
           fields: [{ name: "full_name", label: "Name", type: "text" }, ...employee.fields.slice(2)],
         },

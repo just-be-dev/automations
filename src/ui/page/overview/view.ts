@@ -16,7 +16,7 @@ import {
 import { badge } from "@/components/ui/badge";
 import { button, buttonClass } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
-import { inputClass } from "@/components/ui/input";
+import { select } from "@/components/ui/select";
 import { eventInputView } from "../../components/event-input.ts";
 import { componentName } from "@/lib/component";
 import {
@@ -50,13 +50,7 @@ export const view = Submodel.defineView<Model, Message>((model, h) =>
       h.div(
         [h.Class("flex max-w-3xl flex-col gap-10")],
         [
-          h.div(
-            [h.Class("flex flex-col gap-1")],
-            [
-              h.div([h.Class(eyebrowClass)], ["Overview"]),
-              h.h1([h.Class("text-xl font-semibold")], ["Runs and automations"]),
-            ],
-          ),
+          h.h1([h.Class("text-xl font-semibold")], ["Runs and automations"]),
           ...Listing.match(model.listing, {
             Loading: () => [h.p([h.Class(noteClass)], ["Loading…"])],
             Unavailable: ({ error }) => [
@@ -453,13 +447,16 @@ const launchSubjectView = (
         [componentName("launch-subject")],
         [
           h.label([h.For(`subject-${automationId}`), h.Class("sr-only")], [label]),
-          h.select(
-            [
-              h.Id(`subject-${automationId}`),
-              h.Value(Option.getOrElse(maybeSubjectId, () => "")),
-              h.OnChange((subjectId) => Message.SelectedSubject({ subjectId })),
-              h.Class(cn(inputClass, "h-7 w-56 bg-background md:text-[13px]")),
-            ],
+          select(
+            {
+              wrapperClass: "w-56",
+              className: "h-7 md:text-[13px]",
+              attributes: [
+                h.Id(`subject-${automationId}`),
+                h.Value(Option.getOrElse(maybeSubjectId, () => "")),
+                h.OnChange((subjectId) => Message.SelectedSubject({ subjectId })),
+              ],
+            },
             [
               h.option(
                 [h.Value(""), h.Selected(Option.isNone(maybeSubjectId))],
@@ -476,6 +473,7 @@ const launchSubjectView = (
                 ),
               ),
             ],
+            h,
           ),
         ],
       ),

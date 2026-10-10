@@ -150,8 +150,20 @@ const headerView = (model: Model, h: HtmlBuilder<Message>) =>
 const headerTitleView = (model: Model, h: HtmlBuilder<Message>) =>
   Page.match(model.page, {
     Overview: () => headerLabelView("Overview", h),
-    Templates: () => headerLabelView("Templates", h),
-    Entities: () => headerLabelView("Entity store", h),
+    Templates: ({ templates }) =>
+      h.submodel({
+        slotId: "templates-header",
+        model: templates,
+        view: Templates.headerView,
+        toParentMessage: toTemplatesMessage,
+      }),
+    Entities: ({ entities }) =>
+      h.submodel({
+        slotId: "entities-header",
+        model: entities,
+        view: Entities.headerView,
+        toParentMessage: toEntitiesMessage,
+      }),
     Traces: () => headerLabelView("Agent traces", h),
     Studio: () => automationTitleView(model, h),
     Run: () => automationTitleView(model, h),

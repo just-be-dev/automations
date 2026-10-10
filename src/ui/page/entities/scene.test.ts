@@ -47,18 +47,29 @@ test("a type shows its fields and its entities, which open in a form", () => {
 test("a new type is built from field rows", () => {
   scene(
     { update, view },
-    given(employeesOpen),
+    given(update(init(Option.none()).model, Message.SucceededLoadTypes({ types: [] })).model),
     click(role("button", { name: "New entity type" })),
-    type(label("Name"), "office"),
+    expect(role("heading", { name: "Create entity type" })).toExist(),
+    type(label("Name"), "Office locations"),
+    expect(label("ID")).toHaveValue("office_locations"),
+    type(label("Name"), "Office directory"),
+    expect(label("ID")).toHaveValue("office_directory"),
+    type(label("ID"), "HQ Offices 2026"),
+    expect(label("ID")).toHaveValue("hq_offices_2026"),
+    expect(label("Name")).toHaveValue("Office directory"),
     click(role("button", { name: "Add field" })),
     type(label("Field name (new field)"), "city"),
     change(label("Field type (city)"), "text"),
+    click(role("button", { name: "Add field" })),
+    type(label("Field name (new field)"), "capacity"),
+    click(role("button", { name: "Remove field capacity" })),
+    expect(label("Field name (city)")).toHaveValue("city"),
     submit(role("form", { name: "New entity type" })),
     Command.expectExact(
       SaveType({
         type: {
-          name: "office",
-          label: "Office",
+          name: "hq_offices_2026",
+          label: "Office directory",
           title: "name",
           fields: [
             { name: "name", label: "Name", type: "text" },

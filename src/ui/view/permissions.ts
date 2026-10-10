@@ -3,7 +3,7 @@ import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import type { HtmlBuilder } from "foldkit/html";
 import { CircleCheck, Hand } from "lucide";
-import { inputClass } from "@/components/ui/input";
+import { select as nativeSelect } from "@/components/ui/select";
 import { componentName } from "@/lib/component";
 import { icon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
@@ -88,15 +88,17 @@ const permissionRowView = (
       Option.match(maybeRole, {
         onNone: () => h.empty,
         onSome: (role) =>
-          h.select(
-            [
-              h.AriaLabel(`${operationTitle(operationId)} approver`),
-              h.Title("Who approves it"),
-              h.Value(role),
-              h.Disabled(isWorking),
-              h.OnChange((ask) => select({ ask })),
-              h.Class(cn(inputClass, "h-7 w-auto bg-background px-2 text-xs md:text-xs")),
-            ],
+          nativeSelect(
+            {
+              className: "h-7 w-auto px-2 text-xs md:text-xs",
+              attributes: [
+                h.AriaLabel(`${operationTitle(operationId)} approver`),
+                h.Title("Who approves it"),
+                h.Value(role),
+                h.Disabled(isWorking),
+                h.OnChange((ask) => select({ ask })),
+              ],
+            },
             Array.map(roles, (candidate) =>
               h.keyed("option")(
                 candidate.name,
@@ -104,6 +106,7 @@ const permissionRowView = (
                 [candidate.label],
               ),
             ),
+            h,
           ),
       }),
       h.div(

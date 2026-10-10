@@ -7,7 +7,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { Update } from "foldkit";
 import { modifyFields } from "foldkit/struct";
-import { plural, withArticle } from "@/lib/format";
+import { plural, snakeCaseId, withArticle } from "@/lib/format";
 import { EntityType, FieldType, Subject } from "../../../entities.ts";
 import * as Change from "../../change/index.ts";
 import type { ChangeProposal } from "../../../changes/model.ts";
@@ -178,9 +178,19 @@ export const update = (model: Model, message: Message): UpdateReturn => {
       model: modifyFields(model, { typeEditor: () => TypeEditor.Closed() }),
     }),
     UpdatedTypeName: ({ value }) =>
-      withTypeDraft(model, (draft) => modifyFields(draft, { name: () => value })),
+      TypeEditor.guards.Creating(model.typeEditor)
+        ? withTypeDraft(model, (draft) => modifyFields(draft, { name: () => snakeCaseId(value) }))
+        : { model },
     UpdatedTypeLabel: ({ value }) =>
-      withTypeDraft(model, (draft) => modifyFields(draft, { label: () => value })),
+      withTypeDraft(model, (draft) =>
+        modifyFields(draft, {
+          label: () => value,
+          name: (name) =>
+            TypeEditor.guards.Creating(model.typeEditor)
+              ? snakeCaseId(value).replace(/_$/, "")
+              : name,
+        }),
+      ),
     SelectedTitleField: ({ value }) =>
       withTypeDraft(model, (draft) => modifyFields(draft, { titleKey: () => Number(value) })),
     ClickedAddField: () =>

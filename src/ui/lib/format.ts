@@ -12,6 +12,17 @@ export const labelFromName = (name: string) => {
   return words.charAt(0).toUpperCase() + words.slice(1);
 };
 
+export const snakeCaseId = (value: string) =>
+  value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+    .replace(/([A-Z])([A-Z][a-z])/g, "$1_$2")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^[^a-z]+/, "")
+    .slice(0, 40);
+
 export const formatTime = (millis: number) =>
   new Date(millis).toLocaleString("en-US", {
     month: "short",

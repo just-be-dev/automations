@@ -3,15 +3,16 @@ import type { Html, HtmlBuilder } from "foldkit/html";
 import type { Condition, Trigger } from "../../workflow.ts";
 import * as Schema from "effect/Schema";
 import * as Submodel from "foldkit/submodel";
-import { ChevronDown, Plus, X } from "lucide";
+import { Plus } from "lucide";
 import { EventInput } from "../domain/index.ts";
 import { Message } from "../domain/event-input.ts";
-import { input, inputClass } from "./ui/input.ts";
+import { input } from "./ui/input.ts";
+import { inputGroup, inputGroupControlClass } from "./ui/input-group.ts";
+import { select } from "./ui/select.ts";
 import { button } from "./ui/button.ts";
 import { labelFromName } from "../lib/format.ts";
 import { componentName } from "../lib/component.ts";
 import { icon } from "../lib/icons.ts";
-import { cn } from "../lib/utils.ts";
 
 const comparisonWords = {
   equals: "equals",
@@ -203,15 +204,14 @@ const eventNodeFieldView = (
   isDisabled: boolean,
   h: HtmlBuilder<Message>,
 ): Html =>
-  h.div(
-    [
-      componentName("event-node-field"),
-      h.Role("group"),
-      h.AriaLabel(`${label} field`),
-      h.Class(
-        "flex h-8 min-w-0 items-stretch overflow-hidden rounded-lg border border-border bg-sidebar transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/25",
-      ),
-    ],
+  inputGroup(
+    {
+      label: `${label} field`,
+      onRemove: node.id === 0 ? undefined : Message.ClickedRemove({ id: node.id }),
+      removeLabel: `Remove ${label}`,
+      isDisabled,
+      attributes: [componentName("event-node-field")],
+    },
     [
       isField
         ? input(
@@ -222,8 +222,7 @@ const eventNodeFieldView = (
               onInput: (name) => Message.UpdatedName({ id: node.id, name }),
               isDisabled,
               wrapperClass: "h-full min-w-0 flex-1 gap-0",
-              className:
-                "h-full rounded-none border-0 bg-transparent text-xs focus-visible:ring-0 md:text-xs",
+              className: inputGroupControlClass,
               labelClass: "sr-only",
               placeholder: "Field name",
             },
@@ -231,53 +230,28 @@ const eventNodeFieldView = (
           )
         : h.span([h.Class("flex min-w-0 flex-1 items-center px-2.5 text-xs font-medium")], [label]),
       h.label([h.For(`event-kind-${node.id}`), h.Class("sr-only")], [`${label} type`]),
-      h.div(
-        [h.Class("relative h-full w-24 shrink-0 border-l border-border")],
-        [
-          h.select(
-            [
-              h.Id(`event-kind-${node.id}`),
-              h.Value(node.kind),
-              h.Disabled(isDisabled),
-              h.OnChange((kind) =>
-                Message.SelectedKind({
-                  id: node.id,
-                  kind: Schema.decodeUnknownSync(EventInput.Kind)(kind),
-                }),
-              ),
-              h.Class(
-                cn(
-                  inputClass,
-                  "h-full appearance-none rounded-none border-0 bg-transparent pr-7 text-xs focus-visible:ring-0 md:text-xs",
-                ),
-              ),
-            ],
-            EventInput.Kind.literals.map((kind) =>
-              h.option([h.Value(kind), h.Selected(node.kind === kind)], [kindLabels[kind]]),
+      select(
+        {
+          isGrouped: true,
+          attributes: [
+            h.Id(`event-kind-${node.id}`),
+            h.Value(node.kind),
+            h.Disabled(isDisabled),
+            h.OnChange((kind) =>
+              Message.SelectedKind({
+                id: node.id,
+                kind: Schema.decodeUnknownSync(EventInput.Kind)(kind),
+              }),
             ),
-          ),
-          h.span(
-            [h.Class("pointer-events-none absolute inset-y-0 right-2 flex items-center")],
-            [icon(h, ChevronDown, "size-3")],
-          ),
-        ],
+          ],
+        },
+        EventInput.Kind.literals.map((kind) =>
+          h.option([h.Value(kind), h.Selected(node.kind === kind)], [kindLabels[kind]]),
+        ),
+        h,
       ),
-      node.id === 0
-        ? h.empty
-        : button(
-            {
-              onClick: Message.ClickedRemove({ id: node.id }),
-              variant: "ghost",
-              size: "icon-sm",
-              isDisabled,
-              className:
-                "h-full w-8 rounded-none border-0 border-l border-border text-muted-foreground hover:text-destructive focus-visible:ring-0 active:translate-y-0",
-              attributes: [h.AriaLabel(`Remove ${label}`), h.Title(`Remove ${label}`)],
-            },
-            icon(h, X, "size-3.5"),
-            h,
-          ),
     ],
+    h,
   );
 
 const eventNodeValueView = (
@@ -294,17 +268,19 @@ const eventNodeValueView = (
       )
     : node.kind === "boolean"
       ? h.div(
-          [componentName("event-node-value"), h.Class("relative")],
+          [componentName("event-node-value")],
           [
             h.label([h.For(id), h.Class("sr-only")], [label]),
-            h.select(
-              [
-                h.Id(id),
-                h.Value(node.value),
-                h.Disabled(isDisabled),
-                h.OnChange((value) => Message.UpdatedValue({ id: node.id, value })),
-                h.Class(cn(inputClass, "appearance-none pr-7 text-xs md:text-xs")),
-              ],
+            select(
+              {
+                className: "text-xs md:text-xs",
+                attributes: [
+                  h.Id(id),
+                  h.Value(node.value),
+                  h.Disabled(isDisabled),
+                  h.OnChange((value) => Message.UpdatedValue({ id: node.id, value })),
+                ],
+              },
               [
                 ["", "Choose…"],
                 ["true", "Yes"],
@@ -312,10 +288,7 @@ const eventNodeValueView = (
               ].map(([value, text]) =>
                 h.option([h.Value(value ?? ""), h.Selected(node.value === value)], [text ?? ""]),
               ),
-            ),
-            h.span(
-              [h.Class("pointer-events-none absolute inset-y-0 right-2.5 flex items-center")],
-              [icon(h, ChevronDown, "size-3")],
+              h,
             ),
           ],
         )

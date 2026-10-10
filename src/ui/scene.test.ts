@@ -1438,8 +1438,11 @@ test("the sidebar's entity store link opens the entity store page", () => {
     ),
     expect(role("link", { name: "Entity store" })).toHaveAttr("aria-current", "page"),
     expect(role("link", { name: "Entity store" })).toHaveAttr("href", "/entities"),
-    expect(role("heading", { name: "Entity types" })).toExist(),
+    expect(role("banner")).toContainText("Entity store"),
     expect(text("No entity types yet.")).toExist(),
+    click(within(role("banner"), role("button", { name: "New entity type" }))),
+    expect(role("form", { name: "New entity type" })).toExist(),
+    expect(label("Name")).toHaveValue(""),
   );
 });
 
@@ -1456,8 +1459,11 @@ test("the sidebar's templates link opens the templates page", () => {
     ),
     expect(role("link", { name: "Templates" })).toHaveAttr("aria-current", "page"),
     expect(role("link", { name: "Templates" })).toHaveAttr("href", "/templates"),
-    expect(role("heading", { name: "Templates" })).toExist(),
+    expect(role("banner")).toContainText("Templates"),
     expect(text("No templates yet.")).toExist(),
+    click(within(role("banner"), role("button", { name: "New template" }))),
+    expect(role("form", { name: "New template" })).toExist(),
+    expect(label("Name")).toHaveValue(""),
   );
 });
 

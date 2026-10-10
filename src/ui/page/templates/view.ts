@@ -3,16 +3,18 @@ import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import { Submodel } from "foldkit";
 import type { HtmlBuilder } from "foldkit/html";
-import { CircleAlert, FileText, LoaderCircle, Pencil, Plus, Trash2, X } from "lucide";
+import { CircleAlert, FileText, LoaderCircle, Pencil, Plus, Trash2 } from "lucide";
+import { fieldInputHeadingView, fieldInputView } from "@/components/field-input";
 import { button } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
-import { input, inputClass } from "@/components/ui/input";
-import { textarea } from "@/components/ui/textarea";
+import { input } from "@/components/ui/input";
+import { inputGroup, inputGroupControlClass } from "@/components/ui/input-group";
+import { textarea, textareaClass } from "@/components/ui/textarea";
 import { componentName } from "@/lib/component";
-import { labelFromName, plural } from "@/lib/format";
+import { plural } from "@/lib/format";
 import { icon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
-import { type EntityField, FieldType, type Template } from "../../../entities.ts";
+import { type EntityField, type Template } from "../../../entities.ts";
 import { templateParts, type TemplateUser, type TemplateUsage } from "../../../workflow.ts";
 import { automationHref, templatesHref } from "../../route.ts";
 import { textInputs } from "./draft.ts";
@@ -32,11 +34,9 @@ import {
   Usage,
 } from "./model.ts";
 
-const eyebrowClass = "text-xs font-medium text-sand-10";
 const noteClass = "text-sm text-muted-foreground";
 const chipClass = "rounded-[4px] bg-chip px-1.5 py-0.5 font-mono text-[0.92em] text-sand-11";
 const cardClass = "rounded-[10px] bg-card shadow-card";
-const selectClass = cn(inputClass, "bg-background md:text-[13px]");
 const tableClass = "w-full border-collapse text-left text-[13px]";
 const headCellClass = "border-b px-3 py-2 text-xs font-medium text-sand-10";
 const cellClass = "border-b px-3 py-2 align-top";
@@ -44,6 +44,26 @@ const textInputsListId = "template-text-inputs";
 
 const slotTypeLabel = (slot: EntityField) =>
   slot.type === "ref" ? `ref → ${slot.to ?? "?"}` : slot.type;
+
+export const headerView = Submodel.defineView<Model, Message>((_model, h) =>
+  h.div(
+    [componentName("templates-header"), h.Class("flex min-w-0 items-center gap-2")],
+    [
+      h.div([h.Class("truncate text-sm font-medium tracking-tight")], ["Templates"]),
+      button(
+        {
+          onClick: Message.ClickedNewTemplate(),
+          variant: "ghost",
+          size: "icon-xs",
+          className: "text-sand-10",
+          attributes: [h.AriaLabel("New template"), h.Title("New template")],
+        },
+        [icon(h, Plus, "size-3.5")],
+        h,
+      ),
+    ],
+  ),
+);
 
 export const view = Submodel.defineView<Model, Message>((model, h) =>
   h.div(
@@ -77,23 +97,6 @@ const templateListView = (model: Model, h: HtmlBuilder<Message>) =>
       ),
     ],
     [
-      h.div(
-        [h.Class("mb-2 flex items-center justify-between gap-2 pl-1.5")],
-        [
-          h.h2([h.Class("text-[11px] font-semibold tracking-tight text-sand-10")], ["Templates"]),
-          button(
-            {
-              onClick: Message.ClickedNewTemplate(),
-              variant: "ghost",
-              size: "icon-xs",
-              className: "text-sand-10",
-              attributes: [h.AriaLabel("New template"), h.Title("New template")],
-            },
-            [icon(h, Plus, "size-3.5")],
-            h,
-          ),
-        ],
-      ),
       Catalog.match(model.catalog, {
         Loading: () => h.p([h.Class(cn(noteClass, "px-1.5 text-xs"))], ["Loading…"]),
         Unavailable: ({ error }) =>
@@ -218,7 +221,6 @@ const templateDetailView = (template: Template, model: Model, h: HtmlBuilder<Mes
           h.div(
             [h.Class("flex min-w-0 flex-col gap-1")],
             [
-              h.div([h.Class(eyebrowClass)], ["Template"]),
               h.h2(
                 [h.Class("flex items-center gap-2 text-xl font-semibold")],
                 [
@@ -451,16 +453,7 @@ const templateFormView = (
       h.Class("flex max-w-3xl flex-col gap-6"),
     ],
     [
-      h.div(
-        [],
-        [
-          h.div([h.Class(eyebrowClass)], [isNew ? "New template" : "Edit template"]),
-          h.h2(
-            [h.Class("text-xl font-semibold")],
-            [draft.label.trim() || labelFromName(draft.name) || "Untitled template"],
-          ),
-        ],
-      ),
+      h.h2([h.Class("text-xl font-semibold")], [isNew ? "Create template" : "Edit template"]),
       h.div(
         [h.Class("grid gap-4 sm:grid-cols-2")],
         [
@@ -468,23 +461,22 @@ const templateFormView = (
             {
               id: "template-name",
               label: "Name",
-              value: draft.name,
-              isReadOnly: !isNew,
-              placeholder: "welcome_email",
-              onInput: (value) => Message.UpdatedTemplateName({ value }),
-              className: "bg-background font-mono",
-              description: isNew ? "snake_case; automations use it by name" : "Names can't change",
+              value: draft.label,
+              placeholder: "Welcome email",
+              onInput: (value) => Message.UpdatedTemplateLabel({ value }),
             },
             h,
           ),
           input(
             {
-              id: "template-label",
-              label: "Label",
-              value: draft.label,
-              placeholder: labelFromName(draft.name) || "Welcome email",
-              onInput: (value) => Message.UpdatedTemplateLabel({ value }),
-              className: "bg-background",
+              id: "template-id",
+              label: "ID",
+              value: draft.name,
+              isReadOnly: !isNew,
+              placeholder: "welcome_email",
+              onInput: (value) => Message.UpdatedTemplateName({ value }),
+              className: "font-mono",
+              ...(isNew ? {} : { description: "IDs can't change" }),
             },
             h,
           ),
@@ -500,7 +492,6 @@ const templateFormView = (
           description:
             "Who and what it's for. The planner reads it to decide when the template fits.",
           onInput: (value) => Message.UpdatedTemplateDescription({ value }),
-          className: "bg-background",
         },
         h,
       ),
@@ -512,15 +503,16 @@ const templateFormView = (
   );
 };
 
-const slotGridClass = "grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_8rem_8rem_auto] gap-2";
-
 const slotsFieldsetView = (
   draft: TemplateDraft,
   targets: ReadonlyArray<string>,
   h: HtmlBuilder<Message>,
 ) =>
   h.fieldset(
-    [componentName("slots-fieldset"), h.Class(cn("flex flex-col gap-2 px-4 py-4", cardClass))],
+    [
+      componentName("slots-fieldset"),
+      h.Class(cn("@container/fields flex flex-col gap-2 px-4 py-4", cardClass)),
+    ],
     [
       h.legend([h.Class("float-left mb-1 text-sm font-semibold")], ["Slots"]),
       h.p(
@@ -535,16 +527,7 @@ const slotsFieldsetView = (
           h.div(
             [h.Class("flex flex-col gap-2")],
             [
-              h.div(
-                [h.Class(cn(slotGridClass, "text-xs font-medium text-sand-10"))],
-                [
-                  h.span([], ["Slot"]),
-                  h.span([], ["Label"]),
-                  h.span([], ["Type"]),
-                  h.span([], ["Points to"]),
-                  h.span([h.Class("w-6")]),
-                ],
-              ),
+              fieldInputHeadingView("Slot", h),
               ...Array.map(slots, (slot) => slotRowView(slot, targets, h)),
             ],
           ),
@@ -562,67 +545,26 @@ const slotsFieldsetView = (
     ],
   );
 
-const slotRowView = (slot: SlotDraft, targets: ReadonlyArray<string>, h: HtmlBuilder<Message>) => {
-  const name = slot.name.trim() || "new slot";
-  return h.keyed("div")(
+const slotRowView = (slot: SlotDraft, targets: ReadonlyArray<string>, h: HtmlBuilder<Message>) =>
+  h.keyed("div")(
     String(slot.key),
-    [componentName("slot-row"), h.Class(cn(slotGridClass, "items-center"))],
+    [componentName("slot-row")],
     [
-      h.input([
-        h.AriaLabel(`Slot name (${name})`),
-        h.Value(slot.name),
-        h.Placeholder("hire"),
-        h.Spellcheck(false),
-        h.OnInput((value) => Message.UpdatedSlotName({ key: slot.key, value })),
-        h.Class(cn(selectClass, "font-mono")),
-      ]),
-      h.input([
-        h.AriaLabel(`Slot label (${name})`),
-        h.Value(slot.label),
-        h.Placeholder(labelFromName(slot.name) || "New hire"),
-        h.OnInput((value) => Message.UpdatedSlotLabel({ key: slot.key, value })),
-        h.Class(selectClass),
-      ]),
-      h.select(
-        [
-          h.AriaLabel(`Slot type (${name})`),
-          h.Value(slot.type),
-          h.OnChange((value) => Message.SelectedSlotType({ key: slot.key, value })),
-          h.Class(selectClass),
-        ],
-        Array.map(FieldType.literals, (type) =>
-          h.option([h.Value(type), h.Selected(type === slot.type)], [type]),
-        ),
-      ),
-      slot.type === "ref"
-        ? h.select(
-            [
-              h.AriaLabel(`Points to (${name})`),
-              h.Value(slot.to),
-              h.OnChange((value) => Message.SelectedSlotTarget({ key: slot.key, value })),
-              h.Class(selectClass),
-            ],
-            [
-              h.option([h.Value(""), h.Selected(slot.to === "")], ["Choose…"]),
-              ...Array.map(targets, (target) =>
-                h.option([h.Value(target), h.Selected(target === slot.to)], [target]),
-              ),
-            ],
-          )
-        : h.span([h.Class("text-xs text-sand-9")], ["—"]),
-      button(
+      fieldInputView(
+        slot,
+        targets,
         {
-          onClick: Message.ClickedRemoveSlot({ key: slot.key }),
-          variant: "ghost",
-          size: "icon-xs",
-          attributes: [h.AriaLabel(`Remove slot ${name}`), h.Title("Remove slot")],
+          kind: "Slot",
+          onName: (value) => Message.UpdatedSlotName({ key: slot.key, value }),
+          onLabel: (value) => Message.UpdatedSlotLabel({ key: slot.key, value }),
+          onType: (value) => Message.SelectedSlotType({ key: slot.key, value }),
+          onTarget: (value) => Message.SelectedSlotTarget({ key: slot.key, value }),
+          onRemove: Message.ClickedRemoveSlot({ key: slot.key }),
         },
-        [icon(h, X, "size-3")],
         h,
       ),
     ],
   );
-};
 
 const contentFieldsetView = (draft: TemplateDraft, h: HtmlBuilder<Message>) =>
   h.fieldset(
@@ -665,8 +607,13 @@ const contentRowView = (content: ContentDraft, h: HtmlBuilder<Message>) => {
     String(content.key),
     [componentName("content-row"), h.Class("flex flex-col gap-1.5")],
     [
-      h.div(
-        [h.Class("flex items-center gap-2")],
+      inputGroup(
+        {
+          label: `${name} input`,
+          removeLabel: `Remove input ${name}`,
+          onRemove: Message.ClickedRemoveContent({ key: content.key }),
+          className: "w-56 max-w-full",
+        },
         [
           h.input([
             h.AriaLabel(`Input name (${name})`),
@@ -675,26 +622,17 @@ const contentRowView = (content: ContentDraft, h: HtmlBuilder<Message>) => {
             h.List(textInputsListId),
             h.Spellcheck(false),
             h.OnInput((value) => Message.UpdatedContentInput({ key: content.key, value })),
-            h.Class(cn(selectClass, "w-48 font-mono")),
+            h.Class(cn(inputGroupControlClass, "flex-1 font-mono")),
           ]),
-          button(
-            {
-              onClick: Message.ClickedRemoveContent({ key: content.key }),
-              variant: "ghost",
-              size: "icon-xs",
-              attributes: [h.AriaLabel(`Remove input ${name}`), h.Title("Remove input")],
-            },
-            [icon(h, X, "size-3")],
-            h,
-          ),
         ],
+        h,
       ),
       h.textarea([
         h.AriaLabel(`Text (${name})`),
         h.Value(content.text),
         h.Rows(4),
         h.OnInput((value) => Message.UpdatedContentText({ key: content.key, value })),
-        h.Class(cn(selectClass, "h-auto min-h-24 py-2")),
+        h.Class(cn(textareaClass, "min-h-24 md:text-[13px]")),
       ]),
     ],
   );

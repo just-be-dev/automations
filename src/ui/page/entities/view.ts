@@ -4,20 +4,22 @@ import * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
 import { Submodel } from "foldkit";
 import type { Html, HtmlBuilder } from "foldkit/html";
-import { CircleAlert, Database, LoaderCircle, Pencil, Plus, Trash2, X } from "lucide";
+import { CircleAlert, Database, LoaderCircle, Pencil, Plus, Trash2 } from "lucide";
+import { fieldInputHeadingView, fieldInputView } from "@/components/field-input";
 import { button } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
-import { input, inputClass, inputLabelClass, inputWrapperClass } from "@/components/ui/input";
+import { input, inputLabelClass, inputWrapperClass } from "@/components/ui/input";
+import { select } from "@/components/ui/select";
 import { componentName } from "@/lib/component";
 import { localDateTimeText } from "@/lib/datetime";
-import { labelFromName, plural, withArticle } from "@/lib/format";
+import { plural, withArticle } from "@/lib/format";
 import { icon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import {
   type EntityField,
   type EntityRecord,
   type EntityType,
-  FieldType,
+  type FieldType,
 } from "../../../entities.ts";
 import { entitiesHref } from "../../route.ts";
 import { Message, toChangeMessage } from "./message.ts";
@@ -37,14 +39,32 @@ import {
   Types,
 } from "./model.ts";
 
-const eyebrowClass = "text-xs font-medium text-sand-10";
 const noteClass = "text-sm text-muted-foreground";
 const chipClass = "rounded-[4px] bg-chip px-1.5 py-0.5 font-mono text-[0.92em] text-sand-11";
 const cardClass = "rounded-[10px] bg-card shadow-card";
-const selectClass = cn(inputClass, "bg-background md:text-[13px]");
 
 const fieldTypeLabel = (field: EntityField) =>
   field.type === "ref" ? `ref → ${field.to ?? "?"}` : field.type;
+
+export const headerView = Submodel.defineView<Model, Message>((_model, h) =>
+  h.div(
+    [componentName("entities-header"), h.Class("flex min-w-0 items-center gap-2")],
+    [
+      h.div([h.Class("truncate text-sm font-medium tracking-tight")], ["Entity store"]),
+      button(
+        {
+          onClick: Message.ClickedNewType(),
+          variant: "ghost",
+          size: "icon-xs",
+          className: "text-sand-10",
+          attributes: [h.AriaLabel("New entity type"), h.Title("New entity type")],
+        },
+        [icon(h, Plus, "size-3.5")],
+        h,
+      ),
+    ],
+  ),
+);
 
 export const view = Submodel.defineView<Model, Message>((model, h) =>
   h.div(
@@ -78,26 +98,6 @@ const typeListView = (model: Model, h: HtmlBuilder<Message>) =>
       ),
     ],
     [
-      h.div(
-        [h.Class("mb-2 flex items-center justify-between gap-2 pl-1.5")],
-        [
-          h.h2(
-            [h.Class("text-[11px] font-semibold tracking-tight text-sand-10")],
-            ["Entity types"],
-          ),
-          button(
-            {
-              onClick: Message.ClickedNewType(),
-              variant: "ghost",
-              size: "icon-xs",
-              className: "text-sand-10",
-              attributes: [h.AriaLabel("New entity type"), h.Title("New entity type")],
-            },
-            [icon(h, Plus, "size-3.5")],
-            h,
-          ),
-        ],
-      ),
       Types.match(model.types, {
         Loading: () => h.p([h.Class(cn(noteClass, "px-1.5 text-xs"))], ["Loading…"]),
         Unavailable: ({ error }) =>
@@ -217,7 +217,6 @@ const typeDetailView = (type: EntityType, model: Model, h: HtmlBuilder<Message>)
           h.div(
             [h.Class("min-w-0")],
             [
-              h.div([h.Class(eyebrowClass)], ["Entity type"]),
               h.h2(
                 [h.Class("flex items-center gap-2 text-xl font-semibold")],
                 [type.label, h.span([h.Class(cn(chipClass, "text-xs font-normal"))], [type.name])],
@@ -466,11 +465,15 @@ const labelledSelectView = (
     [componentName("labelled-select"), h.Class(inputWrapperClass)],
     [
       h.label([h.For(config.id), h.Class(inputLabelClass)], [config.label]),
-      h.select(
-        [h.Id(config.id), h.Value(config.value), h.OnChange(config.onChange), h.Class(selectClass)],
+      select(
+        {
+          className: "md:text-[13px]",
+          attributes: [h.Id(config.id), h.Value(config.value), h.OnChange(config.onChange)],
+        },
         Array.map(config.options, ([value, label]) =>
           h.option([h.Value(value), h.Selected(value === config.value)], [label]),
         ),
+        h,
       ),
     ],
   );
@@ -500,7 +503,6 @@ const entityFieldView = (field: EntityField, text: string, h: HtmlBuilder<Messag
           type: fieldInputType[field.type],
           value: field.type === "datetime" ? localDateTimeText(text) : text,
           onInput,
-          className: "bg-background",
           wrapperAttributes: [componentName("entity-field")],
           ...(field.type === "ref"
             ? { description: `The ID of ${withArticle(field.to ?? "entity")}` }
@@ -536,7 +538,7 @@ const entityFormView = (
               isReadOnly: !isNew,
               placeholder: "ada",
               onInput: (value) => Message.UpdatedEntityId({ value }),
-              className: "bg-background font-mono",
+              className: "font-mono",
               ...(isNew ? {} : { description: "IDs can't change. Delete and recreate instead." }),
             },
             h,
@@ -567,76 +569,53 @@ const typeFormView = (draft: TypeDraft, isNew: boolean, model: Model, h: HtmlBui
       h.Class("flex max-w-3xl flex-col gap-6"),
     ],
     [
+      h.h2([h.Class("text-xl font-semibold")], [isNew ? "Create entity type" : "Edit entity type"]),
       h.div(
-        [],
-        [
-          h.div([h.Class(eyebrowClass)], [isNew ? "New entity type" : "Edit entity type"]),
-          h.h2(
-            [h.Class("text-xl font-semibold")],
-            [draft.label.trim() || draft.name.trim() || "Untitled type"],
-          ),
-        ],
-      ),
-      h.div(
-        [h.Class("grid gap-4 sm:grid-cols-3")],
+        [h.Class("grid gap-4 sm:grid-cols-2")],
         [
           input(
             {
               id: "type-name",
               label: "Name",
-              value: draft.name,
-              isReadOnly: !isNew,
-              placeholder: "employee",
-              onInput: (value) => Message.UpdatedTypeName({ value }),
-              className: "bg-background font-mono",
-              description: isNew ? "snake_case; refs and triggers use it" : "Names can't change",
+              value: draft.label,
+              placeholder: "Employee",
+              onInput: (value) => Message.UpdatedTypeLabel({ value }),
             },
             h,
           ),
           input(
             {
-              id: "type-label",
-              label: "Label",
-              value: draft.label,
-              placeholder: labelFromName(draft.name) || "Employee",
-              onInput: (value) => Message.UpdatedTypeLabel({ value }),
-              className: "bg-background",
-            },
-            h,
-          ),
-          labelledSelectView(
-            {
-              id: "type-title",
-              label: "Title field",
-              value: String(draft.titleKey),
-              options: Array.map(draft.fields, (field) => [
-                String(field.key),
-                field.name.trim() || "(unnamed field)",
-              ]),
-              onChange: (value) => Message.SelectedTitleField({ value }),
+              id: "type-id",
+              label: "ID",
+              value: draft.name,
+              isReadOnly: !isNew,
+              placeholder: "employee",
+              onInput: (value) => Message.UpdatedTypeName({ value }),
+              className: "font-mono",
+              ...(isNew ? {} : { description: "IDs can't change" }),
             },
             h,
           ),
         ],
       ),
+      labelledSelectView(
+        {
+          id: "type-title",
+          label: "Title field",
+          value: String(draft.titleKey),
+          options: Array.map(draft.fields, (field) => [
+            String(field.key),
+            field.name.trim() || "(unnamed field)",
+          ]),
+          onChange: (value) => Message.SelectedTitleField({ value }),
+        },
+        h,
+      ),
       h.fieldset(
-        [h.Class(cn("flex flex-col gap-2 px-4 py-4", cardClass))],
+        [h.Class(cn("@container/fields flex flex-col gap-2 px-4 py-4", cardClass))],
         [
           h.legend([h.Class("sr-only")], ["Fields"]),
-          h.div(
-            [
-              h.Class(
-                "grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_8rem_8rem_auto] gap-2 text-xs font-medium text-sand-10",
-              ),
-            ],
-            [
-              h.span([], ["Field"]),
-              h.span([], ["Label"]),
-              h.span([], ["Type"]),
-              h.span([], ["Points to"]),
-              h.span([h.Class("w-6")]),
-            ],
-          ),
+          fieldInputHeadingView("Field", h),
           ...Array.map(draft.fields, (field) => fieldRowView(field, targets, h)),
           h.div(
             [],
@@ -655,74 +634,26 @@ const typeFormView = (draft: TypeDraft, isNew: boolean, model: Model, h: HtmlBui
   );
 };
 
-const fieldRowView = (
-  field: FieldDraft,
-  targets: ReadonlyArray<string>,
-  h: HtmlBuilder<Message>,
-) => {
-  const name = field.name.trim() || "new field";
-  return h.keyed("div")(
+const fieldRowView = (field: FieldDraft, targets: ReadonlyArray<string>, h: HtmlBuilder<Message>) =>
+  h.keyed("div")(
     String(field.key),
+    [componentName("field-row")],
     [
-      componentName("field-row"),
-      h.Class("grid grid-cols-[minmax(0,1fr)_minmax(0,1fr)_8rem_8rem_auto] items-center gap-2"),
-    ],
-    [
-      h.input([
-        h.AriaLabel(`Field name (${name})`),
-        h.Value(field.name),
-        h.Placeholder("start_date"),
-        h.Spellcheck(false),
-        h.OnInput((value) => Message.UpdatedFieldName({ key: field.key, value })),
-        h.Class(cn(selectClass, "font-mono")),
-      ]),
-      h.input([
-        h.AriaLabel(`Field label (${name})`),
-        h.Value(field.label),
-        h.Placeholder(labelFromName(field.name) || "Start date"),
-        h.OnInput((value) => Message.UpdatedFieldLabel({ key: field.key, value })),
-        h.Class(selectClass),
-      ]),
-      h.select(
-        [
-          h.AriaLabel(`Field type (${name})`),
-          h.Value(field.type),
-          h.OnChange((value) => Message.SelectedFieldType({ key: field.key, value })),
-          h.Class(selectClass),
-        ],
-        Array.map(FieldType.literals, (type) =>
-          h.option([h.Value(type), h.Selected(type === field.type)], [type]),
-        ),
-      ),
-      field.type === "ref"
-        ? h.select(
-            [
-              h.AriaLabel(`Points to (${name})`),
-              h.Value(field.to),
-              h.OnChange((value) => Message.SelectedFieldTarget({ key: field.key, value })),
-              h.Class(selectClass),
-            ],
-            [
-              h.option([h.Value(""), h.Selected(field.to === "")], ["Choose…"]),
-              ...Array.map(targets, (target) =>
-                h.option([h.Value(target), h.Selected(target === field.to)], [target]),
-              ),
-            ],
-          )
-        : h.span([h.Class("text-xs text-sand-9")], ["—"]),
-      button(
+      fieldInputView(
+        field,
+        targets,
         {
-          onClick: Message.ClickedRemoveField({ key: field.key }),
-          variant: "ghost",
-          size: "icon-xs",
-          attributes: [h.AriaLabel(`Remove field ${name}`), h.Title("Remove field")],
+          kind: "Field",
+          onName: (value) => Message.UpdatedFieldName({ key: field.key, value }),
+          onLabel: (value) => Message.UpdatedFieldLabel({ key: field.key, value }),
+          onType: (value) => Message.SelectedFieldType({ key: field.key, value }),
+          onTarget: (value) => Message.SelectedFieldTarget({ key: field.key, value }),
+          onRemove: Message.ClickedRemoveField({ key: field.key }),
         },
-        [icon(h, X, "size-3")],
         h,
       ),
     ],
   );
-};
 
 const statusView = (model: Model, h: HtmlBuilder<Message>) =>
   h.div(

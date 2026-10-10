@@ -6,7 +6,7 @@ import { Braces, CircleAlert, LoaderCircle, Play, Workflow as WorkflowIcon } fro
 import { badge } from "@/components/ui/badge";
 import { button } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
-import { inputClass } from "@/components/ui/input";
+import { select } from "@/components/ui/select";
 import { eventInputView } from "../components/event-input.ts";
 import { componentName } from "@/lib/component";
 import {
@@ -173,13 +173,16 @@ const subjectPickerView = (model: Model, h: HtmlBuilder<Message>) =>
         [componentName("subject-picker"), h.Class("flex items-center")],
         [
           h.label([h.For("subject"), h.Class("sr-only")], [label]),
-          h.select(
-            [
-              h.Id("subject"),
-              h.Value(Option.getOrElse(model.maybeSubjectId, () => "")),
-              h.OnChange((subjectId) => Message.SelectedSubject({ subjectId })),
-              h.Class(cn(inputClass, "h-8 w-48 bg-background md:text-[13px]")),
-            ],
+          select(
+            {
+              wrapperClass: "w-48",
+              className: "md:text-[13px]",
+              attributes: [
+                h.Id("subject"),
+                h.Value(Option.getOrElse(model.maybeSubjectId, () => "")),
+                h.OnChange((subjectId) => Message.SelectedSubject({ subjectId })),
+              ],
+            },
             [
               h.option(
                 [h.Value(""), h.Selected(Option.isNone(model.maybeSubjectId))],
@@ -193,6 +196,7 @@ const subjectPickerView = (model: Model, h: HtmlBuilder<Message>) =>
                 ),
               ),
             ],
+            h,
           ),
         ],
       ),

@@ -167,7 +167,7 @@ const ownAnswerView = (context: QuestionnaireContext, index: number, h: HtmlBuil
             Message.ClickedNextQuestion({ chatId: context.chatId, question: index }),
             h,
           ),
-          className: "min-h-16 bg-background",
+          className: "min-h-16",
         },
         h,
       )
