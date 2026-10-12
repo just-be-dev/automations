@@ -353,7 +353,7 @@ Runs the steps of the first of its 1–8 cases whose condition holds. If none ho
 
 A model reads the run so far, picks one of 2–8 options, and the run continues with that option's steps. The question can be up to 2000 characters. Option IDs follow the step ID pattern and are unique within the step, and each description is up to 500 characters.
 
-`model` is `clef-flash` (simple routing), `clef` (nuanced calls), or `jev`. The schema accepts `jev`, but the planner is never told about it. For now, every decision is made by the automation's pi agent, whatever `model` says.
+`model` is the classifier that decides: `clef-flash` for simple routing, or `clef` for nuanced calls. It reads the question, each option's description, and the run so far (the subject, the triggering event, and earlier steps' records). It keeps no conversation, so a decision isn't part of the run's agent trace.
 
 It records `{ "choice": optionId, "confidence": number, "probabilities": { optionId: number } }`. The step fails if the model names an option that doesn't exist.
 
@@ -470,7 +470,7 @@ The built-in command `entity.put` merges a validated update through the same ten
 
 Permission to emit this command **authorizes the entity write**, with no second confirmation. Use an ask-first role unless automatic writes were explicitly authorized. Unknown types, invalid fields and role-member constraints still fail validation. Duplicate delivery returns the existing receipt instead of overwriting a newer edit. Lifecycle names cannot be emitted by actions or HTTP callers.
 
-Event chains carry a depth from 0 to 16. Publication increments it; an entity command's resulting fact and entity-triggered runs also increment it. At depth 16, runs may finish but cannot emit again, and entity commands are refused. Delivery failures retry and eventually enter a dead-letter queue; the depth bound stops cycles, not all possible fan-out.
+Event chains carry a depth from 0 to 16. Publication increments it; an entity command's resulting fact and entity-triggered runs also increment it. At depth 16, runs may finish but cannot emit again, and entity commands are refused: an `events.emit` step that would publish past the limit, or an `entity.put` at depth 16, fails with "Event chain limit reached". Delivery failures retry and eventually enter a dead-letter queue, but a command that can never apply is dropped with a warning instead. The depth bound stops cycles, not all possible fan-out.
 
 ### Permissions
 

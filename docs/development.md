@@ -24,13 +24,13 @@ The workflow format is described in [Workflow DSL](workflow-dsl.md). Agent instr
 
 ### Evals
 
-The tests script every model. The evals in `evals/` call the real ones, on Workers AI, to measure how well each LLM call does its job: the planner, the namer, the progress classifier, and agent and decide steps. The calls run in an Evals Worker that `mise run eval` starts locally with `alchemy dev` on its own stage (`eval_$USER`), so Workers AI is reached through Alchemy's binding with the same Cloudflare profile as `mise run dev`, and no API token:
+The tests script every model. The evals in `evals/` call the real ones, on Workers AI, to measure how well each LLM call does its job: the planner, the assistant, the namer, the progress classifier, agent steps, and decide steps. The calls run in an Evals Worker that `mise run eval` starts locally with `alchemy dev` on its own stage (`eval_$USER`), so Workers AI is reached through Alchemy's binding with the same Cloudflare profile as `mise run dev`, and no API token:
 
 ```sh
 mise run eval                                                            # every eval
 mise run eval planner --case onboarding --trials 3                       # one eval, matching cases, three tries each
 mise run eval --list                                                     # the evals and their cases, without running them
-EVAL_PLANNER_MODEL=@cf/… mise run eval planner agent decide              # try another model for pi
+EVAL_PLANNER_MODEL=@cf/… mise run eval planner agent assistant           # try another model for pi
 mise run check                                                           # typecheck, lint, tests, format, then the evals
 ```
 
@@ -169,7 +169,7 @@ Manage templates on the studio's **Templates** page (`/templates`), which also l
 | `POST /api/automations/:id/start`                        | Start a run by hand (`{ "subject": "<id>" }`)                                                                         |
 | `GET /api/automations/:id/runs/:runId`                   | Inspect a run, its steps, and its tasks                                                                               |
 | `GET /api/automations/:id/trace`                         | The planner's conversation: instructions, prompts, reasoning, tool calls and results, token use                       |
-| `GET /api/automations/:id/runs/:runId/trace`             | The conversation a run's agent and decide steps share, in the same shape                                              |
+| `GET /api/automations/:id/runs/:runId/trace`             | The conversation a run's agent steps share, in the same shape                                                         |
 | `POST /api/automations/:id/runs/:runId/tasks/:stepId`    | Answer a human step                                                                                                   |
 | `GET /api/entities/types`                                | List entity types                                                                                                     |
 | `GET /api/entities/:type`, `GET /api/entities/:type/:id` | Read entities                                                                                                         |
@@ -189,13 +189,13 @@ Each assistant response is an `AssistantState`; while it is `working`, poll its 
 
 ### Agent traces
 
-`/traces` in the studio (**Debug → Agent traces** in the sidebar) shows what the agents were asked and did. Pick an automation for its planner's conversation, or one of its recent runs for the conversation its agent and decide steps share. Each trace lists system prompt changes, prompts, every model response with its reasoning, tool calls, stop reason, and token use, and every tool result, with failed ones marked. They come from pi's own records in the automation's Durable Object; a trace holds the latest 1,000 entries. The namer and the progress classifier aren't pi conversations, so they have no trace.
+`/traces` in the studio (**Debug → Agent traces** in the sidebar) shows what the agents were asked and did. Pick an automation for its planner's conversation, or one of its recent runs for the conversation its agent steps share. Each trace lists system prompt changes, prompts, every model response with its reasoning, tool calls, stop reason, and token use, and every tool result, with failed ones marked. They come from pi's own records in the automation's Durable Object; a trace holds the latest 1,000 entries. The namer and the classifier behind progress phrases and decide steps aren't pi conversations, so they have no trace; a decide step's record holds its choice and every option's probability.
 
 ### Entity store
 
 `/entities` in the studio (**Entity store** in the sidebar, under Templates) is a debug page for the entity store. Define entity types field by field, then create, edit, and delete their entities. Saving an entity is an ordinary entity write, so it starts the saved automations that watch its type.
 
-`/api/mcp` serves the same store to agents over MCP's Streamable HTTP transport. Its tools are `list_entity_types`, `define_entity_type`, `delete_entity_type`, `list_entities`, `get_entity`, `put_entity`, `delete_entity`, `list_roles`, `define_role`, and `decide_change`. Entity/type mutation tools return a proposal without writing. Present it to the person before calling `decide_change` with its `proposalId` and `approved` decision. Role tools write directly. The built-in assistant uses application tools directly, not MCP. The server is stateless: it assigns no session, answers in JSON, and supports protocol revisions 2024-11-05 through 2025-11-25. With `mise run dev`:
+`/api/mcp` serves the same store to agents over MCP's Streamable HTTP transport. Its tools are `list_entity_types`, `define_entity_type`, `delete_entity_type`, `list_entities`, `get_entity`, `put_entity`, `delete_entity`, `list_roles`, `define_role`, and `decide_change`. Entity/type mutation tools return a proposal without writing. They take an optional `requestId`: retrying a call with the same one returns the same proposal instead of preparing another. Present it to the person before calling `decide_change` with its `proposalId` and `approved` decision. Role tools write directly. The built-in assistant uses application tools directly, not MCP. The server is stateless: it assigns no session, answers in JSON, and supports protocol revisions 2024-11-05 through 2025-11-25. With `mise run dev`:
 
 ```sh
 claude mcp add --transport http entity-store "$STUDIO_URL/api/mcp"
