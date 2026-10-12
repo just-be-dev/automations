@@ -6,7 +6,7 @@ Automations studio turns a conversation into a workflow you can inspect, refine,
 
 ![A conversation in Automations studio describing and refining a new-hire automation, beside its rendered workflow with parallel preparation, approved welcome templates, People Ops approval, and a three-day follow-up.](docs/images/first-week.png)
 
-_Describe the process, refine it in chat, and review the resulting workflow. “Launch a great first week” is a scripted local demo in the real studio UI; Email and Calendar are simulated, and so is Slack unless you [connect it](docs/development.md#slack)._
+_Describe the process, refine it in chat, and review the resulting workflow. “Launch a great first week” is a scripted local demo in the real studio UI; Email and Calendar are simulated, and so is Slack unless you [connect it](docs/slack.md)._
 
 ## From a description to a running process
 
@@ -64,10 +64,9 @@ mise run eval planner --trials 3
 mise run check                      # all checks, including real-model evals
 ```
 
-- [Architecture](ARCHITECTURE.md) — components, storage, and the design-to-run lifecycle.
+- [Architecture](ARCHITECTURE.md) — components, storage, the design-to-run lifecycle, and the principles behind them.
 - [Development and operations](docs/development.md) — setup, deployment with `mise run deploy`, evals, debugging, and the HTTP/MCP interfaces.
 - [Workflow DSL](docs/workflow-dsl.md) — triggers, steps, references, templates, and permissions.
-- [Structuring Effect codebases](docs/effect-code-organization.md) — the implementation’s organization principles.
 
 ## Inspiration
 

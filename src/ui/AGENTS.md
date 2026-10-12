@@ -9,13 +9,24 @@ These instructions apply to `src/ui/` and its descendants. The UI uses Foldkit, 
 - Keep Foldkit architectural lint rules scoped to `src/ui/`.
 - Use installed package types and upstream source at the `foldkit@<installed-version>` GitHub tag, not `main`. Source and examples are authoritative when these conventions or online docs disagree with the installed APIs.
 
+## Behavior to keep
+
+- `route.ts` maps `/` to the overview, `/?automation=<id>` to the studio, and `/?automation=<id>&run=<runId>` to a run's page. Every page change bumps the model's `revision`, so the previous page's polls and late replies are dropped.
+- A run page shows the snapshot the run executed, never the planner chat or the draft. A plain click on a run link on the overview or in the studio opens the run in a side panel instead (`maybeRunPanel`). The panel and the run page share the `OpenRun` state, and changing pages closes the panel.
+- Agent replies render through `components/markdown.ts`, which builds elements from marked's tokens and never sets HTML. Raw HTML shows as text, and links open only web and mail addresses.
+- People using the studio don't read JSON. Step results render through `components/record.ts` as labelled fields with readable dates, and run views never show raw JSON. The draft's JSON toggle is for designing.
+- The assistant lives outside the page lifecycle. Its polls use their own sequencing, never page `revision`. Follow-along navigates only to actual activity links and must preserve dirty forms and unsent messages.
+- Tag an operation or result "Simulated" from `GET /api/connections` for operations and from the record's `simulated` for results, never from the registry alone.
+- `public/_headers` sets the CSP for static assets.
+
 ## Layout
 
 The app follows [Foldkit's project organization](https://foldkit.dev/patterns/project-organization):
 
 - `entry.ts` boots the runtime. `main.ts` holds the root `init`; `model.ts`, `message.ts`, and `command.ts` hold the root Model, Messages, and Commands. `constant.ts` holds DOM ids and limits that update and view share. `route.ts` maps URLs to pages.
 - The root app owns the studio and the run page, because both share the open automation and the run panel. Its update and view are split by area: `update/` (`update.ts` is the matcher; `navigation.ts`, `studio.ts`, `questionnaire.ts`, `open-run.ts`, and `new-automation.ts` are the transitions it calls) and `view/` (`view.ts` is the page shell; `sidebar.ts`, `conversation.ts` (with `questionnaire.ts`, the card that walks through the agent's questions), `studio.ts`, `permissions.ts`, `workflow.ts`, `run.ts`, `task.ts`, and `new-automation.ts` (the new automation dialog) are its parts; `operation.ts` (an operation's icon, title, and tags) and `shared.ts` hold pieces several of them use). Import each folder through its `index.ts`.
-- `page/` holds the Submodels: `page/overview/`, `page/templates/`, `page/entities/`, and `page/traces/`. Each owns its `model.ts`, `message.ts`, `init.ts`, `update.ts`, `command.ts`, `view.ts`, and its `story.test.ts` and `scene.test.ts`. Import them as namespaces from `page/index.ts` (`Overview.update`, `Entities.Model`). A page never imports the root app; keep barrel dependencies pointing inward.
+- `page/` holds the Submodels: `page/overview/`, `page/templates/`, `page/entities/` (a debug page for the entity store), and `page/traces/` (a debug page for agent traces). Each owns its `model.ts`, `message.ts`, `init.ts`, `update.ts`, `command.ts`, `view.ts`, and its `story.test.ts` and `scene.test.ts`. Import them as namespaces from `page/index.ts` (`Overview.update`, `Entities.Model`). A page never imports the root app; keep barrel dependencies pointing inward.
+- `assistant/` is the global assistant panel, a child of the root app. `change/` is the manual change-confirmation dialog, sharing `components/change-proposal.ts` with the assistant's inline confirmations. `dictation/` is the microphone child both chat composers use.
 - `domain/` holds pure business modules, each with its Schema and operations, imported as namespaces from `domain/index.ts` (`AutomationId.isValid`, `TaskAnswer.fromForm`, `Questionnaire.answerOf`).
 - Shared leaves that know nothing about the root app: `api.ts` (HTTP helpers for Commands), `theme.ts` (Flags and the saved theme), `platform.ts` (the key held with Enter to submit, read into Flags at boot), `lib/` (`cn`, `icon`, `componentName`, text formatting, dates), and `components/` (`record.ts` plus the vendored foldcn components in `components/ui/`).
 - Root `story.test.ts` and `scene.test.ts` cover the studio, run pages, and flows that cross pages. `fixtures.ts` is shared test data.

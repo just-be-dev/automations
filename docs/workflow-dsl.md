@@ -9,22 +9,7 @@ An automation is a JSON `Workflow`: a name, a trigger, and a tree of steps. The 
 
 Values don't have to be declared up front. A step reads what the run knows when it runs: the subject's fields (following references to other entities), and what earlier steps recorded. A value only a person has is collected by a human step at the point it's needed.
 
-| Module                                       | Holds                                                                  |
-| -------------------------------------------- | ---------------------------------------------------------------------- |
-| `src/workflow/model.ts`                      | The DSL schema, template strings, and conditions                       |
-| `src/workflow/run.ts`                        | Run state, step results, and human tasks                               |
-| `src/entities/model.ts`                      | Entity types, records, and reading paths through `ref` fields          |
-| `src/entities/store.ts`                      | The `EntityStore` service (entities and templates), and a memory layer |
-| `src/platform/cloudflare/entity-store-d1.ts` | The `EntityStore` layer on D1                                          |
-| `src/connections/registry.ts`                | The connections and their operations                                   |
-| `src/entities/templates.ts`                  | Templates, their checks, and expanding them before a run               |
-| `src/workflow/catalog.ts`                    | Checks a workflow against the entity types and connections             |
-| `src/agents/planner/planner.ts`              | The planner agent's prompt, and how its answer becomes a draft         |
-| `src/agents/planner/plan.ts`                 | The working copy the planner's tools edit, and its YAML                |
-| `src/agents/planner/tools.ts`                | The planner's tools                                                    |
-| `src/workflow/interpreter.ts`                | `RunAutomation`, which executes a workflow                             |
-| `src/workflow/durable-engine.ts`             | The `effect/workflow` engine journaled in the Durable Object's storage |
-| `src/connections/runner.ts`                  | How operations execute                                                 |
+`src/workflow/model.ts` defines the schema, and `src/workflow/catalog.ts` checks a workflow against the catalog. [Architecture](../ARCHITECTURE.md) explains how the planner builds workflows and how runs execute them.
 
 ## Example
 
@@ -194,7 +179,7 @@ Every event has `{id, name, data, subject?, depth}`. `data` is any JSON value. R
 
 Confirmed entity writes publish `entity.created`, `entity.updated`, or `entity.deleted`, with `data: {before, after}` (the old/new entity data, or `null`) and the entity snapshot as `subject`. Deletion carries the last snapshot. Only the shared entity writer can publish these facts. Use `entity.created` for creation-only workflows, or `entity.deleted` for removal workflows; the existing `entity` trigger continues to watch creations and updates.
 
-When Slack is configured ([setup](development.md#slack)), Slack activity arrives as events too. Only the Slack integration can publish `slack.*` names.
+When Slack is configured ([setup](slack.md)), Slack activity arrives as events too. Only the Slack integration can publish `slack.*` names.
 
 | Event            | When                                                                                      | `data`                                                                     |
 | ---------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
@@ -462,7 +447,7 @@ An action can also take inputs from a [template](#templates) with `template: { "
 | `http.post`            | `url` (literal), `body?` JSON                                                        | `status`, `body` (up to 4000 characters) |
 | `events.emit`          | `name`, `data` JSON text or one exact `{{ref}}`                                      | `eventId`, `name`                        |
 
-Email and Calendar are **simulated**: there are no credentials yet, so their operations contact nothing. They succeed and record what they would have sent, with `simulated: true`. Slack is simulated the same way unless the deployment has a bot token ([setup](development.md#slack)); then `slack.sendMessage` posts and records Slack's `channel` ID and `ts`, delivered at least once. Their IDs derive from the step's idempotency key. `calendar.findTimes` offers weekday slots at 10:00 and 14:00 UTC.
+Email and Calendar are **simulated**: there are no credentials yet, so their operations contact nothing. They succeed and record what they would have sent, with `simulated: true`. Slack is simulated the same way unless the deployment has a bot token ([setup](slack.md)); then `slack.sendMessage` posts and records Slack's `channel` ID and `ts`, delivered at least once. Their IDs derive from the step's idempotency key. `calendar.findTimes` offers weekday slots at 10:00 and 14:00 UTC.
 
 ### Publishing events and entity commands
 
@@ -485,7 +470,7 @@ The built-in command `entity.put` merges a validated update through the same ten
 
 Permission to emit this command **authorizes the entity write**, with no second confirmation. Use an ask-first role unless automatic writes were explicitly authorized. Unknown types, invalid fields and role-member constraints still fail validation. Duplicate delivery returns the existing receipt instead of overwriting a newer edit. Lifecycle names cannot be emitted by actions or HTTP callers.
 
-Event chains carry a depth from 0 to 16. Publication increments it; an entity command's resulting fact and legacy entity-triggered runs also increment it. At depth 16, runs may finish but cannot emit again, and entity commands are refused. Delivery failures retry and eventually enter a dead-letter queue; the depth bound stops cycles, not all possible fan-out.
+Event chains carry a depth from 0 to 16. Publication increments it; an entity command's resulting fact and entity-triggered runs also increment it. At depth 16, runs may finish but cannot emit again, and entity commands are refused. Delivery failures retry and eventually enter a dead-letter queue; the depth bound stops cycles, not all possible fan-out.
 
 ### Permissions
 

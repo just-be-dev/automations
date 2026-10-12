@@ -5,7 +5,7 @@ Connecting a Slack workspace does two things:
 - **Sending.** `slack.sendMessage` posts for real instead of being simulated. It posts to a channel (`#team`), or sends a DM to a person given by email address or by an entity with an `email` field. This needs only the bot token.
 - **Receiving.** Mentions of the bot, messages in threads it follows, and reactions in those threads become [`slack.*` events](workflow-dsl.md#event) that can start automations. This needs the bot token, the signing secret, and a public webhook that Slack can reach.
 
-How it works inside is in [Architecture](../ARCHITECTURE.md) and the [development guide](development.md#slack). This page covers setup.
+How it works inside is in [Architecture](../ARCHITECTURE.md), and the event payloads are in the [Workflow DSL](workflow-dsl.md#event). This page covers setup.
 
 Use a sandbox or test workspace while you try it out. Every saved automation that posts to Slack posts for real once the token is set.
 
@@ -111,15 +111,9 @@ The planner should give it an event trigger on `slack.mention` and a message suc
 
 ## What automations receive
 
-| Event            | When                                                                           |
-| ---------------- | ------------------------------------------------------------------------------ |
-| `slack.mention`  | Someone mentions the bot or DMs it. From then on, the bot follows that thread. |
-| `slack.message`  | A new message arrives in a thread the bot follows.                             |
-| `slack.reaction` | Someone reacts to a message in a thread the bot follows.                       |
+A mention or DM starts `slack.mention`, and the bot then follows that thread: later messages arrive as `slack.message` and reactions as `slack.reaction`. Their data fields are in the [Workflow DSL](workflow-dsl.md#event). Keep in mind:
 
-The data fields are in the [Workflow DSL](workflow-dsl.md#event). Keep in mind:
-
-- `text` is what the person wrote, without the bot's own mention, with people as `@Name` and channels as `#name`; echoing `{{event.data.text}}` back reads naturally. `raw` keeps Slack's mrkdwn (`<@U…>` mentions) for anything that needs the IDs.
+- Echoing `{{event.data.text}}` back reads naturally, because `text` drops the bot's own mention. `raw` keeps Slack's mrkdwn for anything that needs user IDs.
 - The bot ignores its own posts, so a reply doesn't start another run.
 - Slack sends `app_mention` and `message.channels` for the same message, and Slack retries webhooks. Event IDs come from Slack's own identifiers, so each automation starts at most one run per message.
 
