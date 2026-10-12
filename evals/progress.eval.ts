@@ -16,7 +16,7 @@ const picks = (...phrases: ReadonlyArray<ProgressPhrase>) => ({
 
 export default defineEval({
   call: progress,
-  minimum: 0.8,
+  minimum: 0.9,
   every: {
     "picks a phrase confidently": (output) => expect(output.problem).toBeUndefined(),
   },
@@ -65,6 +65,36 @@ export default defineEval({
       input:
         "After the meeting is booked, wait two days and then follow up on Slack. That adds a wait step of 2 days and a follow-up step at the end.",
       checks: picks("timing", "planning"),
+    },
+    "understanding-team": {
+      input:
+        "They said 'notify the team', but which team? Earlier they mentioned the sales team's Slack channel, so probably #sales. They haven't said whether contractors count too.",
+      checks: picks("understanding"),
+    },
+    "planning-order": {
+      input:
+        "First create the account, then send the welcome email, and only after both are done tell the manager. The account and the email can run side by side in a parallel step, with the manager's message after it.",
+      checks: picks("planning"),
+    },
+    "paths-threshold": {
+      input:
+        "If the contract is worth more than 50,000 a year, legal needs a full review; otherwise a light review is enough. That's an if step with one case on contract.value and an otherwise.",
+      checks: picks("paths"),
+    },
+    "connections-url": {
+      input:
+        "Send the order to their fulfilment API with http.post. The URL they gave is https://api.example.com/orders, which is public HTTPS, so it's allowed. The body is the order record.",
+      checks: picks("connections"),
+    },
+    "messages-wording": {
+      input:
+        "There's no template for reminders, so the agent step writes it. It should be short and friendly, use the employee's first name, and mention the start date and where to go on day one.",
+      checks: picks("messages"),
+    },
+    "checking-role": {
+      input:
+        "The check reports that the role people_ops doesn't exist. The catalog has hr_admins instead, so I'll switch the permission to that and run the check again.",
+      checks: picks("checking", "people"),
     },
     "people-or-messages": {
       input:

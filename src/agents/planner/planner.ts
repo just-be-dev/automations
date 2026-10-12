@@ -236,14 +236,15 @@ export const progressQuestion = {
   instructions:
     "The state is the latest private reasoning of an assistant that designs business automations. What is it working on right now?",
   criteria: {
-    understanding: "Working out what the person wants",
-    planning: "Choosing the steps and their order",
+    understanding:
+      "Working out what the person meant: an unclear or ambiguous request, who or what it is about, or what they haven't said yet",
+    planning: "Laying out which steps the automation runs and in what order",
     timing: "Dates, delays, deadlines, or schedules",
     people: "Approvals, people who provide information, or who gets notified",
-    paths: "Conditions, branches, or decisions between options",
+    paths: "Designing conditions, branches, or decisions between options",
     connections: "Sending information to other services or web addresses",
-    messages: "Templates, the wording of messages, or who gets which message",
-    checking: "Reviewing, verifying, or correcting details",
+    messages: "Choosing templates or the wording of messages, and filling in their details",
+    checking: "Fixing problems a check reported, or reviewing and correcting details",
   },
 } as const satisfies ChoiceQuestion & {
   readonly criteria: Record<typeof PickedPhrase.Type, string>;
