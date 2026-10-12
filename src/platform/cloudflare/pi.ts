@@ -25,9 +25,10 @@ import {
 } from "../../ai/pi.ts";
 
 /**
- * pi-durable hosted in an automation's Durable Object. pi keeps conversations, model turns, and
- * submissions in its own `pi_*` tables in the object's SQLite database (`openPiStorage`), so an
- * interrupted turn resumes when the object reopens pi. The evals open it over memory instead.
+ * pi-durable hosted in a Durable Object: an automation's, for its planner and agent steps, or a
+ * studio assistant session's. pi keeps conversations, model turns, and submissions in its own
+ * `pi_*` tables in the object's SQLite database (`openPiStorage`), so an interrupted turn resumes
+ * when the object reopens pi. The evals open it over memory instead.
  */
 
 export interface PiAgentOptions {

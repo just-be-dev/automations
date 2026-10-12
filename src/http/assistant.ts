@@ -8,11 +8,8 @@ import { Assistants } from "../assistant/service.ts";
 import { RequestIdentity } from "./identity.ts";
 import { limitedBody, pathParams, respond } from "./response.ts";
 
-const Params = Schema.Struct({
-  sessionId: Schema.String.check(
-    Schema.isPattern(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
-  ),
-});
+// The same check as the StudioAssistant's identity, so a session the object would refuse gets a 400 here.
+const Params = Schema.Struct({ sessionId: Schema.String.check(Schema.isUUID(4)) });
 const client = Effect.gen(function* () {
   const { sessionId } = yield* pathParams(Params);
   const { email } = yield* RequestIdentity;
