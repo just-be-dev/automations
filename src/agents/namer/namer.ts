@@ -109,6 +109,7 @@ export const nameAutomation = Effect.fn("Namer.nameAutomation")(function* (descr
     Effect.timeout("5 seconds"),
     Effect.map(nameFromReply),
     Effect.map(Option.getOrElse(() => fallbackName(description))),
-    Effect.catch(() => Effect.succeed(fallbackName(description))),
+    Effect.tapError((error) => Effect.logWarning("Naming fell back to the description", error)),
+    Effect.orElseSucceed(() => fallbackName(description)),
   );
 });

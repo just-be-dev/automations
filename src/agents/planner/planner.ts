@@ -249,19 +249,17 @@ export class UnsurePick extends Schema.TaggedError<UnsurePick>()("UnsurePick", {
  * and resolves with the classifier's raw response. A response that doesn't decode, or a pick it
  * isn't sure of, fails.
  */
-export const pickProgress = <E>(
+export const pickProgress = Effect.fn("Planner.pickProgress")(function* <E>(
   classify: (request: ClassifyRequest) => Effect.Effect<unknown, E>,
   reasoning: string,
-) =>
-  classify({
+) {
+  const response = yield* classify({
     state: { reasoning: reasoning.slice(-reasoningWindow) },
     questions: { progress: progressQuestion },
-  }).pipe(
-    Effect.flatMap(Schema.decodeUnknownEffect(ProgressAnswer)),
-    Effect.flatMap(({ answers: { progress } }) =>
-      progress.confidence < minConfidence
-        ? Effect.fail(new UnsurePick({ confidence: progress.confidence }))
-        : Effect.succeed(progress.choice),
-    ),
-    Effect.withSpan("Planner.pickProgress"),
-  );
+  });
+  const { progress } = (yield* Schema.decodeUnknownEffect(ProgressAnswer)(response)).answers;
+  if (progress.confidence < minConfidence) {
+    return yield* new UnsurePick({ confidence: progress.confidence });
+  }
+  return progress.choice;
+});

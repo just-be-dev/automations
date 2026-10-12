@@ -52,9 +52,7 @@ export const assistantFixture = Effect.gen(function* () {
     },
     jobs: { reply: (turnId, after) => Effect.sync(() => void jobs.push({ turnId, after })) },
   };
-  const entities = yield* Effect.gen(function* () {
-    return yield* EntityStore;
-  }).pipe(
+  const entities = yield* Effect.service(EntityStore).pipe(
     Effect.provide(
       layerMemory({
         types: [

@@ -1,5 +1,6 @@
 /** Models the planner's flat working copy, replay-safe edits, and assembly into a nested workflow. */
 import * as Effect from "effect/Effect";
+import * as Match from "effect/Match";
 import * as Schema from "effect/Schema";
 import { stringify } from "yaml";
 import {
@@ -82,27 +83,26 @@ export interface Plan extends Schema.Schema.Type<typeof Plan> {}
 
 const ids = (steps: ReadonlyArray<Step>) => steps.map((step) => step.id);
 
-const planStep = (step: Step): PlanStep => {
-  switch (step.kind) {
-    case "parallel":
-      return { ...step, branches: step.branches.map(ids) };
-    case "if": {
-      const { otherwise, ...rest } = step;
-      return {
+const planStep = (step: Step): PlanStep =>
+  Match.value(step).pipe(
+    Match.discriminatorsExhaustive("kind")({
+      agent: (leaf): PlanStep => leaf,
+      action: (leaf) => leaf,
+      wait: (leaf) => leaf,
+      human: (leaf) => leaf,
+      stop: (leaf) => leaf,
+      parallel: (parallel) => ({ ...parallel, branches: parallel.branches.map(ids) }),
+      if: ({ otherwise, ...rest }) => ({
         ...rest,
-        cases: step.cases.map((branch) => ({ when: branch.when, steps: ids(branch.steps) })),
+        cases: rest.cases.map((branch) => ({ when: branch.when, steps: ids(branch.steps) })),
         ...(otherwise === undefined ? {} : { otherwise: ids(otherwise) }),
-      };
-    }
-    case "decide":
-      return {
-        ...step,
-        options: step.options.map((option) => ({ ...option, steps: ids(option.steps) })),
-      };
-    default:
-      return step;
-  }
-};
+      }),
+      decide: (decide) => ({
+        ...decide,
+        options: decide.options.map((option) => ({ ...option, steps: ids(option.steps) })),
+      }),
+    }),
+  );
 
 /** The working copy of a draft, or an empty one when there is none yet. */
 export const planOf = (workflow: Workflow | undefined): Plan =>
@@ -134,18 +134,22 @@ export const samePlan = (left: Plan, right: Plan) =>
   JSON.stringify(canonical(left)) === JSON.stringify(canonical(right));
 
 /** The step lists nested directly inside a step. */
-const childLists = (step: PlanStep): ReadonlyArray<ReadonlyArray<string>> => {
-  switch (step.kind) {
-    case "parallel":
-      return step.branches;
-    case "if":
-      return [...step.cases.map((branch) => branch.steps), step.otherwise ?? []];
-    case "decide":
-      return step.options.map((option) => option.steps);
-    default:
-      return [];
-  }
-};
+const childLists = (step: PlanStep): ReadonlyArray<ReadonlyArray<string>> =>
+  Match.value(step).pipe(
+    Match.discriminatorsExhaustive("kind")({
+      agent: () => [],
+      action: () => [],
+      wait: () => [],
+      human: () => [],
+      stop: () => [],
+      parallel: (parallel) => parallel.branches,
+      if: (branching) => [
+        ...branching.cases.map((branch) => branch.steps),
+        branching.otherwise ?? [],
+      ],
+      decide: (decide) => decide.options.map((option) => option.steps),
+    }),
+  );
 
 /** Rewrites every step list nested directly inside a step: with other IDs, or with the steps. */
 function mapChildLists(
@@ -160,23 +164,25 @@ function mapChildLists(
   step: PlanStep,
   map: (list: ReadonlyArray<string>) => ReadonlyArray<unknown>,
 ): unknown {
-  switch (step.kind) {
-    case "parallel":
-      return { ...step, branches: step.branches.map(map) };
-    case "if":
-      return {
-        ...step,
-        cases: step.cases.map((branch) => ({ ...branch, steps: map(branch.steps) })),
-        ...(step.otherwise === undefined ? {} : { otherwise: map(step.otherwise) }),
-      };
-    case "decide":
-      return {
-        ...step,
-        options: step.options.map((option) => ({ ...option, steps: map(option.steps) })),
-      };
-    default:
-      return step;
-  }
+  return Match.value(step).pipe(
+    Match.discriminatorsExhaustive("kind")({
+      agent: (leaf): unknown => leaf,
+      action: (leaf) => leaf,
+      wait: (leaf) => leaf,
+      human: (leaf) => leaf,
+      stop: (leaf) => leaf,
+      parallel: (parallel) => ({ ...parallel, branches: parallel.branches.map(map) }),
+      if: (branching) => ({
+        ...branching,
+        cases: branching.cases.map((branch) => ({ ...branch, steps: map(branch.steps) })),
+        ...(branching.otherwise === undefined ? {} : { otherwise: map(branching.otherwise) }),
+      }),
+      decide: (decide) => ({
+        ...decide,
+        options: decide.options.map((option) => ({ ...option, steps: map(option.steps) })),
+      }),
+    }),
+  );
 }
 
 /** How the working copy's lists fit together, and the step tree they make. */

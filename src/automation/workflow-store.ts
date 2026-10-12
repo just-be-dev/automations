@@ -64,7 +64,9 @@ export const makeWorkflowStore = Effect.fn("Automation.makeWorkflowStore")(funct
       )
       .pipe(Effect.orDie);
     yield* entities.subscribe(automationId, subjectType(trigger));
-    yield* index.record(automationId, draft.name).pipe(Effect.ignore);
+    yield* index
+      .record(automationId, draft.name)
+      .pipe(Effect.ignore({ log: "Warn", message: "Couldn't update the automation directory" }));
     return { saved: draft };
   });
 

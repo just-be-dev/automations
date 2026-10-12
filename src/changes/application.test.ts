@@ -88,8 +88,7 @@ const harness = () => {
     }),
     Layer.succeed(Automations, {
       get: (id) => ({
-        templateUses: () =>
-          id === "broken" ? Effect.fail("unreachable") : Effect.sync(() => usages),
+        templateUses: () => (id === "broken" ? Effect.fail("unreachable") : Effect.succeed(usages)),
         overview: () => Effect.succeed({ activeRuns: [] }),
         inspectWorkflow: unused,
         answer: unused,

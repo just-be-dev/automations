@@ -60,7 +60,12 @@ export const automationRoutes = Layer.merge(
             const workflow = automation.draft ?? automation.saved;
             if (workflow !== undefined) {
               const index = yield* AutomationIndex;
-              yield* index.recordIfMissing(id, workflow.name).pipe(Effect.ignore);
+              yield* index.recordIfMissing(id, workflow.name).pipe(
+                Effect.ignore({
+                  log: "Warn",
+                  message: "Couldn't list the automation in the directory",
+                }),
+              );
             }
             return automation;
           }),

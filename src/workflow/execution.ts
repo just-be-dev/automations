@@ -4,8 +4,8 @@ import { Subject } from "../entities/model.ts";
 import { Event } from "../events/model.ts";
 import { RunId } from "./run.ts";
 
-/** Identifies an engine journal, derived by Effect Workflow from the run's payload. */
-export const ExecutionId = Schema.String.pipe(Schema.brand("ExecutionId"));
+/** Identifies an engine journal, derived by Effect Workflow from the run's payload. Never empty. */
+export const ExecutionId = Schema.NonEmptyString.pipe(Schema.brand("ExecutionId"));
 export type ExecutionId = typeof ExecutionId.Type;
 
 /**

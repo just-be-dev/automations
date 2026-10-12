@@ -1,5 +1,6 @@
 /** Validates workflows against entity types, templates, operations, and roles, and describes that catalog to the planner. */
 import * as Effect from "effect/Effect";
+import * as Match from "effect/Match";
 import {
   connections,
   findOperation,
@@ -94,22 +95,19 @@ const refProblems = (
 };
 
 /** The fields a step's record has, as `steps.<id>.<field>` reads them. */
-const recordFields = (step: Step): ReadonlyArray<string> => {
-  switch (step.kind) {
-    case "agent":
-      return ["output"];
-    case "action":
-      return findOperation(step.use)?.recordFields ?? [];
-    case "decide":
-      return ["choice", "confidence", "probabilities"];
-    case "human":
-      return ["approved", "values", "respondedBy", "timedOut"];
-    case "if":
-      return ["matched"];
-    default:
-      return [];
-  }
-};
+const recordFields = (step: Step): ReadonlyArray<string> =>
+  Match.value(step).pipe(
+    Match.discriminatorsExhaustive("kind")({
+      agent: () => ["output"],
+      action: (action) => findOperation(action.use)?.recordFields ?? [],
+      decide: () => ["choice", "confidence", "probabilities"],
+      human: () => ["approved", "values", "respondedBy", "timedOut"],
+      if: () => ["matched"],
+      wait: () => [],
+      stop: () => [],
+      parallel: () => [],
+    }),
+  );
 
 /** Fields a step fills in itself: an agent's output fields, or a human form's fields. */
 const ownFields = (step: Step, field: string): ReadonlyArray<string> | undefined => {
@@ -394,24 +392,10 @@ const childResults = (
   step: Step,
   available: ReadonlyMap<string, Step>,
   eventTrigger: boolean,
-): ReadonlyArray<Checked> => {
-  switch (step.kind) {
-    case "parallel":
-      return step.branches.map((branch) =>
-        checkSequence(catalog, subject, branch, available, eventTrigger),
-      );
-    case "if":
-      return [...step.cases.map((branch) => branch.steps), step.otherwise ?? []].map((branch) =>
-        checkSequence(catalog, subject, branch, available, eventTrigger),
-      );
-    case "decide":
-      return step.options.map((option) =>
-        checkSequence(catalog, subject, option.steps, available, eventTrigger),
-      );
-    default:
-      return [];
-  }
-};
+): ReadonlyArray<Checked> =>
+  childSequences(step).map((sequence) =>
+    checkSequence(catalog, subject, sequence, available, eventTrigger),
+  );
 
 const triggerProblems = (catalog: Catalog, workflow: Workflow): ReadonlyArray<string> => {
   const { trigger } = workflow;

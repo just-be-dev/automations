@@ -188,13 +188,10 @@ export const openPiAgent = Effect.fn("PiAgent.open")(function* (options: PiAgent
     return assistantText(entry);
   });
 
-  const instruct = (instructions: string) =>
-    conversation(undefined).pipe(
-      Effect.flatMap((root) =>
-        attempt("Set pi instructions", () => root.configure({ instructions }, context)),
-      ),
-      Effect.withSpan("PiAgent.instruct"),
-    );
+  const instruct = Effect.fn("PiAgent.instruct")(function* (instructions: string) {
+    const root = yield* conversation(undefined);
+    return yield* attempt("Set pi instructions", () => root.configure({ instructions }, context));
+  });
 
   // pi commits the in-flight response at most every 100 ms, so this trails the model slightly.
   const liveAnswer = attempt("Read pi live answer", async (): Promise<LiveAnswer | undefined> => {

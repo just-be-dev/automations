@@ -82,7 +82,7 @@ export default class StudioAssistant extends Cloudflare.DurableObject<StudioAssi
         }).pipe(Effect.provide(services), Effect.provideService(Alchemy.RuntimeContext, runtime)),
       );
       const bind = Effect.fn("StudioAssistant.bind")(function* (owner: string, sessionId: string) {
-        const identity = yield* Schema.decodeUnknownEffect(Identity)({ owner, sessionId });
+        const identity = yield* Schema.decodeEffect(Identity)({ owner, sessionId });
         yield* host.storage.transaction(
           Effect.gen(function* () {
             const saved = yield* host.storage.get("identity");

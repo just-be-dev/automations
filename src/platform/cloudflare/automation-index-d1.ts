@@ -7,6 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type { AutomationSummary } from "../../automation/model.ts";
 import { AutomationsDatabase } from "./database.ts";
+import { failWith } from "./d1-failure.ts";
 import { AutomationIndex, AutomationIndexError } from "../../automation/index.ts";
 
 const Row = Schema.Struct({ id: Schema.String, name: Schema.String, updated_at: Schema.Finite });
@@ -32,9 +33,7 @@ export const AutomationIndexD1 = Effect.gen(function* () {
       ) =>
         effect.pipe(
           Effect.provideService(Alchemy.RuntimeContext, runtime),
-          Effect.catchCause((cause) =>
-            Effect.fail(new AutomationIndexError({ message: `${operation}: ${cause}` })),
-          ),
+          failWith(operation, (message) => new AutomationIndexError({ message })),
         );
 
       // Says whether a row was inserted; only `insertIfMissing` returns one.

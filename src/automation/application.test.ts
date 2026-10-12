@@ -734,7 +734,7 @@ describe("Automation application without a platform", () => {
         expectTypeOf<ExecutionId>().not.toMatchTypeOf<RunId>();
         expectTypeOf<Parameters<typeof records.read>[0]>().toEqualTypeOf<RunId>();
         expectTypeOf<Parameters<typeof records.runForExecution>[0]>().toEqualTypeOf<ExecutionId>();
-        const values = yield* Schema.decodeUnknownEffect(ExecutionValues)({
+        const values = yield* Schema.decodeEffect(ExecutionValues)({
           runId: "run-alpha",
           subject: null,
           steps: { left: { value: 3 } },

@@ -155,7 +155,7 @@ const recording = (sequence: number, stopping: () => boolean) =>
         return stopping();
       }).pipe(
         Effect.repeat({ until: (stop) => stop }),
-        Effect.raceFirst(Effect.sleep("175 seconds")),
+        Effect.timeoutOrElse({ duration: "175 seconds", orElse: () => Effect.succeed(false) }),
       );
       if (!stopping()) {
         emit(Message.CompletedRecordingLimit({ sequence }));

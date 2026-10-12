@@ -220,7 +220,9 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
     const designed = Result.isSuccess(reply) ? reply.success.workflow : undefined;
     if (wrote && designed !== undefined) {
       // The index only feeds the studio's list, so a failure to update it must not fail the reply.
-      yield* index.record(automationId, designed.name).pipe(Effect.ignore);
+      yield* index
+        .record(automationId, designed.name)
+        .pipe(Effect.ignore({ log: "Warn", message: "Couldn't update the automation directory" }));
     }
   });
 

@@ -27,7 +27,7 @@ export const EventsQueue = Effect.gen(function* () {
       return Events.of({
         publish: Effect.fn("Events.publish")(
           function* (event: Event) {
-            const decoded = yield* Schema.decodeUnknownEffect(Event)(event);
+            const decoded = yield* Schema.decodeEffect(Event)(event);
             yield* queue.send(decoded).pipe(Effect.provideService(Alchemy.RuntimeContext, runtime));
           },
           Effect.mapError((error) => new EventError({ message: messageOf(error) })),

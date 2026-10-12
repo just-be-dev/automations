@@ -6,6 +6,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { AutomationsDatabase } from "./database.ts";
+import { failWith } from "./d1-failure.ts";
 import { EntityData, EntityType, Role, type EntityRecord } from "../../entities/model.ts";
 import { EntityStore, EntityStoreError, makeEntityStore } from "../../entities/store.ts";
 import { Template } from "../../entities/templates.ts";
@@ -47,9 +48,7 @@ export const EntityStoreD1 = Effect.gen(function* () {
       ): Effect.Effect<A, EntityStoreError> =>
         effect.pipe(
           Effect.provideService(Alchemy.RuntimeContext, runtime),
-          Effect.catchCause((cause) =>
-            Effect.fail(new EntityStoreError({ message: `${operation}: ${cause}` })),
-          ),
+          failWith(operation, (message) => new EntityStoreError({ message })),
         );
 
       const rows = <A>(
@@ -65,7 +64,7 @@ export const EntityStoreD1 = Effect.gen(function* () {
           operation,
           statement.pipe(
             Effect.flatMap((result) =>
-              Schema.decodeUnknownEffect(Schema.Array(schema))(result.results ?? []),
+              Schema.decodeEffect(Schema.Array(schema))(result.results ?? []),
             ),
           ),
         );

@@ -338,11 +338,18 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     return { id, status: run.status };
   });
 
+  // Run titles only label runs, so a D1 failure shows subject IDs instead of failing the read.
+  const entityTypesForTitles = entities.listTypes.pipe(
+    Effect.tapError((error) =>
+      Effect.logWarning("Couldn't read entity types for run titles", error),
+    ),
+    Effect.orElseSucceed(() => []),
+  );
+
   /** Every run, newest first. */
   const runSummaries = Effect.gen(function* () {
     const runs = yield* records.all;
-    // The titles only label the list, so a D1 failure shows IDs instead.
-    const types = yield* entities.listTypes.pipe(Effect.orElseSucceed(() => []));
+    const types = yield* entityTypesForTitles;
     return runs.map((run) => summary(types, run));
   });
 
@@ -377,7 +384,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
       return loaded;
     });
     if (trigger.kind === "event" && suppliedEvent !== undefined) {
-      const supplied = yield* Schema.decodeUnknownEffect(SuppliedEvent)(suppliedEvent);
+      const supplied = yield* Schema.decodeEffect(SuppliedEvent)(suppliedEvent);
       const event: Event = {
         id: crypto.randomUUID(),
         name: trigger.event,
@@ -460,8 +467,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
           return { runId: null };
         }
       }
-      const origin =
-        event === undefined ? undefined : yield* Schema.decodeUnknownEffect(Event)(event);
+      const origin = event === undefined ? undefined : yield* Schema.decodeEffect(Event)(event);
       const started = yield* beginRun(saved, after, id, origin);
       return { runId: started.id };
     },
@@ -562,8 +568,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     if (found === undefined) {
       return undefined;
     }
-    // The title only labels the run, so a D1 failure shows the subject's ID instead.
-    const types = yield* entities.listTypes.pipe(Effect.orElseSucceed(() => []));
+    const types = yield* entityTypesForTitles;
     return { ...found, subjectTitle: summary(types, found).subject };
   });
 

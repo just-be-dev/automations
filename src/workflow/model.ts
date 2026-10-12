@@ -1,5 +1,6 @@
 /** Defines the workflow DSL and its structural checks, reference traversal, template strings, and conditions. */
 import * as Effect from "effect/Effect";
+import * as Match from "effect/Match";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { EntityName } from "../entities/model.ts";
@@ -665,18 +666,22 @@ export const Step: Schema.Codec<Step> = Schema.Union([
 ]);
 
 /** The step sequences nested directly inside a step. */
-export const childSequences = (step: Step): ReadonlyArray<ReadonlyArray<Step>> => {
-  switch (step.kind) {
-    case "parallel":
-      return step.branches;
-    case "if":
-      return [...step.cases.map((branch) => branch.steps), step.otherwise ?? []];
-    case "decide":
-      return step.options.map((option) => option.steps);
-    default:
-      return [];
-  }
-};
+export const childSequences = (step: Step): ReadonlyArray<ReadonlyArray<Step>> =>
+  Match.value(step).pipe(
+    Match.discriminatorsExhaustive("kind")({
+      agent: () => [],
+      action: () => [],
+      wait: () => [],
+      human: () => [],
+      stop: () => [],
+      parallel: (parallel) => parallel.branches,
+      if: (branching) => [
+        ...branching.cases.map((branch) => branch.steps),
+        branching.otherwise ?? [],
+      ],
+      decide: (decide) => decide.options.map((option) => option.steps),
+    }),
+  );
 
 /** Every step in the tree, parents before their children. */
 export const flattenSteps = (steps: ReadonlyArray<Step>): ReadonlyArray<Step> =>
@@ -694,28 +699,25 @@ const humanFieldDefaults = (step: HumanStep) =>
     : step.response.fields.flatMap((field) => (field.default === undefined ? [] : [field.default]));
 
 /** The text of a step that may hold `{{ref}}` templates, not counting nested steps. */
-export const stepTemplates = (step: Step): ReadonlyArray<string> => {
-  switch (step.kind) {
-    case "agent":
-      return [step.title, step.instruction];
-    case "action":
-      return [
-        step.title,
-        ...[step, ...matchSources(step)].flatMap((source) =>
+export const stepTemplates = (step: Step): ReadonlyArray<string> =>
+  Match.value(step).pipe(
+    Match.discriminatorsExhaustive("kind")({
+      agent: (agent) => [agent.title, agent.instruction],
+      action: (action) => [
+        action.title,
+        ...[action, ...matchSources(action)].flatMap((source) =>
           Object.values(source.with ?? {}).flatMap(actionInputText),
         ),
-        ...actionTemplates(step).flatMap((use) => Object.values(use.with)),
-      ];
-    case "decide":
-      return [step.title, step.question];
-    case "human":
-      return [step.title, step.prompt, ...humanFieldDefaults(step)];
-    case "stop":
-      return [step.title, step.reason];
-    default:
-      return [step.title];
-  }
-};
+        ...actionTemplates(action).flatMap((use) => Object.values(use.with)),
+      ],
+      decide: (decide) => [decide.title, decide.question],
+      human: (human) => [human.title, human.prompt, ...humanFieldDefaults(human)],
+      stop: (stop) => [stop.title, stop.reason],
+      wait: (wait) => [wait.title],
+      parallel: (parallel) => [parallel.title],
+      if: (branching) => [branching.title],
+    }),
+  );
 
 const refsReadBy = (
   step: Step,

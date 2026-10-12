@@ -12,6 +12,9 @@ export const decodeOrDrop =
       ? Effect.succeed(undefined)
       : Schema.decodeUnknownEffect(schema)(value).pipe(
           Effect.map((decoded): A | undefined => decoded),
+          Effect.tapError((error) =>
+            Effect.logWarning("Dropped a stored value that no longer decodes", error),
+          ),
           Effect.orElseSucceed(() => undefined),
         );
 

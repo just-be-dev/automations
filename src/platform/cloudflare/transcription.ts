@@ -26,10 +26,13 @@ export const workersAiTranscription = (ai: Ai) =>
             },
             { websocket: true },
           ]);
-          return Schema.decodeUnknownSync(Schema.instanceOf(Response))(result);
+          return result;
         },
         catch: () => new TranscriptionError({ message: "Unable to connect to Nova-3" }),
-      });
+      }).pipe(
+        Effect.flatMap(Schema.decodeUnknownEffect(Schema.instanceOf(Response))),
+        Effect.mapError(() => new TranscriptionError({ message: "Unable to connect to Nova-3" })),
+      );
       const upstream = response.webSocket;
       if (response.status !== 101 || upstream === null) {
         return yield* new TranscriptionError({ message: "Nova-3 did not accept the connection" });
@@ -70,7 +73,7 @@ export const workersAiTranscription = (ai: Ai) =>
               close(1008, "Invalid control message");
               return;
             }
-            const control = Schema.decodeUnknownOption(Schema.fromJsonString(Control))(data);
+            const control = Schema.decodeOption(Schema.fromJsonString(Control))(data);
             if (control._tag === "None") {
               close(1008, "Invalid control message");
               return;

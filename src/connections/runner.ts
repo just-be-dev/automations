@@ -137,7 +137,7 @@ export const runAction = Effect.fn("Connections.runAction")(function* (
         const isReference = typeof source === "string" && loneRef(source) !== undefined;
         const data =
           typeof inputs["data"] === "string" && !isReference
-            ? yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))(inputs["data"])
+            ? yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(inputs["data"])
             : inputs["data"];
         const event = yield* Schema.decodeUnknownEffect(PublishEvent)({
           id: `action:${idempotencyKey}`,

@@ -42,6 +42,7 @@ export const transcriptionRoutes = HttpRouter.add(
     const transcription = yield* Transcription;
     return yield* transcription.connect(Number(parameters.sample_rate));
   }).pipe(
-    Effect.catch(() => Effect.succeed(json({ error: "Unable to connect to transcription" }, 400))),
+    Effect.tapError((error) => Effect.logWarning("Transcription connection failed", error)),
+    Effect.orElseSucceed(() => json({ error: "Unable to connect to transcription" }, 400)),
   ),
 );

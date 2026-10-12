@@ -4,8 +4,8 @@ import { Subject } from "../entities/model.ts";
 import { Event } from "../events/model.ts";
 import { HumanResponseSpec, Workflow } from "./model.ts";
 
-/** Identifies the application run record, never a replay execution. Encodes as a string. */
-export const RunId = Schema.String.pipe(Schema.brand("RunId"));
+/** Identifies the application run record, never a replay execution. Encodes as a non-empty string. */
+export const RunId = Schema.NonEmptyString.pipe(Schema.brand("RunId"));
 export type RunId = typeof RunId.Type;
 
 /** `declined` and `skipped` steps record nothing; `waiting` parks on a clock or a person. */

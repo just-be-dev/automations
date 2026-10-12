@@ -52,7 +52,7 @@ test("workflow references suggest nested fields and condition types without fill
   expect(data(filled)).toEqual(
     Result.succeed({ total: 137.5, confirmed: false, customer: { name: "  Avery  " } }),
   );
-  expect(Schema.decodeUnknownSync(Model)(filled)).toEqual(filled);
+  expect(Schema.decodeSync(Model)(filled)).toEqual(filled);
   const ids = [
     filled.root.id,
     ...filled.root.children.map((node) => node.id),

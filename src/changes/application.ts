@@ -214,7 +214,7 @@ export const makeChanges = Effect.fn("Changes.make")(function* (
   return Changes.of({
     prepare: Effect.fn("Changes.prepare")(
       function* (owner: string, input: ChangeAction, requestId?: string, sourceEvent?: Event) {
-        const action = yield* Schema.decodeUnknownEffect(ChangeAction)(input);
+        const action = yield* Schema.decodeEffect(ChangeAction)(input);
         if (sourceEvent !== undefined && sourceEvent.depth >= 16) {
           return yield* fail("Event chain limit reached");
         }
@@ -348,7 +348,7 @@ export const makeChanges = Effect.fn("Changes.make")(function* (
           ...(requestId === undefined ? {} : { requestId }),
           ...(sourceEvent === undefined
             ? {}
-            : { sourceEvent: yield* Schema.decodeUnknownEffect(Event)(sourceEvent) }),
+            : { sourceEvent: yield* Schema.decodeEffect(Event)(sourceEvent) }),
           proposal,
           before,
           after: preview.after,

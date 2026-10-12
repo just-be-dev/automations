@@ -1,5 +1,6 @@
 /** Models approved wording with entity-backed slots, checks references, and expands uses into a run's action inputs. */
 import * as Effect from "effect/Effect";
+import * as Match from "effect/Match";
 import * as Schema from "effect/Schema";
 import { EntityField, EntityName, pathTarget, type EntityType } from "./model.ts";
 import {
@@ -146,56 +147,59 @@ const expandSource = (templates: ReadonlyArray<Template>, source: InputSource): 
     : { with: { ...source.with, ...fillTemplate(template, source.template) } };
 };
 
-const expandStep = (templates: ReadonlyArray<Template>, step: Step): Step => {
-  switch (step.kind) {
-    case "action": {
-      const own = expandSource(templates, step);
-      return {
-        id: step.id,
-        title: step.title,
-        kind: step.kind,
-        use: step.use,
-        with: own.with ?? {},
-        ...(own.template === undefined ? {} : { template: own.template }),
-        ...(step.match === undefined
-          ? {}
-          : {
-              match: {
-                on: step.match.on,
-                cases: step.match.cases.map((branch) => ({
-                  when: branch.when,
-                  ...expandSource(templates, branch),
-                })),
-                otherwise: expandSource(templates, step.match.otherwise),
-              },
-            }),
-      };
-    }
-    case "parallel":
-      return { ...step, branches: step.branches.map((branch) => expandSteps(templates, branch)) };
-    case "if":
-      return {
-        ...step,
-        cases: step.cases.map((branch) => ({
+const expandStep = (templates: ReadonlyArray<Template>, step: Step): Step =>
+  Match.value(step).pipe(
+    Match.discriminatorsExhaustive("kind")({
+      action: (action): Step => {
+        const own = expandSource(templates, action);
+        return {
+          id: action.id,
+          title: action.title,
+          kind: action.kind,
+          use: action.use,
+          with: own.with ?? {},
+          ...(own.template === undefined ? {} : { template: own.template }),
+          ...(action.match === undefined
+            ? {}
+            : {
+                match: {
+                  on: action.match.on,
+                  cases: action.match.cases.map((branch) => ({
+                    when: branch.when,
+                    ...expandSource(templates, branch),
+                  })),
+                  otherwise: expandSource(templates, action.match.otherwise),
+                },
+              }),
+        };
+      },
+      parallel: (parallel) => ({
+        ...parallel,
+        branches: parallel.branches.map((branch) => expandSteps(templates, branch)),
+      }),
+      if: (branching) => ({
+        ...branching,
+        cases: branching.cases.map((branch) => ({
           ...branch,
           steps: expandSteps(templates, branch.steps),
         })),
-        ...(step.otherwise === undefined
+        ...(branching.otherwise === undefined
           ? {}
-          : { otherwise: expandSteps(templates, step.otherwise) }),
-      };
-    case "decide":
-      return {
-        ...step,
-        options: step.options.map((option) => ({
+          : { otherwise: expandSteps(templates, branching.otherwise) }),
+      }),
+      decide: (decide) => ({
+        ...decide,
+        options: decide.options.map((option) => ({
           ...option,
           steps: expandSteps(templates, option.steps),
         })),
-      };
-    default:
-      return step;
-  }
-};
+      }),
+      agent: (leaf) => leaf,
+      wait: (leaf) => leaf,
+      human: (leaf) => leaf,
+      stop: (leaf) => leaf,
+    }),
+  );
 
 const expandSteps = (templates: ReadonlyArray<Template>, steps: ReadonlyArray<Step>) =>
   steps.map((step) => expandStep(templates, step));

@@ -1,5 +1,7 @@
 /** Defines eval cases and runs repeated trials with named checks, failure capture, and pass rates. */
 
+import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -124,20 +126,25 @@ export class Eval {
 }
 
 export const defineEval = <I, O>(definition: EvalDefinition<I, O>): Eval => {
-  const runTrial = (caseName: string, trial: number) => {
+  const trialFailure = (caseName: string, trial: number, millis: number, error: string) => {
     const found = definition.cases[caseName];
-    const checks = Object.entries({ ...definition.every, ...found?.checks });
-    const failed = (millis: number, error: string): TrialResult => ({
+    const checks = Object.keys({ ...definition.every, ...found?.checks });
+    return {
       trial,
       millis,
       error,
-      checks: checks.map(([name]) => ({ name, pass: false, note: error })),
-    });
-    return Effect.gen(function* () {
+      checks: checks.map((name) => ({ name, pass: false, note: error })),
+    } satisfies TrialResult;
+  };
+  const runTrial = Effect.fn("Eval.trial")(
+    function* (caseName: string, trial: number) {
+      yield* Effect.annotateCurrentSpan({ case: caseName, trial });
+      const found = definition.cases[caseName];
       if (found === undefined) {
-        return failed(0, `No case ${caseName}`);
+        return trialFailure(caseName, trial, 0, `No case ${caseName}`);
       }
-      const started = Date.now();
+      const checks = Object.entries({ ...definition.every, ...found.checks });
+      const started = yield* Clock.currentTimeMillis;
       const outcome = yield* EvalWorker.use((worker) =>
         worker.call(definition.call, found.input),
       ).pipe(
@@ -147,9 +154,9 @@ export const defineEval = <I, O>(definition: EvalDefinition<I, O>): Eval => {
         }),
         Effect.result,
       );
-      const millis = Date.now() - started;
+      const millis = (yield* Clock.currentTimeMillis) - started;
       if (outcome._tag === "Failure") {
-        return failed(millis, messageOf(outcome.failure));
+        return trialFailure(caseName, trial, millis, messageOf(outcome.failure));
       }
       const results = yield* Effect.forEach(
         checks,
@@ -159,13 +166,21 @@ export const defineEval = <I, O>(definition: EvalDefinition<I, O>): Eval => {
           ),
         { concurrency: "unbounded" },
       );
-      return { trial, millis, output: plain(outcome.success), checks: results };
-    }).pipe(
-      // A defect shows up as a failed trial instead of stopping the other evals.
-      Effect.catchCause((cause) => Effect.succeed(failed(0, `Crashed: ${messageOf(cause)}`))),
-      Effect.withSpan("Eval.trial", { attributes: { case: caseName, trial } }),
-    );
-  };
+      return {
+        trial,
+        millis,
+        output: plain(outcome.success),
+        checks: results,
+      } satisfies TrialResult;
+    },
+    // A defect shows up as a failed trial instead of stopping the other evals.
+    (effect, caseName, trial) =>
+      Effect.catchCause(effect, (cause) =>
+        Effect.succeed(
+          trialFailure(caseName, trial, 0, `Crashed: ${messageOf(Cause.squash(cause))}`),
+        ),
+      ),
+  );
   return new Eval(definition.minimum, Object.keys(definition.cases), runTrial);
 };
 
@@ -180,24 +195,28 @@ export interface RunOptions {
 export const matchingCases = (target: Eval, filter: string | undefined) =>
   target.caseNames.filter((name) => filter === undefined || name.includes(filter));
 
-export const runEval = (name: string, target: Eval, options: RunOptions) =>
-  Effect.gen(function* () {
-    const names = matchingCases(target, options.filter);
-    const jobs = names.flatMap((caseName) =>
-      Array.from({ length: options.trials }, (_, trial) => ({ caseName, trial: trial + 1 })),
-    );
-    const results = yield* Effect.forEach(
-      jobs,
-      ({ caseName, trial }) =>
-        target.runTrial(caseName, trial).pipe(Effect.map((result) => ({ caseName, result }))),
-      { concurrency: options.concurrency },
-    );
-    const cases: ReadonlyArray<CaseResult> = names.map((caseName) => ({
-      name: caseName,
-      trials: results.flatMap((each) => (each.caseName === caseName ? [each.result] : [])),
-    }));
-    return { name, minimum: target.minimum, cases } satisfies EvalResult;
-  }).pipe(Effect.withSpan(`Eval.${name}`));
+export const runEval = Effect.fn("Eval.run")(function* (
+  name: string,
+  target: Eval,
+  options: RunOptions,
+) {
+  yield* Effect.annotateCurrentSpan({ eval: name });
+  const names = matchingCases(target, options.filter);
+  const jobs = names.flatMap((caseName) =>
+    Array.from({ length: options.trials }, (_, trial) => ({ caseName, trial: trial + 1 })),
+  );
+  const results = yield* Effect.forEach(
+    jobs,
+    ({ caseName, trial }) =>
+      target.runTrial(caseName, trial).pipe(Effect.map((result) => ({ caseName, result }))),
+    { concurrency: options.concurrency },
+  );
+  const cases: ReadonlyArray<CaseResult> = names.map((caseName) => ({
+    name: caseName,
+    trials: results.flatMap((each) => (each.caseName === caseName ? [each.result] : [])),
+  }));
+  return { name, minimum: target.minimum, cases } satisfies EvalResult;
+});
 
 /** A trial passes when its call succeeded and every check passed. */
 export const trialPassed = (trial: TrialResult) =>
