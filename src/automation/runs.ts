@@ -55,12 +55,9 @@ import { makeRunStore, type StoredRun } from "./run-store.ts";
 
 const decodeToken = Schema.decodeUnknownEffect(DurableDeferred.Token);
 
-/**
- * Payload of the `advance` callback, which replays a run's execution: a persisted contract. Jobs
- * from before entity-based triggers carried only a `runId`; their runs were discarded.
- */
+/** Payload of the `advance` callback, which replays a run's execution: a persisted contract. */
 interface Advance {
-  readonly executionId?: ExecutionId;
+  readonly executionId: ExecutionId;
 }
 
 /** Payload of the `clock` callback, which fires a durable clock: a persisted contract. */
@@ -241,12 +238,8 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
   // that finished keep their results. An action interrupted by eviction runs again with the
   // same idempotency key.
   const advance = Effect.fn("Automation.advance")(function* ({ executionId }: Advance) {
-    if (executionId === undefined) {
-      return;
-    }
     const runId = yield* records.runForExecution(executionId);
-    // A run that was discarded leaves its journal behind; there's nothing to resume.
-    if (runId === undefined || (yield* readRun(runId)) === undefined) {
+    if (runId === undefined) {
       return;
     }
     yield* updateRun(runId, (run) =>

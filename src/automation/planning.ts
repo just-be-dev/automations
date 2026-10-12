@@ -14,7 +14,7 @@ import { AgentToolError } from "../ai/pi.ts";
 import { EntityStore } from "../entities/store.ts";
 import type { Workflow } from "../workflow/model.ts";
 import { AnswerHub } from "../ai/ask-question/answer-hub.ts";
-import { AutomationHost, decodeOrDrop } from "./host.ts";
+import { AutomationHost, decodeStored } from "./host.ts";
 import { AutomationError } from "./model.ts";
 import { catalogOf } from "./workflow-store.ts";
 
@@ -44,7 +44,7 @@ export const makePlanning = Effect.fn("Automation.makePlanning")(function* () {
   const entities = yield* EntityStore;
   const hub = yield* AnswerHub;
 
-  const stored = storage.get("plan").pipe(Effect.flatMap(decodeOrDrop(StoredPlan)));
+  const stored = storage.get("plan").pipe(Effect.flatMap(decodeStored(StoredPlan)));
 
   /** Starts the working copy for `chatId` from the draft, unless a delivery already did. */
   const start = (chatId: string, draft: Workflow | undefined) =>

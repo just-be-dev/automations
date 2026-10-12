@@ -550,7 +550,6 @@ describe("Automation application without a platform", () => {
         expect(yield* h.host.storage.get(`execution:${executionId}`)).toBe(started.id);
         expect(yield* h.host.storage.get(`wf:${executionId}:payload`)).toBeDefined();
         const reopened = yield* makeAutomation();
-        yield* reopened.callbacks.advance({}); // Old callback payloads are still ignored.
         yield* reopened.callbacks.advance({ executionId });
         yield* reopened.callbacks.advance({ executionId });
         return yield* reopened.run(started.id);
@@ -1341,7 +1340,7 @@ test("manual event runs require the saved subject and enforce the saved conditio
   );
 });
 
-test("legacy entity triggers retain event depth and cannot restart a bounded event cycle", async () => {
+test("entity triggers retain event depth and cannot restart a bounded event cycle", async () => {
   const h = harness();
   await Effect.runPromise(
     Effect.gen(function* () {

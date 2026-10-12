@@ -4,19 +4,11 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type { ExecutionId } from "../workflow/execution.ts";
 
-// Workflows and runs from before entity-based triggers were discarded on purpose.
-export const decodeOrDrop =
-  <A, I>(schema: Schema.Codec<A, I>) =>
-  (value: unknown) =>
-    value === undefined
-      ? Effect.succeed(undefined)
-      : Schema.decodeUnknownEffect(schema)(value).pipe(
-          Effect.map((decoded): A | undefined => decoded),
-          Effect.tapError((error) =>
-            Effect.logWarning("Dropped a stored value that no longer decodes", error),
-          ),
-          Effect.orElseSucceed(() => undefined),
-        );
+/** Decodes a stored value, or `undefined` when it is absent. One that doesn't decode is a defect. */
+export const decodeStored = <A, I>(schema: Schema.Codec<A, I>) => {
+  const decode = Schema.decodeUnknownEffect(Schema.UndefinedOr(schema));
+  return (value: unknown) => decode(value).pipe(Effect.orDie);
+};
 
 export class AutomationStorageError extends Schema.TaggedError<AutomationStorageError>()(
   "AutomationStorageError",

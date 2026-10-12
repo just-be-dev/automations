@@ -23,7 +23,7 @@ import { PLANNER_MODEL, workersAiClassifier } from "./workers-ai.ts";
 
 // Callback names, payloads, and schedule keys are persisted contracts.
 const PlanReply = Schema.Struct({ automationId: Schema.String, chatId: Schema.String });
-const Advance = Schema.Struct({ executionId: Schema.optionalKey(ExecutionId) });
+const Advance = Schema.Struct({ executionId: ExecutionId });
 const ClockFired = Schema.Struct({ executionId: ExecutionId, deferredName: Schema.String });
 const Tick = Schema.Struct({ at: Schema.Finite });
 /** The saved schedule has one pending occurrence at a time, under this job ID. */

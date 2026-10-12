@@ -8,7 +8,7 @@ import type { DurableEngine } from "../workflow/durable-engine.ts";
 import type { ExecutionId } from "../workflow/execution.ts";
 import { RunStopped, StepFailed, type StepEvent } from "../workflow/interpreter.ts";
 import { Run, RunId, type HumanTask } from "../workflow/run.ts";
-import { AutomationHost, decodeOrDrop } from "./host.ts";
+import { AutomationHost, decodeStored } from "./host.ts";
 
 /** The application record with its ID branded internally; its persisted/wire shape is unchanged. */
 export const StoredRun = Schema.Struct({ ...Run.fields, id: RunId });
@@ -18,6 +18,7 @@ const runPrefix = "run:";
 const runKey = (id: RunId) => `${runPrefix}${id}`;
 const executionKey = (id: ExecutionId) => `execution:${id}`;
 const decodeRunId = Schema.decodeUnknownEffect(Schema.UndefinedOr(RunId));
+const decodeRuns = Schema.decodeUnknownEffect(Schema.Array(StoredRun));
 
 const causeMessage = (cause: Cause.Cause<unknown>) => {
   const failure = Cause.squash(cause);
@@ -32,7 +33,7 @@ const causeMessage = (cause: Cause.Cause<unknown>) => {
  */
 export const makeRunStore = Effect.fn("Automation.makeRunStore")(function* () {
   const { storage } = yield* AutomationHost;
-  const read = (id: RunId) => storage.get(runKey(id)).pipe(Effect.flatMap(decodeOrDrop(StoredRun)));
+  const read = (id: RunId) => storage.get(runKey(id)).pipe(Effect.flatMap(decodeStored(StoredRun)));
   const write = (run: StoredRun) => storage.put(runKey(run.id), run);
 
   // Steps in parallel branches report at the same time, so updates to a run take turns.
@@ -97,12 +98,9 @@ export const makeRunStore = Effect.fn("Automation.makeRunStore")(function* () {
     });
 
   const all = storage.list({ prefix: runPrefix }).pipe(
-    Effect.flatMap((entries) => Effect.forEach([...entries.values()], decodeOrDrop(StoredRun))),
-    Effect.map((runs) =>
-      runs
-        .filter((run): run is StoredRun => run !== undefined)
-        .toSorted((left, right) => right.startedAt - left.startedAt),
-    ),
+    Effect.flatMap((entries) => decodeRuns([...entries.values()])),
+    Effect.orDie,
+    Effect.map((runs) => runs.toSorted((left, right) => right.startedAt - left.startedAt)),
   );
 
   return {

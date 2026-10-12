@@ -5,7 +5,7 @@ import { EntityStore } from "../entities/store.ts";
 import { checkWorkflow } from "../workflow/catalog.ts";
 import { isTimed, subjectType, triggerSchedule, Workflow } from "../workflow/model.ts";
 import { MAX_SCHEDULED_RUNS, nextOccurrence, tooManyRuns } from "../workflow/schedule.ts";
-import { AutomationHost, decodeOrDrop } from "./host.ts";
+import { AutomationHost, decodeStored } from "./host.ts";
 import { AutomationIndex } from "./index.ts";
 import { AutomationError } from "./model.ts";
 import { makeSubjects } from "./subjects.ts";
@@ -25,7 +25,7 @@ export const makeWorkflowStore = Effect.fn("Automation.makeWorkflowStore")(funct
   const index = yield* AutomationIndex;
   const subjects = yield* makeSubjects();
   const read = (key: "draft" | "saved") =>
-    storage.get(key).pipe(Effect.flatMap(decodeOrDrop(Workflow)));
+    storage.get(key).pipe(Effect.flatMap(decodeStored(Workflow)));
   const catalog = catalogOf(entities);
 
   /**
