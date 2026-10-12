@@ -383,7 +383,7 @@ Pauses the run until a person responds.
 
 - `prompt` is up to 4000 characters.
 - `assignee` is a ref to a person: an entity with a text field named `email`. The schema allows leaving it out, but the planner is told to always set it.
-- `notify` (`slack` or `email`) also sends the request through that connection. Both are simulated today, so the task records the channel and sends nothing.
+- `notify` (`slack` or `email`) names the channel to reach the assignee on. It is recorded and nothing is sent yet, even when Slack is connected.
 - `response` is `"approval"` (approve or reject), or a form of at least one field. Field types are `text`, `number`, `boolean`, `date`, and `datetime`, and a field's `default` is a template that prefills the answer.
 - `timeout` is an optional duration. When it passes first, the step finishes with `timedOut: true`, and a form keeps its defaults, so a proposal nobody objects to goes ahead.
 
@@ -462,7 +462,7 @@ An action can also take inputs from a [template](#templates) with `template: { "
 | `http.post`            | `url` (literal), `body?` JSON                                                        | `status`, `body` (up to 4000 characters) |
 | `events.emit`          | `name`, `data` JSON text or one exact `{{ref}}`                                      | `eventId`, `name`                        |
 
-Email, Slack, and Calendar are **simulated**: there are no credentials yet, so their operations contact nothing. They succeed and record what they would have sent, with `simulated: true`. Their IDs derive from the step's idempotency key. `calendar.findTimes` offers weekday slots at 10:00 and 14:00 UTC.
+Email and Calendar are **simulated**: there are no credentials yet, so their operations contact nothing. They succeed and record what they would have sent, with `simulated: true`. Slack is simulated the same way unless the deployment has a bot token ([setup](development.md#slack)); then `slack.sendMessage` posts and records Slack's `channel` ID and `ts`, delivered at least once. Their IDs derive from the step's idempotency key. `calendar.findTimes` offers weekday slots at 10:00 and 14:00 UTC.
 
 ### Publishing events and entity commands
 

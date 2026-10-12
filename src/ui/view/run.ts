@@ -255,7 +255,7 @@ const runView = (
             ],
             [icon(h, OctagonX, "mt-0.5 size-3.5"), `Stopped: ${run.stopReason}`],
           ),
-      openTasksView(run, openRun, h),
+      openTasksView(run, openRun, model.liveConnections, h),
       workflowView(
         run.workflow,
         {
@@ -263,6 +263,7 @@ const runView = (
           expandedStepIds: model.expandedStepIds,
           maybeRunSteps: Option.some(run.steps),
           roles: readyRoles(model.roles),
+          liveConnections: model.liveConnections,
         },
         h,
       ),

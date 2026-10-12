@@ -134,6 +134,8 @@ export const Model = Schema.Struct({
   newAutomationDialog: Dialog.Model,
   newAutomation: NewAutomation,
   roles: RoleChoices,
+  /** Connections the registry simulates but this deployment really connects, such as `"slack"`. */
+  liveConnections: Schema.Array(Schema.String),
   revision: Schema.Int,
   /** Each automation's unsent message, so the composer never carries one into another automation. */
   messageInputs: Schema.Record(Schema.String, Schema.String),

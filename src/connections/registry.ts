@@ -45,8 +45,9 @@ export interface Connection {
   readonly id: string;
   readonly title: string;
   /**
-   * Simulated connections have no credentials yet. Their operations succeed without contacting
-   * the service and record what they would have sent.
+   * Simulated connections have no credentials by default. Their operations succeed without
+   * contacting the service and record what they would have sent, with `simulated: true`. A
+   * deployment can still connect one (Slack, with `SLACK_BOT_TOKEN`); `LiveConnections` says which.
    */
   readonly simulated: boolean;
   readonly operations: ReadonlyArray<Operation>;
@@ -110,7 +111,8 @@ export const connections: ReadonlyArray<Connection> = [
       {
         id: "slack.sendMessage",
         title: "Send a Slack message",
-        description: "Sends a direct message to a person, or posts to a channel such as #general.",
+        description:
+          "Sends a direct message to a person, or posts to a channel such as #general. The message is Slack mrkdwn. Delivery is at least once.",
         inputs: [
           input("to", "text", 'A person ({{ref}} or email) or a channel ("#team")'),
           input("text", "text", "The message"),

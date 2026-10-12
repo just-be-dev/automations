@@ -22,7 +22,17 @@ export const operationIcon = (operationId: string): IconNode =>
 export const operationTitle = (operationId: string) =>
   findOperation(operationId)?.title ?? operationId;
 
-export const isSimulated = (operationId: string) => connectionOf(operationId)?.simulated === true;
+/** Simulated in the registry, and not connected in this deployment (`GET /api/connections`). */
+export const isSimulated = (operationId: string, liveConnections: ReadonlyArray<string>) => {
+  const connection = connectionOf(operationId);
+  return connection?.simulated === true && !liveConnections.includes(connection.id);
+};
+
+/** Whether a step's record says it sent nothing, whatever the deployment does today. */
+export const recordIsSimulated = (record: unknown) =>
+  typeof record === "object" &&
+  record !== null &&
+  Object.getOwnPropertyDescriptor(record, "simulated")?.value === true;
 
 export const tagView = (label: string, h: HtmlBuilder<Message>) =>
   badge(

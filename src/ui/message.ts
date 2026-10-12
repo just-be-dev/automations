@@ -68,6 +68,8 @@ export const Message = defineMessageUnion({
   FailedLoadAutomations: { error: Schema.String },
   SucceededLoadRoles: { roles: Schema.Array(Role) },
   FailedLoadRoles: { error: Schema.String },
+  SucceededLoadConnections: { live: Schema.Array(Schema.String) },
+  FailedLoadConnections: { error: Schema.String },
   SucceededLoadSubjects: {
     revision: Schema.Int,
     entityType: Schema.String,

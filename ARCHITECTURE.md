@@ -34,6 +34,8 @@ This is a single-tenant Cloudflare application. [Development and operations](doc
 
 `alchemy.run.ts` re-exports [the Cloudflare stack](src/platform/cloudflare/stack.ts). Alchemy declares infrastructure and hosts the Effect implementations in one program. The public `Studio` Worker serves the browser app; [its edge entry](src/platform/cloudflare/edge.ts) only forwards `/api/*` to `Api`. `Api` has `workersDev: false` and no public URL.
 
+When Slack is configured, a third Worker, [`Channels`](src/platform/cloudflare/channels.ts), takes Slack's webhooks through [effect-channels](https://github.com/humanlayer/effect-channels). It is public because Slack must reach it, and it serves only signature-checked provider routes. Each Slack thread gets a `ChannelMailbox` Durable Object that stores its events and runs them in order from its alarm, with retries. [Its callbacks](src/channels/slack.ts) only publish `slack.mention`, `slack.message`, and `slack.reaction` to the `Events` queue under IDs taken from Slack's, so redeliveries reach each automation's event receipts and start nothing twice. The mailbox never touches automations directly.
+
 [The API host](src/platform/cloudflare/api.ts) composes request-scoped services and extracts Access identity. [HTTP routes](src/http/api.ts) decode inputs, call application services, and encode results. They do not know about D1 bindings or Durable Object namespaces. The API caps bodies at 32 KB and returns `{ "error": string }` on failure.
 
 Cloudflare implementations live under `src/platform/cloudflare/`. Dependencies point from those adapters into the application and domain modules, never back. [The boundary test](src/platform/boundary.test.ts) enforces this. Alchemy binding declarations run at plan time and cold start; storage, AI, and callbacks are used only inside request or instance handlers.
@@ -191,13 +193,13 @@ D1 holds the automation directory because Cloudflare cannot enumerate Durable Ob
 
 Routes preserve the open automation and run in the URL. Page changes increment a revision so old requests and polls cannot overwrite the new page. The global assistant sits outside the page lifecycle and uses its own request sequencing. Follow-along uses actual assistant activity links and does not navigate over dirty forms or unsent messages.
 
-Agent replies render Markdown tokens without setting raw HTML. Run results render as labelled fields, not raw JSON. The operation registry marks Email, Slack, and Calendar as simulated, and the UI says so.
+Agent replies render Markdown tokens without setting raw HTML. Run results render as labelled fields, not raw JSON. The operation registry marks Email, Slack, and Calendar as simulated. A deployment with `SLACK_BOT_TOKEN` connects Slack; `GET /api/connections` lists what is connected, so the UI tags an operation "Simulated" only when it is, and a run's result says so from its own `simulated: true` record.
 
 ## Guarantees have deliberate limits
 
 - Approval tasks record the role’s members when opened and check the Access email when answered. The private API trusts the Studio’s identity header; local dev and service-token requests have no email restriction. JWT verification and the rest of the security boundary need production review.
 - `http.post` accepts only literal public HTTPS URLs without credentials. Both the catalog and connection runner enforce the URL boundary. It does not forward trace headers. Workflows must not contain secrets.
 - Steps that are declined or skipped record nothing. Dependent steps are skipped; catalog checks guarantee that referenced steps precede their readers on every path.
-- Email, Slack, Calendar, and human notifications do not send anything in the prototype. HTTP requests are real.
+- Email, Calendar, and human notifications do not send anything in the prototype. Slack posts only when `SLACK_BOT_TOKEN` is set ([setup](docs/slack.md)). HTTP requests are real.
 
 Application tests use memory implementations and scripted models. UI Story and Scene tests exercise state transitions and accessible views. Native Worker behavior requires local end-to-end checks, and real-model evals measure prompt behavior that scripted tests cannot. See [the development guide](docs/development.md#evals) for commands and [the Effect organization guide](docs/effect-code-organization.md) for the reasoning behind these boundaries.

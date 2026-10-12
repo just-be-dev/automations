@@ -6,6 +6,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { AutomationIndex } from "../automation/index.ts";
+import { LiveConnections } from "../connections/live.ts";
 import type { TemplateUsage } from "../automation/model.ts";
 import { Automations } from "../automation/service.ts";
 import { EntityName, Role } from "../entities/model.ts";
@@ -56,7 +57,16 @@ const templateUsage = Effect.fn("Catalog.templateUsage")(function* (name: string
 });
 
 /** Roles and approved wording available to the planner and new runs. */
-export const catalogRoutes = Layer.merge(
+export const catalogRoutes = Layer.mergeAll(
+  HttpRouter.add(
+    "GET",
+    "/api/connections",
+    respond(
+      Effect.gen(function* () {
+        return { live: yield* LiveConnections };
+      }),
+    ),
+  ),
   HttpRouter.addAll(
     [
       HttpRouter.route("GET", "/", respond(EntityStore.use((entities) => entities.listRoles))),

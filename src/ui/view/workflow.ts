@@ -56,6 +56,7 @@ import { templatesHref } from "../route.ts";
 import {
   type IconNode,
   isSimulated,
+  recordIsSimulated,
   operationIcon,
   operationTitle,
   simulatedTagView,
@@ -214,6 +215,8 @@ interface StepContext {
   readonly permissions: Permissions;
   /** The roles permissions can ask, for their labels. */
   readonly roles: ReadonlyArray<Role>;
+  /** Connections simulated by default that this deployment really connects. */
+  readonly liveConnections: ReadonlyArray<string>;
 }
 
 export const workflowView = (
@@ -807,7 +810,7 @@ const stepDetailView = (
               [h.Class("flex items-center gap-2 text-xs text-muted-foreground")],
               [
                 operationTitle(action.use),
-                isSimulated(action.use) ? simulatedTagView(h) : h.empty,
+                isSimulated(action.use, context.liveConnections) ? simulatedTagView(h) : h.empty,
                 permissionTagView(context.permissions[action.use], context.roles, h),
               ],
             ),
@@ -984,7 +987,7 @@ const stepResultView = (
       h.div(
         [h.Class("text-[11px] text-muted-foreground")],
         [
-          step.kind === "action" && isSimulated(step.use)
+          step.kind === "action" && recordIsSimulated(record)
             ? "Simulated: nothing was sent. This is what it would have sent."
             : "Result",
         ],

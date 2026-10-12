@@ -29,7 +29,8 @@
               "evals/framework/worker.ts",
               "src/platform/cloudflare/access.ts",
               "src/platform/cloudflare/access.test.ts",
-              "src/connections/runner.ts"
+              "src/connections/runner.ts",
+              "src/connections/slack.ts"
             ],
             "options": { "allowedUnstableApis": ["effect/http"] }
           },

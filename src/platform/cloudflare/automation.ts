@@ -1,13 +1,16 @@
 /** Hosts one automation in a Durable Object, wiring storage, jobs, AI, and replay-compatible callbacks. */
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { PiAgent } from "../../ai/pi.ts";
 import { ProgressClassifier } from "../../agents/planner/progress-classifier.ts";
 import { AnswerHub, makeAnswerHub } from "../../ai/ask-question/answer-hub.ts";
 import { makeAutomation } from "../../automation/application.ts";
+import { makeSlackWebSender, SlackSender } from "../../connections/slack.ts";
 import { AutomationHost, AutomationStorageError } from "../../automation/host.ts";
 import { makePlanning } from "../../automation/planning.ts";
 import { ExecutionId } from "../../workflow/execution.ts";
@@ -35,6 +38,8 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
     const index = yield* AutomationIndexD1;
     const entities = yield* EntityStoreD1;
     const events = yield* EventsQueue;
+    // Read during Init, so a deploy with the token binds it as a secret. Without it, Slack is simulated.
+    const slackToken = yield* Config.option(Config.Redacted("SLACK_BOT_TOKEN")).pipe(Effect.orDie);
 
     // @effect-diagnostics-next-line returnEffectInGen:off
     return Effect.gen(function* () {
@@ -100,6 +105,10 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         Effect.provideService(AnswerHub, answers),
         Effect.provideService(PiAgent, pi),
         Effect.provideService(ProgressClassifier, classifier),
+        Effect.provideService(
+          SlackSender,
+          Option.isSome(slackToken) ? makeSlackWebSender(slackToken.value) : null,
+        ),
       );
       const planReply = yield* Alchemy.makeCallback("planReply", (payload: unknown) =>
         Schema.decodeUnknownEffect(PlanReply)(payload).pipe(

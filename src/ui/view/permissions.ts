@@ -52,6 +52,7 @@ export const permissionsView = (workflow: Workflow, model: Model, h: HtmlBuilder
                 Option.fromNullishOr(permissionOf(workflow, operationId)),
                 readyRoles(model.roles),
                 Activity.guards.Working(model.activity),
+                model.liveConnections,
                 h,
               ),
             ),
@@ -65,6 +66,7 @@ const permissionRowView = (
   maybePermission: Option.Option<Permission>,
   roles: ReadonlyArray<Role>,
   isWorking: boolean,
+  liveConnections: ReadonlyArray<string>,
   h: HtmlBuilder<Message>,
 ) => {
   const maybeRole = askedRole(maybePermission);
@@ -82,7 +84,7 @@ const permissionRowView = (
         [h.Class("flex min-w-0 flex-1 items-center gap-2 text-sm")],
         [
           h.span([], [operationTitle(operationId)]),
-          isSimulated(operationId) ? simulatedTagView(h) : h.empty,
+          isSimulated(operationId, liveConnections) ? simulatedTagView(h) : h.empty,
         ],
       ),
       Option.match(maybeRole, {

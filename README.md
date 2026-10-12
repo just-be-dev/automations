@@ -6,7 +6,7 @@ Automations studio turns a conversation into a workflow you can inspect, refine,
 
 ![A conversation in Automations studio describing and refining a new-hire automation, beside its rendered workflow with parallel preparation, approved welcome templates, People Ops approval, and a three-day follow-up.](docs/images/first-week.png)
 
-_Describe the process, refine it in chat, and review the resulting workflow. “Launch a great first week” is a scripted local demo in the real studio UI; Email, Slack, and Calendar are simulated._
+_Describe the process, refine it in chat, and review the resulting workflow. “Launch a great first week” is a scripted local demo in the real studio UI; Email and Calendar are simulated, and so is Slack unless you [connect it](docs/development.md#slack)._
 
 ## From a description to a running process
 
@@ -41,7 +41,7 @@ The [example workflow](docs/examples/first-week.json) uses the employee type, te
 
 This is a **single-tenant prototype**, not a production-ready service. It runs on Cloudflare and supports long-lived workflows that pause for days or for a person’s response.
 
-Email, Slack, and Calendar currently **simulate their operations**: they record what would happen but contact nobody. Human-task notifications are also recorded rather than sent. HTTP webhooks make real requests. Do not put secrets in workflow definitions. Production use needs further security review; see the [operational caveats](docs/development.md#caveats).
+Email and Calendar currently **simulate their operations**: they record what would happen but contact nobody. Slack is simulated too until you [connect a workspace](docs/slack.md), which lets automations post messages and start from mentions. Human-task notifications are also recorded rather than sent. HTTP webhooks make real requests. Do not put secrets in workflow definitions. Production use needs further security review; see the [operational caveats](docs/development.md#caveats).
 
 ## Development
 

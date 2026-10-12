@@ -143,6 +143,7 @@ const draftView = (model: Model, h: HtmlBuilder<Message>) =>
                   expandedStepIds: model.expandedStepIds,
                   maybeRunSteps: Option.none(),
                   roles: readyRoles(model.roles),
+                  liveConnections: model.liveConnections,
                 },
                 h,
               ),

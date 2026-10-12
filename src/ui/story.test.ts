@@ -613,6 +613,7 @@ test("the URL picks which automation opens and loads it with the automation list
     "LoadAutomation",
     "LoadAutomations",
     "LoadRoles",
+    "LoadConnections",
     "RestoreAssistant",
   ]);
 
@@ -622,6 +623,7 @@ test("the URL picks which automation opens and loads it with the automation list
     "LoadOverview",
     "LoadAutomations",
     "LoadRoles",
+    "LoadConnections",
     "RestoreAssistant",
   ]);
   expect(

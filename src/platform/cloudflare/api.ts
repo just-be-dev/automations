@@ -1,12 +1,15 @@
 /** Hosts the private API Worker and supplies request-scoped application services and authenticated identity. */
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Alchemy from "alchemy";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import { deliverEvent } from "../../events/delivery.ts";
 import { AutomationNamer } from "../../agents/namer/namer.ts";
+import { LiveConnections } from "../../connections/live.ts";
 import { Automations } from "../../automation/service.ts";
 import { EntitySubscribers } from "../../entities/subscribers.ts";
 import { apiRoutes } from "../../http/api.ts";
@@ -42,6 +45,9 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const index = yield* AutomationIndexD1;
     const entities = yield* EntityStoreD1;
     const events = yield* EventsQueue;
+    // The Automation objects this Worker hosts send with the same token; see automation.ts.
+    const slackToken = yield* Config.option(Config.Redacted("SLACK_BOT_TOKEN")).pipe(Effect.orDie);
+    const live = Option.isSome(slackToken) ? ["slack"] : [];
     const automations = automationsLayer(namespace);
     const subscribers = Layer.unwrap(
       Automations.use((service) =>
@@ -62,6 +68,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
       assistantsLayer(assistantNamespace),
       changesLayer(changeNamespace),
       Layer.effect(Transcription, Effect.map(ai.raw, workersAiTranscription)),
+      Layer.succeed(LiveConnections, live),
     );
     // Consumer settings are plan-time only; Stage is not a service in the Worker runtime.
     const deadLetterQueue = globalThis.__ALCHEMY_RUNTIME__

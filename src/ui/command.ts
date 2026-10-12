@@ -109,6 +109,21 @@ export const LoadRoles = Command.define("LoadRoles", {
   ),
 });
 
+/** Which simulated connections are live here; on failure the studio keeps calling them simulated. */
+export const LoadConnections = Command.define("LoadConnections", {
+  messages: [Message.SucceededLoadConnections, Message.FailedLoadConnections],
+  execute: requestJson(
+    "/api/connections",
+    Schema.Struct({ live: Schema.Array(Schema.String) }),
+  ).pipe(
+    Effect.map(({ live }) => Message.SucceededLoadConnections({ live })),
+    Effect.catch((error) =>
+      Effect.succeed(Message.FailedLoadConnections({ error: errorText(error) })),
+    ),
+    Effect.provide(Http.layer),
+  ),
+});
+
 export const LoadRuns = Command.define("LoadRuns", {
   args: requestArgs,
   messages: [Message.SucceededLoadRuns, Message.FailedRequest],

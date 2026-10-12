@@ -12,6 +12,7 @@ import { PiAgent } from "../ai/pi.ts";
 import { emptyTrace } from "../ai/trace.ts";
 import { checkWorkflow } from "../workflow/catalog.ts";
 import { runAction } from "../connections/runner.ts";
+import { SlackSender } from "../connections/slack.ts";
 import { findOperation } from "../connections/registry.ts";
 import { makeDurableEngine, type DurableEngine } from "../workflow/durable-engine.ts";
 import {
@@ -98,6 +99,8 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
   const storage = host.storage;
   const entities = yield* EntityStore;
   const events = yield* Events;
+  // A Reference: null (Slack simulated) unless the host provides a sender.
+  const slack = yield* SlackSender;
   const pi = yield* PiAgent;
   const { read: readWorkflow, catalog } = workflows;
   const records = yield* makeRunStore();
@@ -147,7 +150,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
       if (run.tasks.some((task) => task.step === request.step.id)) {
         return run;
       }
-      // NOTE: Slack and email are simulated connections, so `notify` is recorded, not sent.
+      // NOTE: `notify` is recorded, not sent, even when Slack is connected.
       const task: HumanTask = {
         step: request.step.id,
         token: request.token,
@@ -201,7 +204,10 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
         return yield* agentOutput(step, answer);
       }).pipe(Effect.mapError(stepFailed(step.id))),
     action: ({ step, inputs, state: known }, idempotencyKey) =>
-      runAction(step, inputs, known, idempotencyKey).pipe(Effect.provideService(Events, events)),
+      runAction(step, inputs, known, idempotencyKey).pipe(
+        Effect.provideService(Events, events),
+        Effect.provideService(SlackSender, slack),
+      ),
     decide: ({ step, question, state: known }) =>
       Effect.gen(function* () {
         const conversation = yield* conversationFor(known.runId);

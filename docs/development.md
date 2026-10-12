@@ -74,6 +74,7 @@ The first deploy offers to bootstrap Alchemy's Cloudflare-hosted state store. Al
 
 - `Studio` serves the UI. It is the only public hostname and sits behind Cloudflare Access, which admits members of your Cloudflare account.
 - `Api` has no public URL. Studio forwards `/api/*` to it over a service binding.
+- `Channels` takes Slack's webhooks, deployed only when Slack is configured ([Slack](#slack)).
 
 It also creates `AutomationsDatabase`, a D1 database that lists the automations and holds the entity types, the entities, the templates, and which automations subscribe to each type. Alchemy applies the migrations in `migrations/` on every deploy. They seed an `employee` type, two employees, and two welcome-email templates.
 
@@ -130,6 +131,16 @@ Only the confirmed decision writes the entity. Its `result.triggered` lists the 
 ### Named events
 
 An automation can listen for `entity.created`, `entity.updated`, `entity.deleted`, or any custom name using an [event trigger](workflow-dsl.md#event), and publish with [`events.emit`](workflow-dsl.md#publishing-events-and-entity-commands). Confirmed HTTP, MCP and assistant entity writes emit the same lifecycle facts. Event listeners run asynchronously, so they are not included in a change decision's `result.triggered` (that lists legacy entity-triggered runs).
+
+### Slack
+
+Slack messages can start automations: the [`slack.*` events](workflow-dsl.md#event). [effect-channels](https://github.com/humanlayer/effect-channels) receives Slack's webhooks on the public `Channels` Worker (`src/platform/cloudflare/channels.ts`), which checks Slack's signature and saves each event in its thread's mailbox, a `ChannelMailbox` Durable Object. The mailbox runs each thread's events in order, retrying failures up to 10 times, and its callbacks (`src/channels/slack.ts`) publish them to the `Events` queue.
+
+With `SLACK_BOT_TOKEN` set, `slack.sendMessage` posts for real (`src/connections/slack.ts`). Sending needs only the token, not the webhook: a manual or scheduled run can post without any Slack message coming in. A channel (`#team`) gets a post, and a person (an email address, or an entity with an `email` field) gets a DM from the bot, found with `users.lookupByEmail`. The bot posts in public channels without joining them (`chat:write.public`); invite it to private ones. If Slack refuses, the step fails with the reason, such as an unknown email address. A human step's `notify` is still recorded, not sent.
+
+To connect a workspace, follow [Slack integration](slack.md). In short: create the app from [`slack-app-manifest.json`](slack-app-manifest.json), put `SLACK_SIGNING_SECRET` and `SLACK_BOT_TOKEN` in `.env`, and point the app's event request URL at `slackWebhookUrl` (`https://<Channels Worker>/integrations/slack/webhook`; locally, through a `cloudflared` quick tunnel). The token alone turns on sending. With both set, the stack also deploys `Channels`, for incoming messages.
+
+The webhook is outside Access because Slack must reach it; requests without a valid signature are refused. Channels logs are in `.alchemy/log/dev_$USER/Channels/`.
 
 Publish an authenticated event with a tenant-unique ID. Keep that ID and payload unchanged when retrying; each automation starts at most one run for it, including after restart:
 
@@ -208,7 +219,9 @@ The screenshot demonstrates the conversation and workflow UI, not a live model r
 
 ## Caveats
 
-- Email, Slack, and Calendar are simulated until they have credentials. Their steps succeed, contact nothing, and record what they would have sent with `simulated: true`. A human step's `notify` is recorded, not sent.
+- Email and Calendar are simulated, and so is Slack without `SLACK_BOT_TOKEN`. Their steps succeed, contact nothing, and record what they would have sent with `simulated: true`. A human step's `notify` is recorded, not sent. With [Slack connected](#slack), messages really arrive and `slack.sendMessage` really posts.
+- `slack.sendMessage` is delivered **at least once**: Slack takes no idempotency key, so if a run restarts after Slack accepted a message but before the run recorded it, the message posts again.
+- Anyone who can post in a channel the bot is in can start a `slack.*`-triggered automation. Treat `event.data.text` as untrusted input, and ask a role in the permissions of anything such a run sends or changes.
 - Only a role's members may answer its approval tasks, going by the email Cloudflare Access sends in `Cf-Access-Authenticated-User-Email`. The Api trusts that header because only the Access-protected Studio Worker reaches it. Verify the Access JWT before production. Under `alchemy dev`, and with the test service token, there's no email, so anyone can answer.
 - `http.post` steps are delivered **at least once**, with an `Idempotency-Key` header that stays the same across retries, so receiving endpoints must be idempotent. Without a `body`, they POST the run's subject and step records to a public HTTPS URL. Don't put secrets in step definitions.
 - Chat is asynchronous: `POST /chat` returns `202` with a `pendingChat`, and the reply and new draft appear on `GET /api/automations/:id` once `pendingChat` is gone. Until then the response includes `progress`, a plain phrase such as "Planning the steps…". If the agent fails, `pendingChat` stays with `status: "failed"` and an `error` until the next message. Each exchange in `conversation` has the `prompt`, the Markdown `reply`, and the questions the agent asked on the way with their answers (`asked`). While the agent waits for answers, `pendingChat` has `status: "asking"` and its `questions`; until the reply is written, it also lists the questions already answered in `asked`. `POST /api/automations/:id/answers` with `{ "chatId", "answer": { "kind": "answers", "answers": ["…", null] } }` (one answer per question, `null` to skip) resumes it; a `POST /chat` meanwhile answers with `{ "kind": "message" }` instead.

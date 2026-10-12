@@ -495,6 +495,10 @@ export const update = (model: Model, message: Message) =>
     FailedLoadRoles: ({ error }) => ({
       model: modifyFields(model, { roles: () => RoleChoices.Unavailable({ error }) }),
     }),
+    SucceededLoadConnections: ({ live }) => ({
+      model: modifyFields(model, { liveConnections: () => live }),
+    }),
+    FailedLoadConnections: () => ({ model }),
     SucceededLoadSubjects: ({ revision, entityType, label, subjects }) =>
       revision !== model.revision || !SubjectChoices.guards.Loading(model.subjectChoices)
         ? { model }

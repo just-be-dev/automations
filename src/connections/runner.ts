@@ -7,6 +7,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schema from "effect/Schema";
 import { EntityPut, PublishEvent } from "../events/model.ts";
 import { Events } from "../events/service.ts";
+import { SlackSender } from "./slack.ts";
 import { StepFailed } from "../workflow/interpreter.ts";
 import {
   durationMillis,
@@ -19,8 +20,9 @@ import type { ExecutionValues } from "../workflow/execution.ts";
 
 /**
  * Executes connection operations for action steps. `http.post` really sends and `events.emit`
- * really publishes. Email, Slack and Calendar have no credentials yet, so they are simulated:
- * they succeed, contact nothing, and
+ * really publishes. Slack posts for real when the deployment provides a `SlackSender` (a bot
+ * token); delivery is at least once, because Slack takes no idempotency key. Email, Calendar, and
+ * Slack without a token are simulated: they succeed, contact nothing, and
  * record what they would have sent with `simulated: true`. Their IDs derive from the step's
  * idempotency key, so a retried step records the same thing.
  */
@@ -161,9 +163,20 @@ export const runAction = Effect.fn("Connections.runAction")(function* (
     }
     case "slack.sendMessage": {
       const to = text(inputs, "to");
-      const channel = to.startsWith("#")
-        ? to
-        : `@${(yield* recipient(step, "to", inputs["to"])).email}`;
+      const person = to.startsWith("#") ? undefined : yield* recipient(step, "to", inputs["to"]);
+      const slack = yield* SlackSender;
+      if (slack !== null) {
+        const sent = yield* slack
+          .send(
+            person === undefined
+              ? { kind: "channel", name: to }
+              : { kind: "person", email: person.email },
+            text(inputs, "text"),
+          )
+          .pipe(Effect.mapError((error) => fail(step, error.message)));
+        return recorded({ channel: sent.channel, ts: sent.ts, text: text(inputs, "text") });
+      }
+      const channel = person === undefined ? to : `@${person.email}`;
       const sentAt = yield* Clock.currentTimeMillis;
       return recorded({
         simulated: true,

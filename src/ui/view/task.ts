@@ -25,7 +25,12 @@ import { type OpenRun, RunNotice } from "../model.ts";
 import { isSimulated, operationIcon, operationTitle, simulatedTagView } from "./operation.ts";
 import { chipClass, eyebrowClass, notifyLabel, stepMetaView } from "./shared.ts";
 
-export const openTasksView = (run: Run, openRun: OpenRun, h: HtmlBuilder<Message>) =>
+export const openTasksView = (
+  run: Run,
+  openRun: OpenRun,
+  liveConnections: ReadonlyArray<string>,
+  h: HtmlBuilder<Message>,
+) =>
   Array.match(
     Array.filter(run.tasks, (task) => task.status === "open"),
     {
@@ -41,7 +46,7 @@ export const openTasksView = (run: Run, openRun: OpenRun, h: HtmlBuilder<Message
             h.h3([h.Id("open-tasks"), h.Class(eyebrowClass)], ["Open tasks"]),
             h.ul(
               [h.AriaLabelledBy("open-tasks"), h.Class("flex flex-col gap-3")],
-              Array.map(tasks, (task) => taskView(task, openRun, h)),
+              Array.map(tasks, (task) => taskView(task, openRun, liveConnections, h)),
             ),
           ],
         ),
@@ -81,7 +86,12 @@ const assigneeView = (assignee: Schema.Json | null, h: HtmlBuilder<Message>) =>
 
 const isSendingAnswer = (openRun: OpenRun) => RunNotice.guards.Sending(openRun.notice);
 
-const taskView = (task: HumanTask, openRun: OpenRun, h: HtmlBuilder<Message>) =>
+const taskView = (
+  task: HumanTask,
+  openRun: OpenRun,
+  liveConnections: ReadonlyArray<string>,
+  h: HtmlBuilder<Message>,
+) =>
   h.keyed("li")(
     task.step,
     [componentName("task"), h.Class("flex flex-col gap-3 rounded-[10px] bg-card p-4 shadow-card")],
@@ -104,7 +114,7 @@ const taskView = (task: HumanTask, openRun: OpenRun, h: HtmlBuilder<Message>) =>
             [
               h.h4([h.Class("text-sm font-medium")], [task.title]),
               h.p([h.Class("text-sm whitespace-pre-wrap text-muted-foreground")], [task.prompt]),
-              task.action === undefined ? h.empty : taskActionView(task.action, h),
+              task.action === undefined ? h.empty : taskActionView(task.action, liveConnections, h),
               stepMetaView(
                 [
                   ...assigneeView(task.assignee, h),
@@ -160,13 +170,20 @@ const isJsonList = (value: Schema.Json): value is ReadonlyArray<Schema.Json> =>
 const inputText = (value: Schema.Json) =>
   isJsonList(value) ? Array.map(value, personText).join(", ") : personText(value);
 
-const taskActionView = (action: NonNullable<HumanTask["action"]>, h: HtmlBuilder<Message>) =>
+const taskActionView = (
+  action: NonNullable<HumanTask["action"]>,
+  liveConnections: ReadonlyArray<string>,
+  h: HtmlBuilder<Message>,
+) =>
   h.div(
     [componentName("task-action"), h.Class("flex flex-col gap-1.5 pt-1")],
     [
       h.div(
         [h.Class("flex items-center gap-2 text-xs text-muted-foreground")],
-        [operationTitle(action.use), isSimulated(action.use) ? simulatedTagView(h) : h.empty],
+        [
+          operationTitle(action.use),
+          isSimulated(action.use, liveConnections) ? simulatedTagView(h) : h.empty,
+        ],
       ),
       h.ul(
         [
