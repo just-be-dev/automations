@@ -74,6 +74,20 @@ export default defineEval({
           ),
       },
     },
+    "slack-mention": {
+      input: {
+        message:
+          "When someone asks our bot for help in Slack, have an agent summarize what they asked and email the summary to ops@example.com. Send it without asking anyone.",
+      },
+      checks: {
+        ...drafts,
+        "starts from a Slack mention": (output) =>
+          expect(output.workflow?.trigger).toMatchObject({ kind: "event", event: "slack.mention" }),
+        "reads what they wrote": (output) =>
+          expect(JSON.stringify(steps(output))).toContain("event.data.text"),
+        "sends the email": (output) => expect(actions(output, "email.send")).toHaveLength(1),
+      },
+    },
     onboarding: {
       input: {
         message:

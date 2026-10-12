@@ -3,3 +3,7 @@ node_modules/
 .wrangler/
 dist/
 evals/results/
+
+# Local secrets (Slack credentials for alchemy dev and deploys)
+.env
+.env.*

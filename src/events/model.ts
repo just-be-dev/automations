@@ -29,5 +29,9 @@ export const PublishEvent = Schema.Struct({
         message: "Entity lifecycle events can only be emitted by the entity store",
       },
     ),
+    // Provider ingress (src/channels/) publishes these; automations trust them to come from Slack.
+    Schema.makeFilter((name) => !name.startsWith("slack."), {
+      message: "Slack events can only be published by the Slack integration",
+    }),
   ),
 });

@@ -1,9 +1,13 @@
 /** Declares the Access-protected studio, private API binding, and local-versus-deployed Alchemy state store. */
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
+import * as Output from "alchemy/Output";
+import * as Config from "effect/Config";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import Api from "./api.ts";
+import Channels from "./channels.ts";
 
 /** Machine access for smoke tests: send `CF-Access-Client-Id` / `CF-Access-Client-Secret`. */
 export const TestClient = Cloudflare.Access.ServiceToken("TestClient", { duration: "720h" });
@@ -68,6 +72,17 @@ export default Alchemy.Stack(
   Effect.gen(function* () {
     yield* Api;
     const studio = yield* Studio;
-    return { url: studio.url };
+    // The public Slack webhook needs both secrets at deploy; without them Slack stays off.
+    const slack = yield* Config.all([
+      Config.Redacted("SLACK_SIGNING_SECRET"),
+      Config.Redacted("SLACK_BOT_TOKEN"),
+    ]).pipe(Config.option);
+    const channels = Option.isSome(slack) ? yield* Channels : undefined;
+    return {
+      url: studio.url,
+      slackWebhookUrl: channels
+        ? Output.map(channels.url, (url) => url && `${url}/integrations/slack/webhook`)
+        : undefined,
+    };
   }),
 );

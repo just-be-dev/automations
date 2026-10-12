@@ -194,6 +194,16 @@ Every event has `{id, name, data, subject?, depth}`. `data` is any JSON value. R
 
 Confirmed entity writes publish `entity.created`, `entity.updated`, or `entity.deleted`, with `data: {before, after}` (the old/new entity data, or `null`) and the entity snapshot as `subject`. Deletion carries the last snapshot. Only the shared entity writer can publish these facts. Use `entity.created` for creation-only workflows, or `entity.deleted` for removal workflows; the existing `entity` trigger continues to watch creations and updates.
 
+When Slack is configured ([setup](development.md#slack)), Slack activity arrives as events too. Only the Slack integration can publish `slack.*` names.
+
+| Event            | When                                                                                      | `data`                                                                     |
+| ---------------- | ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `slack.mention`  | Someone mentions the bot, or sends it a direct message. The bot follows the thread after. | `{text, raw, user: {id, name, handle}, team, channel, thread, ts, direct}` |
+| `slack.message`  | A new message in a thread the bot follows.                                                | Same as `slack.mention`.                                                   |
+| `slack.reaction` | A reaction added to a message in a thread the bot follows.                                | `{reaction, user, message}`, where `message` is as above.                  |
+
+`text` is the message as a person reads it: the bot's own mention is removed, other people appear as `@Name`, channels as `#name`, and links as `label (url)`. `raw` is the message as Slack sent it, in mrkdwn with mentions such as `<@U123>`. If a person can't be looked up, their mention stays as Slack wrote it. `thread` is the timestamp of the thread's first message and `ts` this message's. Slack events carry no subject. Their IDs come from Slack's own identifiers, so a redelivered webhook starts no second run.
+
 ### `schedule`
 
 ```json
