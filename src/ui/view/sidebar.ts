@@ -74,6 +74,20 @@ export const sidebarView = (model: Model, h: HtmlBuilder<Message>) =>
         ],
         [icon(h, FileText, "size-4"), "Templates"],
       ),
+      h.a(
+        [
+          h.Href(entitiesHref(Option.none())),
+          ...(Page.guards.Entities(model.page) ? [h.AriaCurrent("page")] : []),
+          h.Class(
+            cn(
+              navItemClass,
+              "items-center text-[13px] font-medium tracking-tight",
+              Page.guards.Entities(model.page) && "bg-hover text-foreground",
+            ),
+          ),
+        ],
+        [icon(h, Database, "size-4"), "Entity store"],
+      ),
       h.div(
         [h.Class("mt-3 mb-px flex h-[22px] items-center justify-between gap-2 pr-0.5 pl-1.5")],
         [
@@ -129,20 +143,6 @@ export const sidebarView = (model: Model, h: HtmlBuilder<Message>) =>
               ),
             ],
             ["Debug"],
-          ),
-          h.a(
-            [
-              h.Href(entitiesHref(Option.none())),
-              ...(Page.guards.Entities(model.page) ? [h.AriaCurrent("page")] : []),
-              h.Class(
-                cn(
-                  navItemClass,
-                  "items-center text-[13px] font-medium tracking-tight",
-                  Page.guards.Entities(model.page) && "bg-hover text-foreground",
-                ),
-              ),
-            ],
-            [icon(h, Database, "size-4"), "Entity store"],
           ),
           h.a(
             [

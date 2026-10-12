@@ -197,7 +197,7 @@ Each assistant response is an `AssistantState`; while it is `working`, poll its 
 
 ### Entity store
 
-`/entities` in the studio (**Debug → Entity store** in the sidebar) is a debug page for the entity store. Define entity types field by field, then create, edit, and delete their entities. Saving an entity is an ordinary entity write, so it starts the saved automations that watch its type.
+`/entities` in the studio (**Entity store** in the sidebar, under Templates) is a debug page for the entity store. Define entity types field by field, then create, edit, and delete their entities. Saving an entity is an ordinary entity write, so it starts the saved automations that watch its type.
 
 `/api/mcp` serves the same store to agents over MCP's Streamable HTTP transport. Its tools are `list_entity_types`, `define_entity_type`, `delete_entity_type`, `list_entities`, `get_entity`, `put_entity`, `delete_entity`, `list_roles`, `define_role`, and `decide_change`. Entity/type mutation tools return a proposal without writing. Present it to the person before calling `decide_change` with its `proposalId` and `approved` decision. Role tools write directly. The built-in assistant uses application tools directly, not MCP. The server is stateless: it assigns no session, answers in JSON, and supports protocol revisions 2024-11-05 through 2025-11-25. With `mise run dev`:
 
