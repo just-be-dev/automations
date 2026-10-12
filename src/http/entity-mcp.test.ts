@@ -259,3 +259,27 @@ test("MCP confirmation applies the proposal once; cancellation is terminal and l
     }).pipe(Effect.provide(handlers)),
   );
 });
+
+test("MCP proposals with the same requestId are prepared once", async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const propose = (args: object) =>
+        answerMcp({
+          jsonrpc: "2.0",
+          id: 1,
+          method: "tools/call",
+          params: { name: "put_entity", arguments: args },
+        }).pipe(
+          Effect.map(
+            (answer) =>
+              (answer as { result: { structuredContent: { id: string } } }).result.structuredContent
+                .id,
+          ),
+        );
+      const edit = { type: "employee", id: "ada", data: { name: "Ada Lovelace" } };
+      const first = yield* propose({ ...edit, requestId: "retry-1" });
+      expect(yield* propose({ ...edit, requestId: "retry-1" })).toBe(first);
+      expect(yield* propose(edit)).not.toBe(first);
+    }).pipe(Effect.provide(handlers)),
+  );
+});

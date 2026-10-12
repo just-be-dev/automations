@@ -62,9 +62,10 @@ export class EntityStore extends Context.Service<
       data: EntityData,
     ) => Effect.Effect<EntityChange, EntityStoreError | InvalidEntity>;
     /**
-     * Deletes an entity and returns what it held, or `undefined` when there was none. Deleting
-     * starts no runs, and `ref` fields that pointed to it read as `null`. A role's member can't be
-     * deleted; take it out of the role first.
+     * Deletes an entity and returns what it held, or `undefined` when there was none. The store
+     * notifies no subscribers; the change coordinator publishes `entity.deleted`, which can start
+     * event-triggered automations. `ref` fields that pointed to it read as `null`. A role's member
+     * can't be deleted; take it out of the role first.
      */
     readonly deleteEntity: (
       type: string,

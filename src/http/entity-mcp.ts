@@ -39,6 +39,21 @@ const EntityFailure = Schema.Union([EntityStoreError, InvalidEntity, EntityNotFo
 const TypeParams = Schema.Struct({ type: EntityName });
 const EntityParams = Schema.Struct({ type: EntityName, id: EntityId });
 
+/**
+ * Lets a client retry a proposing call without preparing a second proposal. The coordinator
+ * returns the proposal it already prepared for this person under the same ID.
+ */
+const ProposalRequest = {
+  requestId: Schema.optionalKey(
+    Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(120)).annotate({
+      description:
+        "Optional. A unique ID for this proposal, such as a UUID. Repeating the call with the same requestId returns the same proposal instead of preparing another.",
+    }),
+  ),
+};
+const requestIdOf = (requestId: string | undefined) =>
+  requestId === undefined ? undefined : `mcp:${requestId}`;
+
 const ListEntityTypes = Tool.make("list_entity_types", {
   description:
     "Lists every entity type with its fields. Field types are text, number, boolean, date (YYYY-MM-DD), datetime (ISO 8601), and ref (another entity's ID, with the target type in `to`). Steps that contact a person read a text field named `email`.",
@@ -51,23 +66,20 @@ const ListEntityTypes = Tool.make("list_entity_types", {
 const DefineEntityType = Tool.make("define_entity_type", {
   description:
     "Proposes creating or replacing an entity type; does not write. Review the returned proposal with the person, then use decide_change. Names are snake_case. Stored entities aren't rewritten.",
-  parameters: Schema.Struct({ type: EntityType }),
+  parameters: Schema.Struct({ type: EntityType, ...ProposalRequest }),
   success: ChangeProposal,
   failure: EntityFailure,
-})
-  .annotate(Tool.Title, "Define entity type")
-  .annotate(Tool.Idempotent, true);
+}).annotate(Tool.Title, "Define entity type");
 
 const DeleteEntityType = Tool.make("delete_entity_type", {
   description:
     "Proposes deleting an entity type; does not delete. Review the proposal with the person, then use decide_change. Fails while the type has dependants.",
-  parameters: TypeParams,
+  parameters: Schema.Struct({ ...TypeParams.fields, ...ProposalRequest }),
   success: ChangeProposal,
   failure: EntityFailure,
 })
   .annotate(Tool.Title, "Delete entity type")
-  .annotate(Tool.Destructive, true)
-  .annotate(Tool.Idempotent, true);
+  .annotate(Tool.Destructive, true);
 
 const ListEntities = Tool.make("list_entities", {
   description: "Lists the entities of a type.",
@@ -90,7 +102,7 @@ const GetEntity = Tool.make("get_entity", {
 const PutEntity = Tool.make("put_entity", {
   description:
     "Proposes creating or updating an entity, merging data; null clears a field. Does not write or start runs. Review the proposal with the person, then use decide_change. Approval may start matching saved automations.",
-  parameters: Schema.Struct({ ...EntityParams.fields, data: EntityData }),
+  parameters: Schema.Struct({ ...EntityParams.fields, data: EntityData, ...ProposalRequest }),
   success: ChangeProposal,
   failure: EntityFailure,
 })
@@ -99,8 +111,8 @@ const PutEntity = Tool.make("put_entity", {
 
 const DeleteEntity = Tool.make("delete_entity", {
   description:
-    "Proposes deleting an entity; does not delete. Review the proposal with the person, then use decide_change. Deletion starts no automations and fails while a role lists it as a member.",
-  parameters: EntityParams,
+    "Proposes deleting an entity; does not delete. Review the proposal with the person, then use decide_change. Approval may start automations triggered by entity.deleted. Fails while a role lists the entity as a member.",
+  parameters: Schema.Struct({ ...EntityParams.fields, ...ProposalRequest }),
   success: ChangeProposal,
   failure: EntityFailure,
 })
@@ -160,11 +172,13 @@ export const EntityToolHandlers = EntityTools.toLayer(
     const changeFailure = (error: unknown) => new ChangeError({ message: messageOf(error) });
     return EntityTools.of({
       list_entity_types: () => Effect.map(store.listTypes, (types) => ({ types })),
-      define_entity_type: ({ type }) =>
-        changes.prepare(owner, { kind: "putType", type }).pipe(Effect.mapError(changeFailure)),
-      delete_entity_type: ({ type }) =>
+      define_entity_type: ({ type, requestId }) =>
         changes
-          .prepare(owner, { kind: "deleteType", name: type })
+          .prepare(owner, { kind: "putType", type }, requestIdOf(requestId))
+          .pipe(Effect.mapError(changeFailure)),
+      delete_entity_type: ({ type, requestId }) =>
+        changes
+          .prepare(owner, { kind: "deleteType", name: type }, requestIdOf(requestId))
           .pipe(Effect.mapError(changeFailure)),
       list_entities: ({ type }) =>
         Effect.map(store.listEntities(type), (entities) => ({ entities })),
@@ -172,13 +186,13 @@ export const EntityToolHandlers = EntityTools.toLayer(
         Effect.flatMap(store.getEntity(type, id), (entity) =>
           entity === undefined ? Effect.fail(notFound(type, id)) : Effect.succeed({ entity }),
         ),
-      put_entity: ({ type, id, data }) =>
+      put_entity: ({ type, id, data, requestId }) =>
         changes
-          .prepare(owner, { kind: "putEntity", type, id, data })
+          .prepare(owner, { kind: "putEntity", type, id, data }, requestIdOf(requestId))
           .pipe(Effect.mapError(changeFailure)),
-      delete_entity: ({ type, id }) =>
+      delete_entity: ({ type, id, requestId }) =>
         changes
-          .prepare(owner, { kind: "deleteEntity", type, id })
+          .prepare(owner, { kind: "deleteEntity", type, id }, requestIdOf(requestId))
           .pipe(Effect.mapError(changeFailure)),
       list_roles: () => Effect.map(store.listRoles, (roles) => ({ roles })),
       define_role: ({ role }) => Effect.map(store.putRole(role), (stored) => ({ role: stored })),
