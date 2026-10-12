@@ -4,8 +4,7 @@ import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
 import { AutomationIndex } from "../automation/index.ts";
 import { Automations } from "../automation/service.ts";
-import { EntityPut, Event } from "./model.ts";
-import { EventError } from "./service.ts";
+import { EntityPut, Event, MAX_EVENT_DEPTH } from "./model.ts";
 
 export const deliverEvent = Effect.fn("Events.deliver")(function* (
   input: unknown,
@@ -13,9 +12,17 @@ export const deliverEvent = Effect.fn("Events.deliver")(function* (
 ) {
   const event = yield* Schema.decodeUnknownEffect(Event)(input);
   if (event.name === "entity.put") {
-    if (event.depth === 16) return yield* new EventError({ message: "Event chain limit reached" });
-    const command = yield* Schema.decodeUnknownEffect(EntityPut)(event.data);
-    yield* putEntity(event, command);
+    // A command that can never apply is dropped, not retried until it reaches the dead letters.
+    // Publishers refuse both cases, so this only guards against a stray message.
+    const command = Schema.decodeUnknownOption(EntityPut)(event.data);
+    if (event.depth >= MAX_EVENT_DEPTH || command._tag === "None") {
+      return yield* Effect.logWarning(
+        event.depth >= MAX_EVENT_DEPTH
+          ? "Dropped an entity command past the event chain limit"
+          : "Dropped an entity command whose data isn't an entity",
+      ).pipe(Effect.annotateLogs({ eventId: event.id, depth: event.depth }));
+    }
+    yield* putEntity(event, command.value);
   }
   const index = yield* AutomationIndex;
   const automations = yield* Automations;

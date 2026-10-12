@@ -13,7 +13,7 @@ import { messageOf } from "../error.ts";
 import type { ChangeStorage } from "./host.ts";
 import { ChangeAction, ChangeDecision, ChangeProposal } from "./model.ts";
 import { ChangeError, Changes } from "./service.ts";
-import { Event } from "../events/model.ts";
+import { Event, MAX_EVENT_DEPTH } from "../events/model.ts";
 import type { Events } from "../events/service.ts";
 
 const Snapshot = Schema.Struct({
@@ -215,7 +215,7 @@ export const makeChanges = Effect.fn("Changes.make")(function* (
     prepare: Effect.fn("Changes.prepare")(
       function* (owner: string, input: ChangeAction, requestId?: string, sourceEvent?: Event) {
         const action = yield* Schema.decodeEffect(ChangeAction)(input);
-        if (sourceEvent !== undefined && sourceEvent.depth >= 16) {
+        if (sourceEvent !== undefined && sourceEvent.depth >= MAX_EVENT_DEPTH) {
           return yield* fail("Event chain limit reached");
         }
         if (requestId !== undefined) {

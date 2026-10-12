@@ -5,7 +5,7 @@ import * as FetchHttpClient from "effect/http/FetchHttpClient";
 import * as HttpClient from "effect/http/HttpClient";
 import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schema from "effect/Schema";
-import { EntityPut, PublishEvent } from "../events/model.ts";
+import { EntityPut, MAX_EVENT_DEPTH, PublishEvent } from "../events/model.ts";
 import { Events } from "../events/service.ts";
 import { SlackSender } from "./slack.ts";
 import { StepFailed } from "../workflow/interpreter.ts";
@@ -139,12 +139,19 @@ export const runAction = Effect.fn("Connections.runAction")(function* (
           typeof inputs["data"] === "string" && !isReference
             ? yield* Schema.decodeEffect(Schema.fromJsonString(Schema.Json))(inputs["data"])
             : inputs["data"];
+        const name = text(inputs, "name");
+        const depth = state.event === undefined ? 0 : state.event.depth + 1;
+        if (depth > MAX_EVENT_DEPTH || (depth === MAX_EVENT_DEPTH && name === "entity.put")) {
+          return yield* Effect.fail(
+            `Event chain limit reached: this run is ${depth - 1} events deep, and chains stop at ${MAX_EVENT_DEPTH}`,
+          );
+        }
         const event = yield* Schema.decodeUnknownEffect(PublishEvent)({
           id: `action:${idempotencyKey}`,
-          name: text(inputs, "name"),
+          name,
           data,
           ...(state.subject === null ? {} : { subject: state.subject }),
-          depth: state.event === undefined ? 0 : state.event.depth + 1,
+          depth,
         });
         if (event.name === "entity.put") yield* Schema.decodeUnknownEffect(EntityPut)(event.data);
         yield* events.publish(event);

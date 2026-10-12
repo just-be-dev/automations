@@ -14,7 +14,7 @@ import { automationsLayer } from "./automations.ts";
 import { AutomationIndexD1 } from "./automation-index-d1.ts";
 import { EntityStoreD1 } from "./entity-store-d1.ts";
 import { EventsQueue } from "./events.ts";
-import { EntityPut, Event } from "../../events/model.ts";
+import { EntityPut, Event, MAX_EVENT_DEPTH } from "../../events/model.ts";
 import { Events, EventError } from "../../events/service.ts";
 
 export default class ChangeCoordinator extends Cloudflare.DurableObject<ChangeCoordinator>()(
@@ -57,7 +57,7 @@ export default class ChangeCoordinator extends Cloudflare.DurableObject<ChangeCo
       return {
         applyEvent: Effect.fn("Changes.applyEvent")(function* (input: unknown) {
           const event = yield* Schema.decodeUnknownEffect(Event)(input);
-          if (event.name !== "entity.put" || event.depth === 16) {
+          if (event.name !== "entity.put" || event.depth >= MAX_EVENT_DEPTH) {
             return yield* new EventError({ message: "Not an accepted entity command" });
           }
           const command = yield* Schema.decodeUnknownEffect(EntityPut)(event.data);

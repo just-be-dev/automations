@@ -56,10 +56,9 @@ test("fan-out attempts every automation before retrying; entity commands decode 
       expect(Exit.isFailure(result)).toBe(true);
       expect(received).toEqual(["broken", "healthy"]);
       expect(commands).toEqual([event.data]);
-      yield* deliverEvent({ ...event, depth: 16 }, put).pipe(Effect.flip);
-      yield* deliverEvent({ ...event, data: { type: "person", id: "sam", data: [] } }, put).pipe(
-        Effect.flip,
-      );
+      // Commands that can never apply are dropped and acknowledged, not retried.
+      yield* deliverEvent({ ...event, depth: 16 }, put);
+      yield* deliverEvent({ ...event, data: { type: "person", id: "sam", data: [] } }, put);
       expect(commands).toHaveLength(1);
       expect(received).toHaveLength(2);
     }).pipe(Effect.provide(layer)),

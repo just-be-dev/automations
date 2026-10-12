@@ -8,6 +8,9 @@ export const EntityPut = Schema.Struct({ type: EntityName, id: EntityId, data: E
 export const SuppliedEvent = Schema.Struct({ data: Schema.Json });
 export type SuppliedEvent = typeof SuppliedEvent.Type;
 
+/** How many hops an event chain may take. An `entity.put` at this depth can't be applied, because its lifecycle fact would exceed it. */
+export const MAX_EVENT_DEPTH = 16;
+
 export const EventName = Schema.String.check(Schema.isPattern(/^[a-z][a-z0-9_.-]{0,119}$/));
 export const Event = Schema.Struct({
   id: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(240)),
@@ -15,7 +18,7 @@ export const Event = Schema.Struct({
   data: Schema.Json,
   subject: Schema.optionalKey(Subject),
   /** Bounds event chains, including entity mutations, so a cycle cannot run forever. */
-  depth: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 16 })),
+  depth: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: MAX_EVENT_DEPTH })),
 });
 export type Event = typeof Event.Type;
 

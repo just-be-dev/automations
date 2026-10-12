@@ -39,3 +39,40 @@ test("emit uses a stable ID across retries, decodes JSON and refuses invalid ent
     ),
   );
 });
+
+test("emit stops an event chain at its depth limit", async () => {
+  const emitted: Array<Event> = [];
+  const step: ActionStep = {
+    id: "emit",
+    title: "Emit",
+    kind: "action",
+    use: "events.emit",
+    with: { name: "order.paid", data: "{}" },
+  };
+  const at = (depth: number) => ({
+    runId: RunId.make("run-82"),
+    subject: null,
+    steps: {},
+    event: { id: "source", name: "order.placed", data: null, depth },
+  });
+  const put = { name: "entity.put", data: '{"type":"person","id":"sam","data":{}}' };
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* runAction(step, { name: "order.paid", data: "{}" }, at(15), "last-fact");
+      yield* runAction(step, put, at(14), "last-command");
+      const command = yield* runAction(step, put, at(15), "late-command").pipe(Effect.flip);
+      expect(String(command.message)).toContain("Event chain limit reached");
+      yield* runAction(step, { name: "order.paid", data: "{}" }, at(16), "too-deep").pipe(
+        Effect.flip,
+      );
+      expect(emitted.map((event) => [event.name, event.depth])).toEqual([
+        ["order.paid", 16],
+        ["entity.put", 15],
+      ]);
+    }).pipe(
+      Effect.provideService(Events, {
+        publish: (event) => Effect.sync(() => void emitted.push(event)),
+      }),
+    ),
+  );
+});
