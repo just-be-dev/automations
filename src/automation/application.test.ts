@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { TestClock } from "effect/testing";
-import { ProgressClassifier } from "../agents/planner/progress-classifier.ts";
+import { Classifier, type ClassifyRequest } from "../ai/classifier.ts";
 import { PiAgent, type PromptOptions } from "../ai/pi.ts";
 import { EntityStore, EntityStoreError, layerMemory } from "../entities/store.ts";
 import { EntitySubscribers } from "../entities/subscribers.ts";
@@ -45,6 +45,7 @@ const harness = () => {
   const transcripts: Array<number | undefined> = [];
   const recorded: Array<{ id: string; name: string }> = [];
   const emitted: Array<Event> = [];
+  const classified: Array<ClassifyRequest> = [];
   const lock = Semaphore.makeUnsafe(1);
   let failSchedule = false;
   const host = AutomationHost.of({
@@ -146,9 +147,21 @@ const harness = () => {
   const services = Layer.mergeAll(
     answerHubLayer,
     Layer.succeed(Events, { publish: (event) => Effect.sync(() => void emitted.push(event)) }),
+    // Decide steps pick their first option; there's no reasoning for progress to classify.
     Layer.succeed(
-      ProgressClassifier,
-      ProgressClassifier.of({ classify: () => Effect.die("No reasoning to classify") }),
+      Classifier,
+      Classifier.of({
+        classify: (request) =>
+          Effect.suspend(() => {
+            const criteria = request.questions["decision"]?.criteria;
+            if (criteria === undefined) return Effect.die("No reasoning to classify");
+            classified.push(request);
+            const choice = Object.keys(criteria)[0] ?? "";
+            return Effect.succeed({
+              answers: { decision: { choice, confidence: 0.7, probabilities: { [choice]: 0.9 } } },
+            });
+          }),
+      }),
     ),
     Layer.succeed(
       AutomationIndex,
@@ -194,6 +207,7 @@ const harness = () => {
     transcripts,
     recorded,
     emitted,
+    classified,
     failSchedule: () => {
       failSchedule = true;
     },
@@ -592,6 +606,50 @@ describe("Automation application without a platform", () => {
     expect(result.missing).toBeUndefined();
     expect(result.withoutAgents).toEqual({ events: [], truncated: false });
     expect(result.withAgents?.events).toEqual([{ _tag: "Prompt", id: "1", at: 0, text: "In 7" }]);
+  });
+
+  test("a decide step asks its own classifier model, not the run's agent", async () => {
+    const h = harness();
+    const routed: Workflow = {
+      ...workflow,
+      steps: [
+        {
+          id: "route",
+          title: "Route",
+          kind: "decide",
+          model: "clef",
+          question: "Which way?",
+          options: [
+            {
+              id: "stop-here",
+              description: "Stop now",
+              steps: [{ id: "stop", title: "Stop", kind: "stop", reason: "Routed" }],
+            },
+            { id: "carry-on", description: "Keep going", steps: [] },
+          ],
+        },
+      ],
+    };
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* h.host.storage.put("draft", routed);
+        const app = yield* makeAutomation();
+        yield* app.save("a1");
+        const started = yield* app.start(undefined);
+        const executionId = yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances[0]);
+        yield* app.callbacks.advance({ executionId });
+        return yield* app.run(started.id);
+      }).pipe(Effect.provide(h.layer)),
+    );
+    expect(h.classified.map((request) => request.model)).toEqual(["clef"]);
+    expect(h.classified[0]?.questions["decision"]?.instructions).toBe("Which way?");
+    expect(h.prompts).toEqual([]);
+    expect(result?.steps.route?.record).toEqual({
+      choice: "stop-here",
+      confidence: 0.7,
+      probabilities: { "stop-here": 0.9 },
+    });
+    expect(result?.stopReason).toBe("Routed");
   });
 
   test("keeps a durable wait across reopen and resumes it at the scheduled time", async () => {

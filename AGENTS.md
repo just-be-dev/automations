@@ -18,7 +18,7 @@ Most modules open with a comment saying what they own.
 - `src/entities/`: entity types and records, templates (`templates.ts`), roles, the `EntityStore` service with its memory layer, and `EntitySubscribers`.
 - `src/connections/`: the pure operation registry (`registry.ts`), shared by the planner, the checker and the UI, and the runner that executes operations.
 - `src/events/`, `src/channels/slack.ts`: named events and their delivery, and Slack ingress.
-- `src/ai/`: the `PiAgent` conversation contract and traces, and the shared `ask_question` tool with its `AnswerHub`.
+- `src/ai/`: the `PiAgent` conversation contract and traces, the shared `ask_question` tool with its `AnswerHub`, and the clef `Classifier` that picks progress phrases and makes decide steps' decisions (`classifier.ts`).
 - `src/ui/`: the Foldkit browser app.
 - `src/workflow.ts`, `src/entities.ts`, `src/connections.ts`: re-exports that keep the UI's imports. Backend code imports the owning modules.
 - `evals/`: evals of every LLM call against the real models. See `docs/development.md#evals`.

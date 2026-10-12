@@ -1,11 +1,15 @@
-/** Selects production AI models and adapts an Ai binding for naming and progress classification, also used by evals. */
+/** Selects production AI models and adapts an Ai binding for naming and classification, also used by evals. */
 import * as Effect from "effect/Effect";
 import { AutomationNamer, NamerError } from "../../agents/namer/namer.ts";
-import { ClassifierError, ProgressClassifier } from "../../agents/planner/progress-classifier.ts";
+import { Classifier, ClassifierError, type ClassifierModel } from "../../ai/classifier.ts";
 
-/** The planner, and agent and decide steps, through pi. */
+/** The planner, the assistant, and agent steps, through pi. */
 export const PLANNER_MODEL = "@cf/moonshotai/kimi-k2.7-code";
-export const PROGRESS_MODEL = "@cf/cloudflare/clef-flash";
+/** Progress phrases (clef-flash) and decide steps (the step's model). */
+export const CLASSIFIER_MODELS = {
+  clef: "@cf/cloudflare/clef",
+  "clef-flash": "@cf/cloudflare/clef-flash",
+} as const satisfies Record<ClassifierModel, string>;
 export const NAMING_MODEL = "@cf/meta/llama-3.1-8b-instruct-fp8";
 
 const messageOf = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
@@ -26,10 +30,11 @@ export const workersAiNamer = (ai: Ai) =>
   });
 
 export const workersAiClassifier = (ai: Ai) =>
-  ProgressClassifier.of({
+  Classifier.of({
     classify: (request) =>
       Effect.tryPromise({
-        try: () => ai.run(PROGRESS_MODEL, { model: "clef-flash", ...request }),
-        catch: (cause) => new ClassifierError({ message: `Progress classifier: ${String(cause)}` }),
+        try: () => ai.run(CLASSIFIER_MODELS[request.model], { ...request }),
+        catch: (cause) =>
+          new ClassifierError({ message: `Classifier ${request.model}: ${String(cause)}` }),
       }),
   });

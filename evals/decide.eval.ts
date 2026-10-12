@@ -1,4 +1,4 @@
-/** Decide steps pick the option that routes a run. */
+/** Decide steps pick the option that routes a run, with clef-flash unless a case names clef. */
 
 import { expect } from "bun:test";
 import { decide } from "./calls/decide.ts";
@@ -91,6 +91,41 @@ export default defineEval({
     },
     threshold: {
       input: {
+        question: "How carefully should legal review this renewal?",
+        options: {
+          light: "Contracts worth under $50,000 a year",
+          full: "Contracts worth $50,000 a year or more",
+        },
+        state: values({
+          type: "contract",
+          id: "c-7",
+          data: { title: "Acme hosting", owner: "ada", ends_on: "2026-12-31", value: 250000 },
+        }),
+      },
+      checks: { "picks full": (output) => expect(output.choice).toBe("full") },
+    },
+    "earlier-step-clef": {
+      input: {
+        model: "clef",
+        question: "What did the manager decide about the promotion?",
+        options: {
+          proceed: "Go ahead with the promotion now",
+          postpone: "Do it later",
+          cancel: "Don't promote",
+        },
+        state: values(ada, {
+          review: {
+            approved: true,
+            values: { comments: "Fine by me, but let's hold off until after the quarter closes." },
+            timedOut: false,
+          },
+        }),
+      },
+      checks: { "picks postpone": (output) => expect(output.choice).toBe("postpone") },
+    },
+    "threshold-clef": {
+      input: {
+        model: "clef",
         question: "How carefully should legal review this renewal?",
         options: {
           light: "Contracts worth under $50,000 a year",

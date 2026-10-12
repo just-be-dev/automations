@@ -535,7 +535,8 @@ export interface IfStep {
   readonly otherwise?: ReadonlyArray<Step>;
 }
 
-export const DecisionModel = Schema.Literals(["clef", "clef-flash", "jev"]);
+/** The classifier that makes a decide step's decision: `clef-flash` for simple routing, `clef` for nuanced calls. */
+export const DecisionModel = Schema.Literals(["clef", "clef-flash"]);
 export type DecisionModel = typeof DecisionModel.Type;
 
 /** Asks a decision model to pick one option given the run so far, then runs that option's steps. */

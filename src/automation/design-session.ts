@@ -11,7 +11,7 @@ import {
   progressPhrases,
   type ProgressPhrase,
 } from "../agents/planner/planner.ts";
-import { ProgressClassifier } from "../agents/planner/progress-classifier.ts";
+import { Classifier } from "../ai/classifier.ts";
 import type { QuestionsAnswer } from "../ai/ask-question/question.ts";
 import { PiAgent } from "../ai/pi.ts";
 import { findOperation } from "../connections/registry.ts";
@@ -51,7 +51,7 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
   const entities = yield* EntityStore;
   const index = yield* AutomationIndex;
   const pi = yield* PiAgent;
-  const { classify } = yield* ProgressClassifier;
+  const { classify } = yield* Classifier;
   const planning = yield* makePlanning();
   const { read: readWorkflow, catalog } = workflows;
 

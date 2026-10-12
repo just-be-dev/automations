@@ -1,6 +1,10 @@
-/** Builds agent and decide prompts and validates their answers into step records; PiAgent performs model calls. */
+/**
+ * Builds agent prompts and decide requests and validates their answers into step records. PiAgent
+ * runs agent steps; the classifier makes decisions.
+ */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+import { ChoiceAnswer, type ClassifyRequest } from "../ai/classifier.ts";
 import { valueMatches, type AgentStep, type DecideStep } from "./model.ts";
 import type { ExecutionValues } from "./execution.ts";
 
@@ -72,22 +76,47 @@ export const agentOutput = (step: AgentStep, answer: string) => {
   );
 };
 
-export const decidePrompt = (step: DecideStep, question: string, state: ExecutionValues) =>
-  [
-    "You make one decision in an automation. Pick the option that fits best.",
-    `Question: ${question}`,
-    `Options:\n${step.options.map((option) => `- ${option.id}: ${option.description}`).join("\n")}`,
-    context(state),
-    'Respond with ONLY JSON: {"choice":"<option id>","confidence":<0 to 1>}.',
-  ].join("\n\n");
+/** Asks the step's classifier model which option fits the question, given the run so far. */
+export const decideRequest = (
+  step: DecideStep,
+  question: string,
+  state: ExecutionValues,
+): ClassifyRequest => ({
+  model: step.model,
+  state: {
+    subject: state.subject,
+    ...(state.event === undefined ? {} : { event: state.event }),
+    steps: state.steps,
+  },
+  questions: {
+    decision: {
+      type: "choice",
+      instructions: question,
+      criteria: Object.fromEntries(step.options.map((option) => [option.id, option.description])),
+    },
+  },
+});
 
-export const decision = (answer: string) =>
-  parseObject(answer).pipe(
-    Effect.flatMap((value) => {
-      const choice = value["choice"];
-      const confidence = typeof value["confidence"] === "number" ? value["confidence"] : 0.5;
-      return typeof choice === "string"
-        ? Effect.succeed({ choice, confidence, probabilities: { [choice]: confidence } })
-        : Effect.fail(new AgentAnswerError({ message: "The decision has no choice" }));
-    }),
+const DecideResponse = Schema.Struct({ answers: Schema.Struct({ decision: ChoiceAnswer }) });
+
+/** The classifier's decision; the interpreter rejects a choice that isn't one of the options. */
+export const decision = (response: unknown) =>
+  Schema.decodeUnknownEffect(DecideResponse)(response).pipe(
+    Effect.map(
+      ({
+        answers: {
+          decision: { choice, confidence, probabilities },
+        },
+      }) => ({
+        choice,
+        confidence,
+        probabilities: probabilities ?? { [choice]: confidence },
+      }),
+    ),
+    Effect.mapError(
+      (error) =>
+        new AgentAnswerError({
+          message: `The decision model's answer didn't decode: ${error.message}`,
+        }),
+    ),
   );

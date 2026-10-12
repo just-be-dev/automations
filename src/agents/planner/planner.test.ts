@@ -1,5 +1,6 @@
 /** Checks draft acceptance, planner retries, current instructions, and user-facing progress selection. */
 import { describe, expect, test } from "bun:test";
+import type { ClassifyRequest } from "../../ai/classifier.ts";
 import * as Effect from "effect/Effect";
 import type { Catalog } from "../../workflow/catalog.ts";
 import type { Workflow } from "../../workflow/model.ts";
@@ -10,7 +11,6 @@ import {
   planDraft,
   plannerInstructions,
   turnMessage,
-  type ClassifyRequest,
 } from "./planner.ts";
 import type { Question } from "../../ai/ask-question/question.ts";
 import { plannerTools } from "./tools.ts";

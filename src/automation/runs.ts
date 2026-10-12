@@ -6,7 +6,8 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { DurableDeferred, WorkflowEngine } from "effect/workflow";
-import { agentOutput, agentPrompt, decidePrompt, decision } from "../workflow/agent-step.ts";
+import { agentOutput, agentPrompt, decideRequest, decision } from "../workflow/agent-step.ts";
+import { Classifier } from "../ai/classifier.ts";
 import { AutomationHost } from "./host.ts";
 import { PiAgent } from "../ai/pi.ts";
 import { emptyTrace } from "../ai/trace.ts";
@@ -99,6 +100,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
   // A Reference: null (Slack simulated) unless the host provides a sender.
   const slack = yield* SlackSender;
   const pi = yield* PiAgent;
+  const classifier = yield* Classifier;
   const { read: readWorkflow, catalog } = workflows;
   const records = yield* makeRunStore();
   const { loadEntity, resolve, due } = yield* makeSubjects();
@@ -205,15 +207,11 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
         Effect.provideService(Events, events),
         Effect.provideService(SlackSender, slack),
       ),
+    // A classifier call keeps no conversation, so asking again on a replay repeats nothing.
     decide: ({ step, question, state: known }) =>
-      Effect.gen(function* () {
-        const conversation = yield* conversationFor(known.runId);
-        const answer = yield* pi.prompt({
-          conversation,
-          text: decidePrompt(step, question, known),
-        });
-        return yield* decision(answer);
-      }).pipe(Effect.mapError(stepFailed(step.id))),
+      classifier
+        .classify(decideRequest(step, question, known))
+        .pipe(Effect.flatMap(decision), Effect.mapError(stepFailed(step.id))),
     requestHuman,
     requestPermission: (request) =>
       requestPermission(request).pipe(Effect.mapError(stepFailed(request.step.id))),
@@ -565,7 +563,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     return { ...found, subjectTitle: summary(types, found).subject };
   });
 
-  /** What the run's agent and decide steps asked and answered; empty before the first one. */
+  /** What the run's agent steps asked and answered; empty before the first one. */
   const runTrace = Effect.fn("Automation.runTrace")(function* (id: RunId) {
     const found = yield* readRun(id);
     if (found === undefined) {

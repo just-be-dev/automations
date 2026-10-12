@@ -7,7 +7,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { PiAgent } from "../../ai/pi.ts";
-import { ProgressClassifier } from "../../agents/planner/progress-classifier.ts";
+import { Classifier } from "../../ai/classifier.ts";
 import { AnswerHub, makeAnswerHub } from "../../ai/ask-question/answer-hub.ts";
 import { makeAutomation } from "../../automation/application.ts";
 import { makeSlackWebSender, SlackSender } from "../../connections/slack.ts";
@@ -104,7 +104,7 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         Effect.provideService(AutomationHost, host),
         Effect.provideService(AnswerHub, answers),
         Effect.provideService(PiAgent, pi),
-        Effect.provideService(ProgressClassifier, classifier),
+        Effect.provideService(Classifier, classifier),
         Effect.provideService(
           SlackSender,
           Option.isSome(slackToken) ? makeSlackWebSender(slackToken.value) : null,

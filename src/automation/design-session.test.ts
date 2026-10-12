@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Result from "effect/Result";
-import { ProgressClassifier } from "../agents/planner/progress-classifier.ts";
+import { Classifier } from "../ai/classifier.ts";
 import { answerHubLayer } from "../ai/ask-question/answer-hub.ts";
 import { PiAgent } from "../ai/pi.ts";
 import { assistantFixture } from "../assistant/fixtures.ts";
@@ -38,7 +38,7 @@ test("stable chat IDs survive completion and never answer an unrelated planner q
           record: () => Effect.void,
           recordIfMissing: () => Effect.void,
         }),
-        Layer.succeed(ProgressClassifier, { classify: () => Effect.die("No reasoning") }),
+        Layer.succeed(Classifier, { classify: () => Effect.die("No reasoning") }),
         Layer.succeed(PiAgent, {
           instruct: () => Effect.void,
           prompt: () => Effect.succeed("Done"),

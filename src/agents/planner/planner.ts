@@ -8,6 +8,7 @@ import { InvalidWorkflow, type Workflow } from "../../workflow/model.ts";
 import { MAX_SCHEDULED_RUNS, MIN_SCHEDULE_GAP_MINUTES } from "../../workflow/schedule.ts";
 import { assemblePlan, planOf, planYaml, samePlan, type Plan } from "./plan.ts";
 import { MAX_OPTIONS, MAX_QUESTIONS, MIN_OPTIONS } from "../../ai/ask-question/question.ts";
+import type { ChoiceQuestion, ClassifyRequest } from "../../ai/classifier.ts";
 
 export const plannerInstructions = (
   catalog: Catalog,
@@ -244,17 +245,9 @@ export const progressQuestion = {
     messages: "Templates, the wording of messages, or who gets which message",
     checking: "Reviewing, verifying, or correcting details",
   },
-} as const satisfies {
-  readonly type: "choice";
-  readonly instructions: string;
+} as const satisfies ChoiceQuestion & {
   readonly criteria: Record<typeof PickedPhrase.Type, string>;
 };
-
-/** A classifier request: the state to read and the questions to answer, keyed by ID. */
-export interface ClassifyRequest {
-  readonly state: unknown;
-  readonly questions: Record<string, typeof progressQuestion>;
-}
 
 const ProgressAnswer = Schema.Struct({
   answers: Schema.Struct({
@@ -281,6 +274,7 @@ export const pickProgress = Effect.fn("Planner.pickProgress")(function* <E>(
   reasoning: string,
 ) {
   const response = yield* classify({
+    model: "clef-flash",
     state: { reasoning: reasoning.slice(-reasoningWindow) },
     questions: { progress: progressQuestion },
   });

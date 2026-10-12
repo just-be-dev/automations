@@ -214,7 +214,7 @@ const noSourceView = (h: HtmlBuilder<Message>) =>
           Empty.description(
             {},
             [
-              "Choose an automation to see its planner's conversation: the instructions it was given, its reasoning, and every tool call it made to edit the draft. Its runs list the prompts and answers of their agent and decide steps.",
+              "Choose an automation to see its planner's conversation: the instructions it was given, its reasoning, and every tool call it made to edit the draft. Its runs list the prompts and answers of their agent steps.",
             ],
             h,
           ),
@@ -307,7 +307,7 @@ const traceView = (source: Source, trace: Trace, h: HtmlBuilder<Message>) =>
         [
           Option.isNone(source.maybeRunId)
             ? "The planner hasn't been asked anything yet."
-            : "This run has no agent or decide steps that ran, so no agent was asked anything.",
+            : "This run has no agent steps that ran, so no agent was asked anything.",
         ],
       ),
     onNonEmpty: (events) =>
