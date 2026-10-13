@@ -2,7 +2,7 @@
 
 Automations studio separates **designing a workflow** from **executing a saved version**. Models help assemble and interpret plans, but they do not get unrestricted execution: workflows are schema-checked, checked against the current catalog, and run through a fixed set of operations.
 
-This is a single-tenant Cloudflare application. [Development and operations](docs/development.md) covers setup and the HTTP/MCP interfaces; [Workflow DSL](docs/workflow-dsl.md) defines the workflow format. This document covers how the parts fit together:
+This is a single-tenant Cloudflare application. [Development and operations](docs/development.md) covers setup and the HTTP/MCP interfaces; [Workflow DSL](docs/workflow-dsl.md) defines the workflow format. [Workflow engine](docs/workflow-engine.md) and [Studio assistant](docs/assistant.md) trace those two subsystems through the code in more detail. This document covers how the parts fit together:
 
 1. [Deployment](#cloudflare-hosts-the-application-not-its-business-rules): Workers, Durable Objects, storage and queues.
 2. [Code layout](#code-is-layered-by-ownership): layers and which module owns each lifetime.

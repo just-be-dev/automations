@@ -65,7 +65,7 @@ Most modules open with a comment saying what they own.
 
 ## Docs and evals
 
-- Keep `docs/workflow-dsl.md` in step with the DSL. Code calls `{{ref}}` text a template string; stored approved wording is a template. Keep the two apart in names and docs.
+- Keep `docs/workflow-dsl.md` in step with the DSL, and `docs/workflow-engine.md` and `docs/assistant.md` with the code paths they diagram. Code calls `{{ref}}` text a template string; stored approved wording is a template. Keep the two apart in names and docs.
 - An `<name>.eval.ts` holds only cases and checks. Keep the framework out of it. A new LLM call needs a route in `evals/framework/worker.ts`.
 - Don't lower an eval's `minimum` to make a run pass. When you change a prompt, the planner's instructions, or a model, run the affected evals with `--trials` before and after, and add a case for behavior you rely on.
 

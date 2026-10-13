@@ -67,6 +67,8 @@ mise run check                      # all checks, including real-model evals
 - [Architecture](ARCHITECTURE.md) — components, storage, the design-to-run lifecycle, and the principles behind them.
 - [Development and operations](docs/development.md) — setup, deployment with `mise run deploy`, evals, debugging, and the HTTP/MCP interfaces.
 - [Workflow DSL](docs/workflow-dsl.md) — triggers, steps, references, templates, and permissions.
+- [Workflow engine](docs/workflow-engine.md) — diagrams of how agents generate a workflow and how runs execute it.
+- [Studio assistant](docs/assistant.md) — diagrams of the assistant's hosting, turns, tools, and confirmations.
 
 ## Inspiration
 
