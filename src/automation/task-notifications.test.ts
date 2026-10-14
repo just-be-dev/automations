@@ -3,10 +3,13 @@ import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { answerHubLayer } from "../ai/ask-question/answer-hub.ts";
 import { Classifier } from "../ai/classifier.ts";
+import { approvalButtons } from "../channels/slack-approvals.ts";
+import { taskActionOf } from "../channels/slack-interactivity.ts";
 import { PiAgent } from "../ai/pi.ts";
 import {
   SlackSendError,
@@ -306,6 +309,36 @@ describe("makeTaskNotifier", () => {
         ts: "1700000000.000002",
       },
     ]);
+  });
+
+  test("an approval's DM has Approve and Reject after the link, and clicks name its task", async () => {
+    const slack = fakeSlack();
+    await Effect.runPromise(notifierFor(runWith(approval), slack.sender).notify(runId, "welcome"));
+    await Effect.runPromise(notifierFor(runWith(checkIn), slack.sender).notify(runId, "check-in"));
+    const buttons = (message: SlackMessage | undefined) =>
+      message?.blocks?.flatMap((block) =>
+        block.type === "actions" ? block.elements.map((element) => element.action_id) : [],
+      );
+    expect(buttons(slack.posts[0]?.message)).toEqual(["task.open", "task.approve", "task.reject"]);
+    // Only a role's approval gets buttons; a check-in is answered in the studio.
+    expect(buttons(slack.posts.at(-1)?.message)).toEqual(["task.open"]);
+    // Slack hands the clicked button back with the message as JSON.
+    const blocks = JSON.parse(JSON.stringify(slack.posts[0]?.message.blocks)) as unknown;
+    const clicked = taskActionOf(
+      new URLSearchParams({
+        payload: JSON.stringify({
+          type: "block_actions",
+          user: { id: "U-sam" },
+          container: { channel_id: "D-1", message_ts: "1700000000.000001" },
+          response_url: "https://hooks.slack.com/actions/1",
+          message: { blocks },
+          actions: [approvalButtons({ automation: "first-week", run: runId, step: "welcome" })[1]],
+        }),
+      }).toString(),
+    );
+    expect(Option.map(clicked, (action) => [action.task, action.approved])).toEqual(
+      Option.some([{ automation: "first-week", run: "run-7", step: "welcome" }, false]),
+    );
   });
 
   test("a delivery left sending finds the message it already posted instead of posting again", async () => {

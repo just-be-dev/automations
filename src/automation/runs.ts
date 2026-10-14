@@ -48,7 +48,7 @@ import {
 } from "../workflow/model.ts";
 import { MAX_SCHEDULED_RUNS, nextOccurrence, occursAt, tooManyRuns } from "../workflow/schedule.ts";
 import { makeSubjects } from "./subjects.ts";
-import { RunId, type Run, type HumanTask, type RunSummary } from "../workflow/run.ts";
+import { isApprover, RunId, type Run, type HumanTask, type RunSummary } from "../workflow/run.ts";
 import { ExecutionId } from "../workflow/execution.ts";
 import { AutomationError } from "./model.ts";
 import type { WorkflowStore } from "./workflow-store.ts";
@@ -526,56 +526,60 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
 
   /**
    * Answers a run's open human step or permission request. `responder` is the email address of
-   * whoever answers, when the studio knows it; only a role's members may answer for it.
+   * whoever answers, when the studio knows it; only a role's members may answer for it. Answers
+   * are taken one at a time, so of two people answering at once the second finds the task closed
+   * and the task's `decision` names whoever answered first.
    */
-  const respond = Effect.fn("Automation.respond")(function* (
-    runId: RunId,
-    stepId: string,
-    answer: HumanResponse,
-    responder: string | undefined,
-  ) {
-    const run = yield* readRun(runId);
-    const task = run?.tasks.find((candidate) => candidate.step === stepId);
-    if (run === undefined || task === undefined || task.status !== "open") {
-      return yield* new AutomationError({ message: "That task isn't waiting for an answer" });
-    }
-    const approvers = task.approvers;
-    if (
-      approvers !== undefined &&
-      responder !== undefined &&
-      !approvers.members.some((member) => member.email.toLowerCase() === responder.toLowerCase())
-    ) {
-      return yield* new AutomationError({
-        message: `Only members of ${approvers.label} can answer this`,
-      });
-    }
-    const response: HumanResponse =
-      responder === undefined ? answer : { ...answer, respondedBy: responder };
-    if (task.response === "approval") {
-      if (response.approved === undefined) {
-        return yield* new AutomationError({ message: "Approve or reject the request" });
+  const answerLock = Semaphore.makeUnsafe(1);
+  const respond = Effect.fn("Automation.respond")(
+    function* (runId: RunId, stepId: string, answer: HumanResponse, responder: string | undefined) {
+      const run = yield* readRun(runId);
+      const task = run?.tasks.find((candidate) => candidate.step === stepId);
+      if (run === undefined || task === undefined || task.status !== "open") {
+        return yield* new AutomationError({ message: "That task isn't waiting for an answer" });
       }
-    } else {
-      const values = response.values ?? {};
-      const wrong = task.response.fields.filter(
-        (field) => !valueMatches(field.type, values[field.name]),
-      );
-      if (wrong.length > 0) {
+      const approvers = task.approvers;
+      if (approvers !== undefined && responder !== undefined && !isApprover(task, responder)) {
         return yield* new AutomationError({
-          message: `Fill in ${wrong.map((field) => field.label).join(", ")}`,
+          message: `Only members of ${approvers.label} can answer this`,
         });
       }
-    }
-    const token = yield* decodeToken(task.token).pipe(Effect.orDie);
-    yield* respondToHuman(token, response).pipe(provideEngine);
-    yield* updateRun(runId, (current) => ({
-      ...current,
-      tasks: current.tasks.map((candidate): HumanTask =>
-        candidate.step === stepId ? { ...candidate, status: "closed" } : candidate,
-      ),
-    }));
-    return { ok: true };
-  });
+      const response: HumanResponse =
+        responder === undefined ? answer : { ...answer, respondedBy: responder };
+      if (task.response === "approval") {
+        if (response.approved === undefined) {
+          return yield* new AutomationError({ message: "Approve or reject the request" });
+        }
+      } else {
+        const values = response.values ?? {};
+        const wrong = task.response.fields.filter(
+          (field) => !valueMatches(field.type, values[field.name]),
+        );
+        if (wrong.length > 0) {
+          return yield* new AutomationError({
+            message: `Fill in ${wrong.map((field) => field.label).join(", ")}`,
+          });
+        }
+      }
+      const token = yield* decodeToken(task.token).pipe(Effect.orDie);
+      yield* respondToHuman(token, response).pipe(provideEngine);
+      const decision = {
+        ...(response.approved === undefined ? {} : { approved: response.approved }),
+        ...(responder === undefined ? {} : { by: responder }),
+        at: yield* Clock.currentTimeMillis,
+      };
+      yield* updateRun(runId, (current) => ({
+        ...current,
+        tasks: current.tasks.map((candidate): HumanTask =>
+          candidate.step === stepId && candidate.status === "open"
+            ? { ...candidate, status: "closed", decision }
+            : candidate,
+        ),
+      }));
+      return { ok: true };
+    },
+    (effect) => answerLock.withPermit(effect),
+  );
 
   /** A run, with its subject's title as the run list shows it. */
   const run = Effect.fn("Automation.run")(function* (id: RunId) {

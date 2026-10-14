@@ -63,7 +63,7 @@ The Durable Objects call each other, so the tier in the diagram is not flat:
 | `ChangeCoordinator` | ✓    | none       | ✓                | AutomationAgent, through `EntitySubscribers`        |
 | `ChannelMailbox`    | none | none       | ✓                | none                                                |
 
-When Slack is configured, a third Worker, [`Channels`](src/platform/cloudflare/channels.ts), takes Slack's webhooks through [effect-channels](https://github.com/humanlayer/effect-channels). It is public because Slack must reach it, and it serves only signature-checked provider routes. [Events](#events-flow-through-one-queue) describes what it publishes.
+When Slack is configured, a third Worker, [`Channels`](src/platform/cloudflare/channels.ts), takes Slack's webhooks through [effect-channels](https://github.com/humanlayer/effect-channels), and clicks on an approval DM's buttons. It is public because Slack must reach it, and it serves only signature-checked Slack routes. [Events](#events-flow-through-one-queue) describes what it publishes, and [approving from Slack](#approvals-from-slack-go-through-respond) where clicks go.
 
 [The API host](src/platform/cloudflare/api.ts) rebuilds its service layers for each request, because they capture the request's runtime context and Access identity. [HTTP routes](src/http/api.ts) decode inputs, call one application operation, and encode results. They do not know about D1 bindings or Durable Object namespaces. JSON routes cap bodies at 32 KB and return `{ "error": string }` on failure; MCP returns JSON-RPC errors and dictation is a WebSocket.
 
@@ -317,7 +317,7 @@ Timed triggers schedule one pending `tick`. Each tick starts its occurrence's ru
                  │ run settles as waiting               │
                  ▼                                      ▼
 ┌─────────────────────────────────┐    ┌─────────────────────────────────┐
-│ POST respond                    │    │ clock callback at `at`          │
+│ POST respond, or a Slack click  │    │ clock callback at `at`          │
 │ task open? responder in role?   │    │ fireClock                       │
 │ values valid?                   │    │                                 │
 └────────────────┬────────────────┘    └────────────────┬────────────────┘
@@ -544,6 +544,12 @@ Every source picks an event ID that is stable across its own retries, so redeliv
 
 Each Slack thread gets a `ChannelMailbox` Durable Object that stores its events and runs them in order from its alarm, with retries. [Its callbacks](src/channels/slack.ts) only publish `slack.mention`, `slack.message`, and `slack.reaction` under IDs taken from Slack's. A mention also subscribes the mailbox to its thread. The mailbox never touches automations directly. Outgoing Slack messages are a separate path: the `slack.sendMessage` action posts through `SlackSender` when `SLACK_BOT_TOKEN` is set ([setup](docs/slack.md)). With the same sender, [opening a task](src/automation/task-notifications.ts) DMs the role's members or the assignee, linking to the run at the studio origin that `STUDIO_URL` sets or the latest save recorded.
 
+### Approvals from Slack go through respond
+
+An approval task's DM has **Approve** and **Reject** buttons. [The interactivity route](src/channels/slack-interactivity.ts) on `Channels` checks Slack's signature over the exact body, puts the click on the `SlackActions` queue, and answers within Slack's 3 seconds. `Channels` can't reach the Automation objects, and the `Api` stays private, so the queue is the hand-off. The `Api` consumes it with [`decideFromSlack`](src/channels/slack-approvals.ts), which looks up the clicker's email address in Slack and calls `Automation.respond` with it, just as HTTP passes the Access email. A click is never answered without an email address, because `respond` checks the role only for a known responder.
+
+`respond` takes one answer at a time per automation and records the first as the task's `decision`. Every later click, of either button and by anyone, finds the task closed and redraws the message from that decision, so a redelivered or retried click repeats nothing. While the task is open, a refused click gets an ephemeral reply and changes nothing. The button's action IDs and its value, the task's automation, run and step, are persisted in sent messages.
+
 ## Catalogs and adapters keep validation consistent
 
 - [`src/workflow/model.ts`](src/workflow/model.ts) defines the pure workflow DSL, references, and conditions. [`catalog.ts`](src/workflow/catalog.ts) checks entity references, path ordering, operation inputs, template slots, and permissions.
@@ -572,7 +578,7 @@ Agent replies render Markdown tokens without setting raw HTML. Run results rende
 
 ## Guarantees have deliberate limits
 
-- Approval tasks record the role's members when opened and check the Access email when answered. The private API trusts the Studio's identity header; local dev and service-token requests have no email restriction and share the `local` owner. JWT verification and the rest of the security boundary need production review.
+- Approval tasks record the role's members when opened and check the Access email, or the Slack email of whoever clicked in a DM, when answered. The private API trusts the Studio's identity header; local dev and service-token requests have no email restriction and share the `local` owner. JWT verification and the rest of the security boundary need production review.
 - `http.post` accepts only literal public HTTPS URLs without credentials. Both the catalog and connection runner enforce the URL boundary. It does not forward trace headers. Workflows must not contain secrets.
 - Steps that are declined or skipped record nothing. Dependent steps are skipped; catalog checks guarantee that referenced steps precede their readers on every path.
 - Email and Calendar, and `notify: "email"`, send nothing in the prototype. Slack posts, including task DMs, only when `SLACK_BOT_TOKEN` is set. Slack takes no idempotency key, so a retried step can post twice. A task DM records each recipient before and after posting, and looks for its own key in the DM before posting again. HTTP requests are real.

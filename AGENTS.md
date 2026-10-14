@@ -7,7 +7,7 @@ A single-tenant prototype on Cloudflare: you design sequential automations in a 
 Most modules open with a comment saying what they own.
 
 - `alchemy.run.ts`: re-exports `src/platform/cloudflare/stack.ts`: the `Studio` website with Access and the test service token, and `StudioEnv`.
-- `src/platform/cloudflare/`: every Cloudflare implementation: the private `Api` Worker (`api.ts`), the `AutomationAgent`, `StudioAssistant` and `ChangeCoordinator` Durable Objects, the D1 adapters, Workers AI models (`workers-ai.ts`), pi (`pi.ts`, `pi-storage.ts`), the events queue, the Slack `Channels` Worker, and the Studio Worker's entry (`edge.ts`).
+- `src/platform/cloudflare/`: every Cloudflare implementation: the private `Api` Worker (`api.ts`), the `AutomationAgent`, `StudioAssistant` and `ChangeCoordinator` Durable Objects, the D1 adapters, Workers AI models (`workers-ai.ts`), pi (`pi.ts`, `pi-storage.ts`), the events and Slack actions queues, the Slack `Channels` Worker, and the Studio Worker's entry (`edge.ts`).
 - `src/http/`: platform-independent routes, composed in `api.ts`: automations and the overview, entities, roles and templates (`catalog.ts`), changes, events, the assistant, dictation (`transcription.ts`), and entity MCP (`entity-mcp.ts`). `response.ts` shares boundary decoding and responses.
 - `src/automation/`: one automation. `application.ts` joins `design-session.ts` (chat, pending replies, drafts) and `runs.ts` (runs, tasks, triggers), which share `workflow-store.ts` (snapshots and save) and `run-store.ts` (run records). `host.ts` is its storage and jobs contract, `service.ts` addresses an automation, and `index.ts` is the D1 directory.
 - `src/agents/planner/`, `src/automation/planning.ts`: the planner: its instructions and `planDraft` (`planner.ts`), the working copy (`plan.ts`) its tools (`tools.ts`) edit, progress phrases, and the stored working copy and questions (`planning.ts`).
@@ -18,6 +18,7 @@ Most modules open with a comment saying what they own.
 - `src/entities/`: entity types and records, templates (`templates.ts`), roles, the `EntityStore` service with its memory layer, and `EntitySubscribers`.
 - `src/connections/`: the pure operation registry (`registry.ts`), shared by the planner, the checker and the UI, and the runner that executes operations.
 - `src/events/`, `src/channels/slack.ts`: named events and their delivery, and Slack ingress.
+- `src/channels/slack-interactivity.ts`, `src/channels/slack-approvals.ts`: Approve and Reject buttons on approval DMs, from the signed click to the decision and the updated message.
 - `src/ai/`: the `PiAgent` conversation contract and traces, the shared `ask_question` tool with its `AnswerHub`, and the clef `Classifier` that picks progress phrases and makes decide steps' decisions (`classifier.ts`).
 - `src/ui/`: the Foldkit browser app.
 - `src/workflow.ts`, `src/entities.ts`, `src/connections.ts`: re-exports that keep the UI's imports. Backend code imports the owning modules.
@@ -61,6 +62,7 @@ Most modules open with a comment saying what they own.
 - Event chains stop at depth 16, counting entity-triggered runs too.
 - Each automation keeps matched and ignored event receipts, and recovers a run committed before its receipt instead of starting another.
 - Slack ingress callbacks write nothing to Slack and must stay replay-safe. Only they may publish `slack.*`. Keep `docs/slack.md` in step with `docs/slack-app-manifest.json`. The channels `namespace` (`automations`) and mailbox storage are persisted contracts.
+- A Slack button click is only verified and queued on `Channels`; the `Api` decides it off the `SlackActions` queue through `Automation.respond`. Never call `respond` for a click without the clicker's Slack email, and keep deciding idempotent: a repeated click redraws the task's recorded `decision`. The action IDs (`task.approve`, `task.reject`) and the button value (`{ automation, run, step }`) are persisted in sent messages.
 - `EntitySubscribers` returns each subscriber's result or error without preventing the others from being notified.
 
 ## Docs and evals
@@ -133,12 +135,12 @@ Stick to these `GET` routes unless the user asks for more. `chat` calls Workers 
 - A run starts by checking the saved workflow against the current catalog and expanding its templates (`beginRun` in `src/automation/runs.ts`). The run's payload carries the expanded workflow, so replays never read a template; the interpreter fails an action that still uses one.
 - The planner prefers templates to writing text or adding agent steps that write it. Keep that guidance in `plannerInstructions` when changing the prompt.
 - The planner suggests permissions and the person can change them; both merge into the draft's `permissions`. The planner reads the current draft, permissions included, on every turn so it keeps the person's changes. Every operation a workflow uses needs one: `"auto"`, or `{ "ask": "<role>" }` naming a role in the entity store.
-- Only a role's members answer its approval tasks. `Api` passes the Cloudflare Access email to `Automation.respond`, which checks it against the members the task recorded when it was opened.
+- Only a role's members answer its approval tasks. `Api` passes the Cloudflare Access email, or for a Slack click the clicker's Slack email, to `Automation.respond`, which checks it against the members the task recorded when it was opened.
 - A step that didn't run (declined or skipped) records nothing, and the interpreter skips any step that needs its record (`stepNeeds`). That relies on the checker's guarantee that every step a ref names finishes before the reader on every path. Don't loosen one without the other.
 - `http.post` doesn't forward trace headers.
 - Email and Calendar are simulated, and so is Slack without `SLACK_BOT_TOKEN`: they contact nothing and record `simulated: true`. Say so wherever results are shown. The UI decides from `GET /api/connections` (`LiveConnections`) for operations and from the record's `simulated` for results, never from the registry alone. With the token, `slack.sendMessage` posts through `SlackSender` (`src/connections/slack.ts`), which the Automation object provides; Slack takes no idempotency key, so a step retried after a post that wasn't journaled posts again. Opening a task DMs its people through the same sender (`src/automation/task-notifications.ts`): it records each recipient on the task as `sending` before posting and checks the DM for the message's key before posting again, and a failure never fails the step. Keep it that way. Without the token, tasks only record `notify`; `notify: "email"` is never sent.
 - `/api` keeps a 32 KB request-body limit and returns `{ "error": string }` on failure. The UI relies on that shape.
-- `Api` stays private. Only the Access-protected Studio Worker can reach it. The `Channels` Worker is the only other public entry, and it serves only provider webhooks that verify a signature.
+- `Api` stays private. Only the Access-protected Studio Worker can reach it. The `Channels` Worker is the only other public entry, and it serves only Slack's webhooks and interactivity requests, each of which must carry a valid signature.
 
 ## Deploy and dependencies
 

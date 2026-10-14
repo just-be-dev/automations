@@ -30,7 +30,11 @@
               "src/platform/cloudflare/access.ts",
               "src/platform/cloudflare/access.test.ts",
               "src/connections/runner.ts",
-              "src/connections/slack.ts"
+              "src/connections/slack.ts",
+              "src/channels/slack-interactivity.ts",
+              "src/channels/slack-interactivity.test.ts",
+              "src/channels/slack-workspace.ts",
+              "src/channels/slack-workspace.test.ts"
             ],
             "options": { "allowedUnstableApis": ["effect/http"] }
           },

@@ -147,15 +147,17 @@ const retryRateLimit = Schedule.recurs(2).pipe(
   Schedule.while(({ input }) => input instanceof SlackSendError && input.code === "ratelimited"),
 );
 
-/** A sender over Slack's Web API with a bot token. `origin` is for tests. */
-export const makeSlackWebSender = (
+/** Slack takes JSON bodies only for write methods; the others take form-encoded arguments. */
+const JSON_METHODS = new Set(["chat.postMessage", "chat.update"]);
+
+/**
+ * Calls Slack's Web API with a bot token: each call returns the method's JSON once Slack says
+ * `ok`, waiting out rate limits twice. `origin` is for tests.
+ */
+export const makeSlackWebApi = (
   token: Redacted.Redacted<string>,
   origin = "https://slack.com/api/",
-): SlackSenderService => {
-  /**
-   * Calls a Web API method and returns its JSON once Slack says `ok`. Slack takes JSON bodies only
-   * for write methods such as `chat.postMessage`, so the others send form-encoded arguments.
-   */
+) => {
   const call = (
     method: string,
     body: Record<string, unknown>,
@@ -165,7 +167,7 @@ export const makeSlackWebSender = (
       const response = yield* client.execute(
         HttpClientRequest.post(new URL(method, origin).toString()).pipe(
           HttpClientRequest.bearerToken(Redacted.value(token)),
-          method === "chat.postMessage"
+          JSON_METHODS.has(method)
             ? HttpClientRequest.bodyJsonUnsafe(body)
             : HttpClientRequest.bodyUrlParams(
                 Object.fromEntries(
@@ -201,6 +203,16 @@ export const makeSlackWebSender = (
           : new SlackSendError({ message: `Slack ${method} failed: ${String(error)}` }),
       ),
     );
+
+  return { call };
+};
+
+/** A sender over Slack's Web API with a bot token. `origin` is for tests. */
+export const makeSlackWebSender = (
+  token: Redacted.Redacted<string>,
+  origin = "https://slack.com/api/",
+): SlackSenderService => {
+  const { call } = makeSlackWebApi(token, origin);
 
   const decode =
     <A>(schema: Schema.Codec<A, unknown>, method: string) =>

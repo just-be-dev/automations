@@ -8,6 +8,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import Api from "./api.ts";
 import Channels from "./channels.ts";
+import { SLACK_INTERACTIVITY_PATH } from "../../channels/slack-interactivity.ts";
 
 /** Machine access for smoke tests: send `CF-Access-Client-Id` / `CF-Access-Client-Secret`. */
 export const TestClient = Cloudflare.Access.ServiceToken("TestClient", { duration: "720h" });
@@ -72,7 +73,7 @@ export default Alchemy.Stack(
   Effect.gen(function* () {
     yield* Api;
     const studio = yield* Studio;
-    // The public Slack webhook needs both secrets at deploy; without them Slack stays off.
+    // The public Slack webhooks need both secrets at deploy; without them Slack stays off.
     const slack = yield* Config.all([
       Config.Redacted("SLACK_SIGNING_SECRET"),
       Config.Redacted("SLACK_BOT_TOKEN"),
@@ -82,6 +83,9 @@ export default Alchemy.Stack(
       url: studio.url,
       slackWebhookUrl: channels
         ? Output.map(channels.url, (url) => url && `${url}/integrations/slack/webhook`)
+        : undefined,
+      slackInteractivityUrl: channels
+        ? Output.map(channels.url, (url) => url && `${url}${SLACK_INTERACTIVITY_PATH}`)
         : undefined,
     };
   }),

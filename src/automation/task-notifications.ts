@@ -8,6 +8,7 @@ import type {
   SlackMessage,
   SlackSenderService,
 } from "../connections/slack.ts";
+import { approvalButtons } from "../channels/slack-approvals.ts";
 import type { HumanTask, RunId, TaskNotification } from "../workflow/run.ts";
 import type { StoredRun } from "./run-store.ts";
 import { runUrl, type StudioLink } from "./studio-link.ts";
@@ -324,6 +325,10 @@ export const makeTaskNotifier = ({
             automationId === undefined || origin === undefined
               ? undefined
               : { automationId, origin },
+          // Only a role's approvals get buttons: a click is checked against the role's members.
+          ...(task.approvers === undefined || automationId === undefined
+            ? {}
+            : { actions: approvalButtons({ automation: automationId, run: runId, step }) }),
         }),
         key: taskMessageKey(automationId, runId, step),
       };

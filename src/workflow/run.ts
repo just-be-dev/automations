@@ -67,9 +67,24 @@ export const HumanTask = Schema.Struct({
       members: Schema.Array(Schema.Struct({ name: Schema.String, email: Schema.String })),
     }),
   ),
+  /** Who answered and when, recorded as the task closes. The first answer is the one kept. */
+  decision: Schema.optionalKey(
+    Schema.Struct({
+      /** Set for approvals: whether the action was approved. */
+      approved: Schema.optionalKey(Schema.Boolean),
+      /** The responder's email address, when the studio knew who answered. */
+      by: Schema.optionalKey(Schema.String),
+      at: Schema.Finite,
+    }),
+  ),
   status: Schema.Literals(["open", "closed"]),
 });
 export interface HumanTask extends Schema.Schema.Type<typeof HumanTask> {}
+
+/** Whether this email address is one of the members an approval task recorded when it opened. */
+export const isApprover = (task: HumanTask, email: string) =>
+  task.approvers?.members.some((member) => member.email.toLowerCase() === email.toLowerCase()) ===
+  true;
 
 /** `stopped` is a run a stop step ended. */
 export const RunStatus = Schema.Literals(["running", "waiting", "completed", "failed", "stopped"]);

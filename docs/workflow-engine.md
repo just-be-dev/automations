@@ -434,6 +434,7 @@ or person                               wf:<eid>: journal         + StepRunner
   │                     │ settle: waiting       │                       │
   │                     │                       │                       │
   │ POST …/tasks/:step  │                       │                       │
+  │ or a Slack click    │                       │                       │
   │────────────────────▶│                       │                       │
   │                     │ respond: approvers,   │                       │
   │                     │ field types           │                       │
@@ -460,7 +461,7 @@ or person                               wf:<eid>: journal         + StepRunner
 
 Each `advance` reruns the walk from the first step, reusing what the journal holds, until the run completes or reaches a clock or a person. A clock fires through the `clock` callback; an answer completes its deferred through `respond`. Both store the completion and schedule another `advance`.
 
-A human step with a `timeout` races its deferred against the clock `<id>/timeout` in `DurableDeferred.raceAll`, named `<id>/outcome` (journaled as `deferred:raceAll/<id>/outcome`). An ask-first action opens its task with `<id>/approval-request` and waits on `<id>/approval`. Opening a task, either way, also sends it as a Slack DM when the deployment has a bot token ([task notifications](../src/automation/task-notifications.ts)). That happens inside the request Activity, records each recipient on the task, and never fails the step. `respond` checks the answer against the task's field types, and, when the studio knows who answers, an approval against the role members the task recorded. A `stop` step fails the execution with `RunStopped`, which interrupts every branch.
+A human step with a `timeout` races its deferred against the clock `<id>/timeout` in `DurableDeferred.raceAll`, named `<id>/outcome` (journaled as `deferred:raceAll/<id>/outcome`). An ask-first action opens its task with `<id>/approval-request` and waits on `<id>/approval`. Opening a task, either way, also sends it as a Slack DM when the deployment has a bot token ([task notifications](../src/automation/task-notifications.ts)). That happens inside the request Activity, records each recipient on the task, and never fails the step. `respond` checks the answer against the task's field types, and, when the studio knows who answers, an approval against the role members the task recorded. An approval DM's **Approve** and **Reject** buttons reach `respond` too: the Api takes each click off its Slack actions queue and answers with the clicker's Slack email ([approving from Slack](slack.md#approving-from-slack)). `respond` takes one answer at a time and records the first as the task's `decision`. A `stop` step fails the execution with `RunStopped`, which interrupts every branch.
 
 ### Three records describe one run
 

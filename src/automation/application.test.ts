@@ -20,7 +20,16 @@ import type { Workflow } from "../workflow/model.ts";
 import { ExecutionId, ExecutionValues } from "../workflow/execution.ts";
 import { RunId } from "../workflow/run.ts";
 import { answerHubLayer } from "../ai/ask-question/answer-hub.ts";
+import {
+  approvalButtons,
+  decideFromSlack,
+  SlackWorkspace,
+  SlackWorkspaceError,
+  SlackBlockJson,
+  type SlackTaskAction,
+} from "../channels/slack-approvals.ts";
 import { makeAutomation } from "./application.ts";
+import { AutomationError } from "./model.ts";
 import { AutomationHost } from "./host.ts";
 import { AutomationIndex, AutomationIndexError } from "./index.ts";
 import { Automations } from "./service.ts";
@@ -845,8 +854,228 @@ describe("Automation application without a platform", () => {
     expect(result.rejected.message).toBe("Only members of Ops can answer this");
     expect(result.finished?.status).toBe("completed");
     expect(result.finished?.tasks[0]?.status).toBe("closed");
+    expect(result.finished?.tasks[0]?.decision).toMatchObject({
+      approved: true,
+      by: "SAM@example.com",
+    });
     expect(result.finished?.steps.send?.record).toMatchObject({ simulated: true });
     expect(h.advances).toHaveLength(2);
+  });
+});
+
+describe("Deciding approval tasks from Slack", () => {
+  const saved: Workflow = {
+    name: "Approval",
+    trigger: { kind: "manual" },
+    permissions: { "slack.sendMessage": { ask: "ops" } },
+    steps: [
+      {
+        id: "send",
+        title: "Send",
+        kind: "action",
+        use: "slack.sendMessage",
+        with: { to: "#ops", text: "Ready" },
+      },
+    ],
+  };
+  const decidedAt = Date.parse("2026-10-14T10:05:00Z");
+  /** Slack's side: who each user is, and what was said back to them. */
+  const workspace = () => {
+    const emails: Record<string, string | undefined> = {
+      "U-sam": "SAM@example.com",
+      "U-eve": "eve@example.com",
+    };
+    const updates: Array<{ channel: string; ts: string; text: string; blocks: unknown }> = [];
+    const ephemeral: Array<{ url: string; text: string }> = [];
+    const service = SlackWorkspace.of({
+      emailOf: (user) => Effect.succeed(emails[user]),
+      updateMessage: (channel, ts, message) =>
+        Effect.sync(() => void updates.push({ channel, ts, ...message })),
+      replyEphemeral: (url, text) => Effect.sync(() => void ephemeral.push({ url, text })),
+    });
+    return { service, updates, ephemeral };
+  };
+  const click = (
+    run: string,
+    user: string,
+    approved: boolean,
+    url = `https://hooks.slack.com/${user}`,
+  ): SlackTaskAction => {
+    const ref = { automation: "a1", run, step: "send" };
+    // The message as Slack sends it back with the click: plain JSON.
+    const blocks = Schema.decodeUnknownSync(Schema.Array(SlackBlockJson))([
+      { type: "section", text: { type: "mrkdwn", text: "Approve the message?" } },
+      {
+        type: "actions",
+        block_id: "task-actions",
+        elements: [
+          { type: "button", action_id: "task.open", url: "https://studio" },
+          ...approvalButtons(ref),
+        ],
+      },
+    ]);
+    return { task: ref, approved, user, channel: `D-${user}`, ts: "1.0", responseUrl: url, blocks };
+  };
+
+  test("only a role member's click decides; others hear why, and the task stays open", async () => {
+    const h = harness();
+    const slack = workspace();
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* h.host.storage.put("saved", saved);
+        const app = yield* makeAutomation();
+        const started = yield* app.start(undefined);
+        const executionId = yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances[0]);
+        yield* app.callbacks.advance({ executionId });
+        const decide = (action: SlackTaskAction) =>
+          decideFromSlack(action).pipe(
+            Effect.provideService(Automations, { get: () => app }),
+            Effect.provideService(SlackWorkspace, slack.service),
+          );
+        // Not in the role, and no email address at all: neither may answer.
+        yield* decide(click(started.id, "U-eve", true));
+        yield* decide(click(started.id, "U-bot", true));
+        return yield* app.run(started.id);
+      }).pipe(Effect.provide(h.layer)),
+    );
+    expect(slack.ephemeral).toEqual([
+      { url: "https://hooks.slack.com/U-eve", text: "Only members of Ops can answer this" },
+      {
+        url: "https://hooks.slack.com/U-bot",
+        text: "Slack has no email address for you, so the studio can't check that you may answer this. Open it in the studio instead.",
+      },
+    ]);
+    expect(slack.updates).toEqual([]);
+    expect(result?.tasks[0]?.status).toBe("open");
+    expect(result?.status).toBe("waiting");
+  });
+
+  test("the first click decides once; repeats and later clicks redraw that decision", async () => {
+    const h = harness();
+    const slack = workspace();
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(decidedAt);
+        yield* h.host.storage.put("saved", saved);
+        const app = yield* makeAutomation();
+        const started = yield* app.start(undefined);
+        const executionId = yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances[0]);
+        yield* app.callbacks.advance({ executionId });
+        const decide = (action: SlackTaskAction) =>
+          decideFromSlack(action).pipe(
+            Effect.provideService(Automations, { get: () => app }),
+            Effect.provideService(SlackWorkspace, slack.service),
+          );
+        // Sam rejects, and the same click arrives again alongside an Approve: one decision.
+        const rejected = click(started.id, "U-sam", false);
+        yield* Effect.all([decide(rejected), decide(click(started.id, "U-sam", true))], {
+          concurrency: "unbounded",
+        });
+        yield* decide(rejected);
+        // A non-member clicking after it's decided just sees the decision.
+        yield* decide(click(started.id, "U-eve", true));
+        yield* app.callbacks.advance({ executionId });
+        return yield* app.run(started.id);
+      }).pipe(Effect.provide(Layer.merge(h.layer, TestClock.layer()))),
+    );
+    const task = result?.tasks[0];
+    expect(task?.status).toBe("closed");
+    expect(task?.decision?.by).toBe("SAM@example.com");
+    expect(task?.decision?.at).toBe(decidedAt);
+    // One answer reached the journal: one advance after the run first parked.
+    expect(h.advances).toHaveLength(2);
+    expect(result?.status).toBe("completed");
+    expect(slack.ephemeral).toEqual([]);
+    expect(slack.updates).toHaveLength(4);
+    // Every redraw shows the same decision and no Approve or Reject button.
+    const texts = new Set(slack.updates.map((update) => update.text));
+    expect(texts.size).toBe(1);
+    const decision = task?.decision?.approved === false ? "Rejected" : "Approved";
+    expect([...texts][0]).toBe(`${decision} by Sam on 2026-10-14 10:05 UTC`);
+    expect(JSON.stringify(slack.updates.map((update) => update.blocks))).not.toContain(
+      "task.approve",
+    );
+    expect(slack.updates.at(-1)).toMatchObject({ channel: "D-U-eve", ts: "1.0" });
+    expect(result?.steps.send?.status).toBe(
+      task?.decision?.approved === true ? "done" : "declined",
+    );
+  });
+
+  test("a click that couldn't reach the automation fails, for the queue to retry, and tells no one", async () => {
+    const h = harness();
+    const slack = workspace();
+    let unreachable = true;
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* h.host.storage.put("saved", saved);
+        const app = yield* makeAutomation();
+        const started = yield* app.start(undefined);
+        const executionId = yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances[0]);
+        yield* app.callbacks.advance({ executionId });
+        const flaky: typeof app = {
+          ...app,
+          respond: (...args) =>
+            unreachable
+              ? Effect.sync(() => void (unreachable = false)).pipe(
+                  Effect.andThen(
+                    Effect.fail(new AutomationError({ message: "Durable Object reset" })),
+                  ),
+                )
+              : app.respond(...args),
+        };
+        const decide = decideFromSlack(click(started.id, "U-sam", true)).pipe(
+          Effect.provideService(Automations, { get: () => flaky }),
+          Effect.provideService(SlackWorkspace, slack.service),
+        );
+        const failed = yield* decide.pipe(Effect.flip);
+        const waiting = yield* app.run(started.id);
+        yield* decide;
+        return { failed, waiting, run: yield* app.run(started.id) };
+      }).pipe(Effect.provide(h.layer)),
+    );
+    expect(result.failed).toMatchObject({ message: "Durable Object reset" });
+    expect(result.waiting?.tasks[0]?.status).toBe("open");
+    expect(slack.ephemeral).toEqual([]);
+    expect(result.run?.tasks[0]?.decision?.approved).toBe(true);
+    expect(slack.updates).toHaveLength(1);
+  });
+
+  test("a click whose message update failed is retried without deciding again", async () => {
+    const h = harness();
+    const slack = workspace();
+    let failUpdate = true;
+    const flaky = SlackWorkspace.of({
+      ...slack.service,
+      updateMessage: (channel, ts, message) =>
+        failUpdate
+          ? Effect.sync(() => void (failUpdate = false)).pipe(
+              Effect.andThen(Effect.fail(new SlackWorkspaceError({ message: "Slack is down" }))),
+            )
+          : slack.service.updateMessage(channel, ts, message),
+    });
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* h.host.storage.put("saved", saved);
+        const app = yield* makeAutomation();
+        const started = yield* app.start(undefined);
+        const executionId = yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances[0]);
+        yield* app.callbacks.advance({ executionId });
+        const decide = decideFromSlack(click(started.id, "U-sam", true)).pipe(
+          Effect.provideService(Automations, { get: () => app }),
+          Effect.provideService(SlackWorkspace, flaky),
+        );
+        const failed = yield* decide.pipe(Effect.flip);
+        yield* decide;
+        return { failed, run: yield* app.run(started.id) };
+      }).pipe(Effect.provide(h.layer)),
+    );
+    expect(result.failed).toMatchObject({ message: "Slack is down" });
+    expect(result.run?.tasks[0]?.decision?.approved).toBe(true);
+    expect(h.advances).toHaveLength(2);
+    expect(slack.updates.map((update) => update.text.split(" on ")[0])).toEqual([
+      "Approved by Sam",
+    ]);
+    expect(slack.ephemeral).toEqual([]);
   });
 });
 

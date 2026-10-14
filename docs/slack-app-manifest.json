@@ -1,7 +1,7 @@
 {
   "display_information": {
     "name": "Automations",
-    "description": "Starts automations from Slack messages"
+    "description": "Starts automations from Slack messages and takes approvals"
   },
   "features": {
     "app_home": {
@@ -35,6 +35,10 @@
     }
   },
   "settings": {
+    "interactivity": {
+      "is_enabled": true,
+      "request_url": "https://replace-with-your-channels-worker.example/integrations/slack/interactivity"
+    },
     "org_deploy_enabled": false,
     "socket_mode_enabled": false,
     "token_rotation_enabled": false

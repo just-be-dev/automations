@@ -6,8 +6,15 @@ import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { deliverEvent } from "../../events/delivery.ts";
+import {
+  decideFromSlack,
+  SlackTaskAction,
+  SlackWorkspace,
+} from "../../channels/slack-approvals.ts";
+import { makeSlackWebWorkspace } from "../../channels/slack-workspace.ts";
 import { AutomationNamer } from "../../agents/namer/namer.ts";
 import { LiveConnections } from "../../connections/live.ts";
 import { Automations } from "../../automation/service.ts";
@@ -24,6 +31,7 @@ import ChangeCoordinator, { changesLayer } from "./changes.ts";
 import { Transcription } from "../../http/transcription.ts";
 import { workersAiTranscription } from "./transcription.ts";
 import { EventQueue, EventsQueue, FailedEventQueue, failedEventQueueName } from "./events.ts";
+import { SlackActionQueue } from "./slack-actions.ts";
 
 /** Only the Access-protected Studio Worker can reach this private API. */
 export default class Api extends Cloudflare.Worker<Api>()(
@@ -100,6 +108,42 @@ export default class Api extends Cloudflare.Worker<Api>()(
             Effect.catchCause((cause) =>
               Effect.gen(function* () {
                 yield* Effect.logWarning("Event delivery failed", cause).pipe(
+                  Effect.annotateLogs("queueMessageId", message.id),
+                );
+                yield* Effect.sync(() => message.retry());
+              }),
+            ),
+          ),
+        ),
+    );
+    // Approve and Reject clicks from Slack. Deciding is idempotent, so a retry repeats nothing.
+    const slackWorkspace = Option.map(slackToken, (token) => makeSlackWebWorkspace(token));
+    yield* Cloudflare.Queues.consumeQueueMessages(
+      yield* SlackActionQueue,
+      // One click per batch, so a full batch goes at once and the message updates promptly.
+      { batchSize: 1, maxRetries: 3, retryDelay: "5 seconds" },
+      (stream) =>
+        Stream.runForEach(stream, (message) =>
+          Effect.gen(function* () {
+            const action = Schema.decodeUnknownOption(SlackTaskAction)(message.body);
+            if (Option.isNone(action) || Option.isNone(slackWorkspace)) {
+              // Neither can change on a retry: drop the click rather than retry it.
+              yield* Effect.logWarning(
+                Option.isNone(action)
+                  ? "Dropped a Slack click that isn't a task action"
+                  : "Dropped a Slack click: SLACK_BOT_TOKEN isn't set",
+              );
+            } else {
+              yield* decideFromSlack(action.value).pipe(
+                Effect.provide(automations),
+                Effect.provideService(SlackWorkspace, slackWorkspace.value),
+              );
+            }
+            yield* Effect.sync(() => message.ack());
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.gen(function* () {
+                yield* Effect.logWarning("Slack click failed", cause).pipe(
                   Effect.annotateLogs("queueMessageId", message.id),
                 );
                 yield* Effect.sync(() => message.retry());
