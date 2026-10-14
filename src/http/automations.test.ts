@@ -12,7 +12,7 @@ import { automationRoutes } from "./automations.ts";
 import { RequestIdentity } from "./identity.ts";
 
 test("HTTP delegates save and supplied manual event data without an entity store or directory writes", async () => {
-  const calls: Array<ReadonlyArray<string>> = [];
+  const calls: Array<ReadonlyArray<string | undefined>> = [];
   const starts: Array<unknown> = [];
   const saved: Workflow = {
     name: "Watch people",
@@ -36,9 +36,9 @@ test("HTTP delegates save and supplied manual event data without an entity store
         answer: unused,
         templateUses: unused,
         chat: unused,
-        save: (automationId) =>
+        save: (automationId, origin) =>
           Effect.sync(() => {
-            calls.push([id, automationId]);
+            calls.push([id, automationId, origin]);
             return { saved };
           }),
         setPermissions: unused,
@@ -62,11 +62,12 @@ test("HTTP delegates save and supplied manual event data without an entity store
   );
   try {
     const response = await handler(
-      new Request("http://studio/api/automations/a1/save", { method: "POST" }),
+      new Request("https://studio.example.com/api/automations/a1/save", { method: "POST" }),
     );
     expect(response.status).toBe(200);
     expect(await response.text()).toBe(JSON.stringify({ saved }));
-    expect(calls).toEqual([["a1", "a1"]]);
+    // Save records the studio the request came through, so run messages can link back to it.
+    expect(calls).toEqual([["a1", "a1", "https://studio.example.com"]]);
     const start = (body: unknown) =>
       handler(
         new Request("http://studio/api/automations/a1/start", {

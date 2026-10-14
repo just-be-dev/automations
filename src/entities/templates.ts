@@ -139,12 +139,18 @@ export const fillTemplate = (template: Template, use: TemplateUse): Record<strin
 const findTemplate = (templates: ReadonlyArray<Template>, name: string) =>
   templates.find((template) => template.name === name);
 
-/** A source's inputs with its template's content filled in, or the source as it is. */
+/**
+ * A source's inputs with its template's content filled in, or the source as it is. The template's
+ * label stays beside them, so an approval can say which approved wording it shows.
+ */
 const expandSource = (templates: ReadonlyArray<Template>, source: InputSource): InputSource => {
   const template = source.template && findTemplate(templates, source.template.use);
   return source.template === undefined || template === undefined
     ? source
-    : { with: { ...source.with, ...fillTemplate(template, source.template) } };
+    : {
+        with: { ...source.with, ...fillTemplate(template, source.template) },
+        templateLabel: template.label,
+      };
 };
 
 const expandStep = (templates: ReadonlyArray<Template>, step: Step): Step =>
@@ -159,6 +165,7 @@ const expandStep = (templates: ReadonlyArray<Template>, step: Step): Step =>
           use: action.use,
           with: own.with ?? {},
           ...(own.template === undefined ? {} : { template: own.template }),
+          ...(own.templateLabel === undefined ? {} : { templateLabel: own.templateLabel }),
           ...(action.match === undefined
             ? {}
             : {

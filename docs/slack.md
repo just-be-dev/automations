@@ -1,8 +1,9 @@
 # Slack integration
 
-Connecting a Slack workspace does two things:
+Connecting a Slack workspace does three things:
 
 - **Sending.** `slack.sendMessage` posts for real instead of being simulated. It posts to a channel (`#team`), or sends a DM to a person given by email address or by an entity with an `email` field. This needs only the bot token.
+- **Task messages.** When a run waits on a person, they get a DM with what's needed and an **Open in Studio** link to the run. See [Task messages](#task-messages). This also needs only the bot token.
 - **Receiving.** Mentions of the bot, messages in threads it follows, and reactions in those threads become [`slack.*` events](workflow-dsl.md#event) that can start automations. This needs the bot token, the signing secret, and a public webhook that Slack can reach.
 
 How it works inside is in [Architecture](../ARCHITECTURE.md), and the event payloads are in the [Workflow DSL](workflow-dsl.md#event). This page covers setup.
@@ -33,6 +34,12 @@ Copy two values from the app's settings into `.env` at the root of the checkout.
 ```dotenv
 SLACK_SIGNING_SECRET=...   # Basic Information → App Credentials → Signing Secret
 SLACK_BOT_TOKEN=xoxb-...   # OAuth & Permissions → Bot User OAuth Token
+```
+
+Optionally, set where task messages link to. Without it, each automation links to the studio address it was last saved from, which suits both `mise run dev` and a deploy:
+
+```dotenv
+STUDIO_URL=https://studio.example.com   # the Studio URL that `mise run dev` or the deploy prints
 ```
 
 | Set               | Result                                                                 |
@@ -109,6 +116,45 @@ Choose **Save draft**, then **Run saved version**. The message should appear in 
 
 The planner should give it an event trigger on `slack.mention` and a message such as `Got it: {{event.data.text}}`. Save it, then post `@Automations hello` in the channel. Within a few seconds, `GET $STUDIO_URL/api/overview` should show a completed run with an ID like `event-slack:mention:…`, and the bot should reply.
 
+## Task messages
+
+A run that waits on a person sends them a DM from the bot:
+
+- **Ask-first actions.** Each member of the role the action asks gets one. It says which automation needs the role to approve what, and for whom. It shows the exact content the action will send. For an email, that is the template it came from, the subject, and the start of the body.
+- **Human steps with `notify: "slack"`.** The assignee gets one with the step's title, its prompt, and the fields they'll fill in. With `notify: "email"`, nothing is sent: email is simulated.
+
+People are found by the `email` field of their entity, the same way `slack.sendMessage` finds them. Each DM ends with an **Open in Studio** button that opens the run (`/?automation=<id>&run=<runId>`), where the task is answered. Approving from Slack itself isn't built yet.
+
+The button links to `STUDIO_URL` when it's set. Otherwise it links to the address the automation was last saved from: the Studio Worker forwards the browser's request to the API unchanged, so saving records the studio's origin. An automation saved before task messages existed has no link until it's saved again, and its messages say to answer in the studio instead.
+
+Delivery is recorded on the task, per person, under `notifications`, and the studio shows "Sent on Slack to …" on the task. The bot sends each person at most one DM per task, even when the run replays:
+
+1. Before posting, the task records the person as `sending`. Afterwards it records `sent`, with the DM's channel and timestamp, or `failed`, with Slack's reason.
+2. A person already `sent` or `failed` isn't messaged again. A failure doesn't fail the run; the task can still be answered in the studio.
+3. A person left `sending` may have been messaged just before a restart. Slack takes no idempotency key, so the bot reads its recent DM with them (`im:read`, `im:history`) for the message's key, which it sends as message metadata. It posts only if the key isn't there. If Slack can't be read, it posts, so a rare duplicate is possible.
+
+### Try it in a sandbox
+
+The seeded data already fits: Grace Hopper is Ada Lovelace's manager and the only member of People Ops.
+
+1. Point Grace at your own address in the Slack sandbox. Ask the studio's assistant ("Change Grace Hopper's email to you@your-sandbox.example") and confirm the change, or prepare it and approve it:
+
+   ```sh
+   curl -X POST "$STUDIO_URL/api/changes" -H "Content-Type: application/json" \
+     -d '{"action":{"kind":"putEntity","type":"employee","id":"grace","data":{"email":"you@your-sandbox.example"}}}'
+   curl -X POST "$STUDIO_URL/api/changes/<proposal-id>/decision" \
+     -H "Content-Type: application/json" -d '{"approved":true}'
+   ```
+
+2. Create an automation with the sidebar's **+**:
+
+   > When I start it for an employee, send them the engineering welcome email, asking People Ops first. Then ask their manager how it's going, and notify them on Slack.
+
+3. Choose **Save draft** in the studio, then run it for Ada Lovelace. You get a DM asking People Ops to approve the email, with its template, subject and body. **Open in Studio** opens the run.
+4. Approve the email in the studio. You get a second DM, for the manager's check-in.
+
+The run's task shows who it was sent to. In the Api log, `Couldn't send a task on Slack` means the whole delivery failed, and `Task messages have no studio link` means the automation needs saving again or `STUDIO_URL`.
+
 ## What automations receive
 
 A mention or DM starts `slack.mention`, and the bot then follows that thread: later messages arrive as `slack.message` and reactions as `slack.reaction`. Their data fields are in the [Workflow DSL](workflow-dsl.md#event). Keep in mind:
@@ -121,15 +167,17 @@ A mention or DM starts `slack.mention`, and the bot then follows that thread: la
 
 Channels logs are in `.alchemy/log/dev_$USER/Channels/`. Api logs, where runs post their messages, are in `.alchemy/log/dev_$USER/Api/`.
 
-| Symptom                                          | Likely cause                                                                                                                                                                                   |
-| ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Slack rejects the manifest                       | An `event_subscriptions` block was added to it. Remove it and add the events in step 4.                                                                                                        |
-| Request URL won't verify                         | Dev or the tunnel isn't running, the URL is missing `/integrations/slack/webhook`, or the tunnel address changed.                                                                              |
-| `/api/connections` returns `{"live":[]}`         | `SLACK_BOT_TOKEN` isn't in `.env`, or the server hasn't restarted since you added it.                                                                                                          |
-| A step fails with "Slack rejected the bot token" | The token is wrong or was revoked. Copy it again from OAuth & Permissions.                                                                                                                     |
-| "the bot isn't in that channel"                  | The channel is private. Invite the bot.                                                                                                                                                        |
-| "the Slack app is missing a scope"               | The app was created without the full manifest. Add the scope and reinstall.                                                                                                                    |
-| A mention starts nothing                         | The bot isn't in the channel, the bot events aren't subscribed, no saved automation listens for `slack.mention`, or the Channels log shows a signature failure (wrong `SLACK_SIGNING_SECRET`). |
-| `Webhook authentication failed` in the log       | A request without a valid Slack signature was refused, as intended. If it came from Slack, check the signing secret.                                                                           |
+| Symptom                                                                        | Likely cause                                                                                                                                                                                   |
+| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Slack rejects the manifest                                                     | An `event_subscriptions` block was added to it. Remove it and add the events in step 4.                                                                                                        |
+| Request URL won't verify                                                       | Dev or the tunnel isn't running, the URL is missing `/integrations/slack/webhook`, or the tunnel address changed.                                                                              |
+| `/api/connections` returns `{"live":[]}`                                       | `SLACK_BOT_TOKEN` isn't in `.env`, or the server hasn't restarted since you added it.                                                                                                          |
+| A step fails with "Slack rejected the bot token"                               | The token is wrong or was revoked. Copy it again from OAuth & Permissions.                                                                                                                     |
+| "the bot isn't in that channel"                                                | The channel is private. Invite the bot.                                                                                                                                                        |
+| "the Slack app is missing a scope"                                             | The app was created without the full manifest. Add the scope and reinstall.                                                                                                                    |
+| A task's DM failed with "no one in the Slack workspace has that email address" | The person's entity has an `email` that isn't a member of the workspace. Fix the address, then start a new run.                                                                                |
+| A task DM has no **Open in Studio** button                                     | The automation was saved before task messages existed. Save it again, or set `STUDIO_URL`.                                                                                                     |
+| A mention starts nothing                                                       | The bot isn't in the channel, the bot events aren't subscribed, no saved automation listens for `slack.mention`, or the Channels log shows a signature failure (wrong `SLACK_SIGNING_SECRET`). |
+| `Webhook authentication failed` in the log                                     | A request without a valid Slack signature was refused, as intended. If it came from Slack, check the signing secret.                                                                           |
 
-Slack takes no idempotency key, so a send step that is retried after a post that wasn't recorded posts again.
+Slack takes no idempotency key, so a send step that is retried after a post that wasn't recorded posts again. Task messages check the DM before posting again; see [Task messages](#task-messages).

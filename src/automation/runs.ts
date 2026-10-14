@@ -53,6 +53,8 @@ import { ExecutionId } from "../workflow/execution.ts";
 import { AutomationError } from "./model.ts";
 import type { WorkflowStore } from "./workflow-store.ts";
 import { makeRunStore, type StoredRun } from "./run-store.ts";
+import { ConfiguredStudioOrigin } from "./studio-link.ts";
+import { makeTaskNotifier } from "./task-notifications.ts";
 
 const decodeToken = Schema.decodeUnknownEffect(DurableDeferred.Token);
 
@@ -99,6 +101,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
   const events = yield* Events;
   // A Reference: null (Slack simulated) unless the host provides a sender.
   const slack = yield* SlackSender;
+  const configuredOrigin = yield* ConfiguredStudioOrigin;
   const pi = yield* PiAgent;
   const classifier = yield* Classifier;
   const { read: readWorkflow, catalog } = workflows;
@@ -144,12 +147,37 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
       }),
     );
 
+  // Run titles only label runs, so a D1 failure shows subject IDs instead of failing the read.
+  const entityTypesForTitles = entities.listTypes.pipe(
+    Effect.tapError((error) =>
+      Effect.logWarning("Couldn't read entity types for run titles", error),
+    ),
+    Effect.orElseSucceed(() => []),
+  );
+
+  // Opening a task sends it on Slack when the deployment has a sender; see task-notifications.ts.
+  const tasks = makeTaskNotifier({
+    slack,
+    readRun,
+    updateRun,
+    link: Effect.map(workflows.studioLink, (stored) => {
+      const origin = configuredOrigin ?? stored?.origin;
+      return {
+        ...(stored === undefined ? {} : { automationId: stored.automationId }),
+        ...(origin === undefined ? {} : { origin }),
+      };
+    }),
+    subjectTitle: (run) =>
+      Effect.map(entityTypesForTitles, (types) =>
+        run.subject === null ? null : summary(types, run).subject,
+      ),
+  });
+
   const requestHuman = (request: HumanRequest) =>
     updateRun(request.runId, (run) => {
       if (run.tasks.some((task) => task.step === request.step.id)) {
         return run;
       }
-      // NOTE: `notify` is recorded, not sent, even when Slack is connected.
       const task: HumanTask = {
         step: request.step.id,
         token: request.token,
@@ -162,7 +190,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
         status: "open",
       };
       return { ...run, tasks: [...run.tasks, task] };
-    });
+    }).pipe(Effect.andThen(tasks.notify(request.runId, request.step.id)));
 
   const requestPermission = (request: PermissionRequest) =>
     Effect.flatMap(approversOf(request.role), (approvers) =>
@@ -179,12 +207,16 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
           assignee: null,
           response: "approval",
           defaults: {},
-          action: { use: request.step.use, inputs: request.inputs },
+          action: {
+            use: request.step.use,
+            inputs: request.inputs,
+            ...(request.template === undefined ? {} : { template: request.template }),
+          },
           approvers,
           status: "open",
         };
         return { ...run, tasks: [...run.tasks, task] };
-      }),
+      }).pipe(Effect.andThen(tasks.notify(request.runId, request.step.id))),
     );
 
   const stepFailed = (step: string) => (error: { readonly message: string }) =>
@@ -328,14 +360,6 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
       .pipe(Effect.orDie);
     return { id, status: run.status };
   });
-
-  // Run titles only label runs, so a D1 failure shows subject IDs instead of failing the read.
-  const entityTypesForTitles = entities.listTypes.pipe(
-    Effect.tapError((error) =>
-      Effect.logWarning("Couldn't read entity types for run titles", error),
-    ),
-    Effect.orElseSucceed(() => []),
-  );
 
   /** Every run, newest first. */
   const runSummaries = Effect.gen(function* () {

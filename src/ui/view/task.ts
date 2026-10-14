@@ -17,6 +17,7 @@ import {
   type HumanField,
   type HumanTask,
   type Run,
+  type TaskNotification,
   type ValueType,
 } from "../../workflow.ts";
 import { TaskAnswer } from "../domain/index.ts";
@@ -84,6 +85,49 @@ const assigneeView = (assignee: Schema.Json | null, h: HtmlBuilder<Message>) =>
     },
   );
 
+const names = (notifications: ReadonlyArray<TaskNotification>) =>
+  notifications.map((notification) => notification.name).join(", ");
+
+/**
+ * Who the task was sent to on Slack, from its delivery record. A task without one says how it
+ * would notify, tagged "Simulated" when that connection isn't live.
+ */
+const notificationsView = (
+  task: HumanTask,
+  liveConnections: ReadonlyArray<string>,
+  h: HtmlBuilder<Message>,
+) => {
+  const notifications = task.notifications ?? [];
+  if (notifications.length === 0) {
+    return task.notify === undefined
+      ? []
+      : [
+          h.span(
+            [h.Class("inline-flex items-center gap-1.5")],
+            [
+              `Would notify via ${notifyLabel[task.notify]}`,
+              liveConnections.includes(task.notify) ? h.empty : simulatedTagView(h),
+            ],
+          ),
+        ];
+  }
+  const sent = notifications.filter((notification) => notification.status === "sent");
+  const sending = notifications.filter((notification) => notification.status === "sending");
+  const failed = notifications.filter((notification) => notification.status === "failed");
+  return [
+    ...(sent.length === 0 ? [] : [`Sent on Slack to ${names(sent)}`]),
+    ...(sending.length === 0 ? [] : [`Sending on Slack to ${names(sending)}`]),
+    ...(failed.length === 0
+      ? []
+      : [
+          h.span(
+            [h.Title(failed.map((notification) => notification.error ?? "").join("\n"))],
+            [`Couldn't send on Slack to ${names(failed)}`],
+          ),
+        ]),
+  ];
+};
+
 const isSendingAnswer = (openRun: OpenRun) => RunNotice.guards.Sending(openRun.notice);
 
 const taskView = (
@@ -119,9 +163,7 @@ const taskView = (
                 [
                   ...assigneeView(task.assignee, h),
                   ...(task.approvers === undefined ? [] : [approversView(task.approvers, h)]),
-                  ...(task.notify === undefined
-                    ? []
-                    : [`Notified via ${notifyLabel[task.notify]}`]),
+                  ...notificationsView(task, liveConnections, h),
                 ],
                 h,
               ),

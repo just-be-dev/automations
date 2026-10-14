@@ -9,6 +9,7 @@ import { AutomationHost, decodeStored } from "./host.ts";
 import { AutomationIndex } from "./index.ts";
 import { AutomationError } from "./model.ts";
 import { makeSubjects } from "./subjects.ts";
+import { STUDIO_LINK_KEY, StudioLink } from "./studio-link.ts";
 
 /** The entity types, templates, and roles a workflow is checked against, as they are now. */
 export const catalogOf = (entities: EntityStore["Service"]) =>
@@ -27,6 +28,8 @@ export const makeWorkflowStore = Effect.fn("Automation.makeWorkflowStore")(funct
   const read = (key: "draft" | "saved") =>
     storage.get(key).pipe(Effect.flatMap(decodeStored(Workflow)));
   const catalog = catalogOf(entities);
+  /** The automation's ID and studio origin as its latest save recorded them. */
+  const studioLink = storage.get(STUDIO_LINK_KEY).pipe(Effect.flatMap(decodeStored(StudioLink)));
 
   /**
    * Save is complete only after the trigger subscription is updated. The subscription records
@@ -38,8 +41,14 @@ export const makeWorkflowStore = Effect.fn("Automation.makeWorkflowStore")(funct
    *
    * A timed trigger that would already match more entities than one occurrence may start isn't
    * saved, so the person hears about it now rather than from a failed run.
+   *
+   * `studioOrigin` is the studio the save came from, when the caller knows it. Saving keeps it
+   * with the automation's ID, so messages its runs send can link back to them.
    */
-  const save = Effect.fn("Automation.save")(function* (automationId: string) {
+  const save = Effect.fn("Automation.save")(function* (
+    automationId: string,
+    studioOrigin?: string,
+  ) {
     const draft = yield* read("draft");
     if (draft === undefined) {
       return yield* new AutomationError({ message: "No draft to save" });
@@ -57,6 +66,10 @@ export const makeWorkflowStore = Effect.fn("Automation.makeWorkflowStore")(funct
       .transaction(
         Effect.gen(function* () {
           yield* storage.put("saved", draft);
+          // A save that doesn't know the studio keeps the origin an earlier one recorded.
+          const origin = studioOrigin ?? (yield* studioLink)?.origin;
+          const link: StudioLink = { automationId, ...(origin === undefined ? {} : { origin }) };
+          yield* storage.put(STUDIO_LINK_KEY, link);
           yield* isTimed(trigger)
             ? jobs.tick(nextOccurrence(triggerSchedule(trigger), now))
             : jobs.cancelTick;
@@ -70,7 +83,7 @@ export const makeWorkflowStore = Effect.fn("Automation.makeWorkflowStore")(funct
     return { saved: draft };
   });
 
-  return { read, catalog, save };
+  return { read, catalog, save, studioLink };
 });
 
 export type WorkflowStore = Effect.Success<ReturnType<typeof makeWorkflowStore>>;

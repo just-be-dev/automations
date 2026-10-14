@@ -2,12 +2,14 @@
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";
+import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { Automations } from "../automation/service.ts";
 import { QuestionsAnswer } from "../ai/ask-question/question.ts";
 import { createAutomation } from "../automation/creation.ts";
 import { AutomationIndex } from "../automation/index.ts";
+import { studioOrigin } from "../automation/studio-link.ts";
 import type { AutomationOverview } from "../automation/model.ts";
 import { EntityId } from "../entities/model.ts";
 import { SuppliedEvent } from "../events/model.ts";
@@ -159,7 +161,10 @@ export const automationRoutes = Layer.merge(
           Effect.gen(function* () {
             const { id } = yield* automationParams;
             const automations = yield* Automations;
-            return yield* automations.get(id).save(id);
+            // The Studio Worker forwards the browser's request as it is, so its URL is the
+            // studio's. The automation keeps it to link its runs' Slack messages back here.
+            const request = yield* HttpServerRequest.HttpServerRequest;
+            return yield* automations.get(id).save(id, studioOrigin(request.originalUrl));
           }),
         ),
       ),

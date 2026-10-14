@@ -1284,7 +1284,9 @@ test("an approval task shows who it's for and sends the answer", () => {
     expect(role("list", { name: "Open tasks" })).toExist(),
     expect(text("Approve onboarding for Ari Cho?")).toExist(),
     expect(text("Assigned to Sam Park")).toExist(),
-    expect(text("Notified via Slack")).toExist(),
+    // Without a live Slack connection, nothing was sent.
+    expect(text("Would notify via Slack")).toExist(),
+    expect(text("Simulated")).toExist(),
     expect(role("button", { name: /Approve the plan.*Waiting/ })).toExist(),
     click(role("button", { name: "Approve" })),
     Command.expectExact(
@@ -1298,6 +1300,37 @@ test("an approval task shows who it's for and sends the answer", () => {
 
     expect(role("list", { name: "Open tasks" })).not.toExist(),
     expect(text("Answer sent.")).toExist(),
+  );
+});
+
+test("a task says who it was sent to on Slack, and who it couldn't reach", () => {
+  const waiting = runOf({
+    steps: { approve: { status: "waiting" } },
+    tasks: [
+      {
+        ...approvalTask,
+        notifications: [
+          { via: "slack", to: "sam@example.com", name: "Sam Park", status: "sent", ts: "1.1" },
+          {
+            via: "slack",
+            to: "pat@example.com",
+            name: "Pat Lee",
+            status: "failed",
+            error: "no one in the Slack workspace has that email address",
+          },
+        ],
+      },
+    ],
+  });
+  scene(
+    { update, view },
+    given(withOpenRun(waiting)),
+    expect(text("Sent on Slack to Sam Park")).toExist(),
+    expect(text("Couldn't send on Slack to Pat Lee")).toHaveAttr(
+      "title",
+      "no one in the Slack workspace has that email address",
+    ),
+    expect(text("Would notify via Slack")).not.toExist(),
   );
 });
 

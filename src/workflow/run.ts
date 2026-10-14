@@ -15,6 +15,25 @@ export const RunStep = Schema.Struct({
 });
 export interface RunStep extends Schema.Schema.Type<typeof RunStep> {}
 
+/**
+ * One person a task was sent to, and how that went. `sending` is written before posting, so a
+ * delivery that finds it knows an earlier one may have posted and checks before posting again.
+ */
+export const TaskNotification = Schema.Struct({
+  via: Schema.Literal("slack"),
+  /** The email address the person was looked up by. */
+  to: Schema.String,
+  /** Their name, as the studio shows it. */
+  name: Schema.String,
+  status: Schema.Literals(["sending", "sent", "failed"]),
+  /** Where Slack posted it: the DM's ID and the message's timestamp. */
+  channel: Schema.optionalKey(Schema.String),
+  ts: Schema.optionalKey(Schema.String),
+  /** Why it failed. */
+  error: Schema.optionalKey(Schema.String),
+});
+export interface TaskNotification extends Schema.Schema.Type<typeof TaskNotification> {}
+
 /** A human step's request, as the studio shows it to the person who answers. */
 export const HumanTask = Schema.Struct({
   step: Schema.String,
@@ -25,11 +44,20 @@ export const HumanTask = Schema.Struct({
   response: HumanResponseSpec,
   /** Prefilled answers, by field name, with their templates already filled in. */
   defaults: Schema.Record(Schema.String, Schema.String),
-  /** The connection that also delivered the request. */
+  /** The connection the step asked to reach the assignee on. `notifications` says what was sent. */
   notify: Schema.optionalKey(Schema.Literals(["email", "slack"])),
-  /** The operation and inputs a permission request will perform once approved. */
+  /** Each person the request was sent to, when the deployment sends it (Slack with a bot token). */
+  notifications: Schema.optionalKey(Schema.Array(TaskNotification)),
+  /**
+   * The operation and inputs a permission request will perform once approved, and the label of
+   * the template its inputs came from, if any.
+   */
   action: Schema.optionalKey(
-    Schema.Struct({ use: Schema.String, inputs: Schema.Record(Schema.String, Schema.Json) }),
+    Schema.Struct({
+      use: Schema.String,
+      inputs: Schema.Record(Schema.String, Schema.Json),
+      template: Schema.optionalKey(Schema.String),
+    }),
   ),
   /** The role and its members when the request opened. Only these members may answer for it. */
   approvers: Schema.optionalKey(

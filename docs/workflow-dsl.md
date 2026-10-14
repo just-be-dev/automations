@@ -368,11 +368,11 @@ Pauses the run until a person responds.
 
 - `prompt` is up to 4000 characters.
 - `assignee` is a ref to a person: an entity with a text field named `email`. The schema allows leaving it out, but the planner is told to always set it.
-- `notify` (`slack` or `email`) names the channel to reach the assignee on. It is recorded and nothing is sent yet, even when Slack is connected.
+- `notify` (`slack` or `email`) names the channel to reach the assignee on. With [Slack connected](slack.md#task-messages), `slack` sends the assignee a DM, found by their `email`, that says what's needed and links to the run in the studio. Otherwise, and always for `email`, it is only recorded: email is simulated.
 - `response` is `"approval"` (approve or reject), or a form of at least one field. Field types are `text`, `number`, `boolean`, `date`, and `datetime`, and a field's `default` is a template that prefills the answer.
 - `timeout` is an optional duration. When it passes first, the step finishes with `timedOut: true`, and a form keeps its defaults, so a proposal nobody objects to goes ahead.
 
-Open requests appear on the run as tasks. `POST /api/automations/:id/runs/:runId/tasks/:stepId` answers one with `{ "approved": boolean }` or `{ "values": { field: value } }`, checked against the field types.
+Open requests appear on the run as tasks. A task records each DM it sent under `notifications`: `{ "via": "slack", "to": email, "name", "status": "sending" | "sent" | "failed", "channel"?, "ts"?, "error"? }`. `POST /api/automations/:id/runs/:runId/tasks/:stepId` answers one with `{ "approved": boolean }` or `{ "values": { field: value } }`, checked against the field types.
 
 It records `{ "approved"?: boolean, "values"?: { field: JSON }, "respondedBy"?: string, "timedOut": boolean }`.
 
@@ -476,7 +476,7 @@ Event chains carry a depth from 0 to 16. Publication increments it; an entity co
 
 `permissions` maps each operation the workflow uses to `"auto"` (the run performs it on its own) or `{ "ask": "<role>" }` (each run waits until a member of that [role](#roles) approves it). The studio shows them as allow and ask first, with the role beside it. The planner sets one for every operation, and reads the current ones with the draft on every turn. The person can change any of them in the studio, or with `POST /api/automations/:id/permissions` and `{ "permissions": { "email.send": { "ask": "people_ops" } } }`, which merges into the draft. The planner's edits start from the draft's permissions, and a permission the person sets for another operation while the planner works is kept. `checkWorkflow` rejects a workflow that leaves an operation it uses without a permission, names an unknown operation, or asks an unknown role. Runs follow the saved copy.
 
-When an action asks first, the run resolves its inputs and opens an approval task that shows the operation, those inputs, and the role with its members at that moment. The step waits as `waiting`. Answer it like a human step's task with `{ "approved": boolean }`. When the studio knows who is answering (Cloudflare Access's authenticated email, on deployed stages), only the role's members may answer, and the answer records them as `respondedBy`. Under `alchemy dev` there's no Access, so anyone can answer. Approving performs the operation with the inputs shown. Declining marks the step `declined`, and it records nothing. Every later step that reads its record is then `skipped`, as are the steps that read theirs; the rest of the run carries on. Use a [`stop`](#stop) step to end the run instead. A human step's `notify` doesn't ask.
+When an action asks first, the run resolves its inputs and opens an approval task that shows the operation, those inputs, the template they came from, and the role with its members at that moment. With [Slack connected](slack.md#task-messages), each member gets a DM with the same details and a link to the run. The step waits as `waiting`. Answer it like a human step's task with `{ "approved": boolean }`. When the studio knows who is answering (Cloudflare Access's authenticated email, on deployed stages), only the role's members may answer, and the answer records them as `respondedBy`. Under `alchemy dev` there's no Access, so anyone can answer. Approving performs the operation with the inputs shown. Declining marks the step `declined`, and it records nothing. Every later step that reads its record is then `skipped`, as are the steps that read theirs; the rest of the run carries on. Use a [`stop`](#stop) step to end the run instead. A human step's `notify` doesn't ask.
 
 `http.post` really sends:
 
@@ -527,7 +527,7 @@ An action uses one with `"template": { "use": "engineering_welcome_email", "with
 
 The planner prefers templates to writing text itself or adding an agent step to write it, and uses a `match` when the right template depends on the subject.
 
-When a run starts, `expandTemplates` replaces each use with the inputs its content fills, so the run's workflow carries plain text and replays the same wording after a template changes. Editing a template changes the runs that start afterwards. If a template a saved workflow uses is deleted, or no longer fits it, the next run is recorded as `failed` with the problems instead of starting.
+When a run starts, `expandTemplates` replaces each use with the inputs its content fills, so the run's workflow carries plain text and replays the same wording after a template changes. It keeps the template's label beside those inputs as `templateLabel`, so an approval can name the wording it shows; don't write `templateLabel` yourself. Editing a template changes the runs that start afterwards. If a template a saved workflow uses is deleted, or no longer fits it, the next run is recorded as `failed` with the problems instead of starting.
 
 `migrations/0003_templates.sql` creates `engineering_welcome_email` and `welcome_email`, which welcomes any new hire.
 

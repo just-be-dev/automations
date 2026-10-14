@@ -12,6 +12,7 @@ import { AnswerHub, makeAnswerHub } from "../../ai/ask-question/answer-hub.ts";
 import { makeAutomation } from "../../automation/application.ts";
 import { makeSlackWebSender, SlackSender } from "../../connections/slack.ts";
 import { AutomationHost, AutomationStorageError } from "../../automation/host.ts";
+import { ConfiguredStudioOrigin, studioOrigin } from "../../automation/studio-link.ts";
 import { makePlanning } from "../../automation/planning.ts";
 import { ExecutionId } from "../../workflow/execution.ts";
 import { AutomationIndexD1 } from "./automation-index-d1.ts";
@@ -40,6 +41,13 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
     const events = yield* EventsQueue;
     // Read during Init, so a deploy with the token binds it as a secret. Without it, Slack is simulated.
     const slackToken = yield* Config.option(Config.Redacted("SLACK_BOT_TOKEN")).pipe(Effect.orDie);
+    // Where Slack task messages link to. Optional: without it, saves record the studio's origin.
+    const configuredStudio = yield* Config.option(Config.String("STUDIO_URL")).pipe(Effect.orDie);
+    const studio = Option.getOrUndefined(configuredStudio);
+    const configuredOrigin = studio === undefined ? null : studioOrigin(studio);
+    if (studio !== undefined && configuredOrigin === undefined) {
+      return yield* Effect.die(`STUDIO_URL must be an http or https URL, not ${studio}`);
+    }
 
     // @effect-diagnostics-next-line returnEffectInGen:off
     return Effect.gen(function* () {
@@ -109,6 +117,7 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
           SlackSender,
           Option.isSome(slackToken) ? makeSlackWebSender(slackToken.value) : null,
         ),
+        Effect.provideService(ConfiguredStudioOrigin, configuredOrigin ?? null),
       );
       const planReply = yield* Alchemy.makeCallback("planReply", (payload: unknown) =>
         Schema.decodeUnknownEffect(PlanReply)(payload).pipe(

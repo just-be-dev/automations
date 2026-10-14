@@ -112,6 +112,8 @@ export interface PermissionRequest {
   /** The step's title with its templates filled in. */
   readonly title: string;
   readonly inputs: Readonly<Record<string, Schema.Json>>;
+  /** The label of the template the inputs were expanded from, if any. */
+  readonly template?: string;
 }
 
 /** Progress the interpreter reports as it goes. A replay reports finished steps again. */
@@ -302,6 +304,7 @@ const runResolved = (
             permission.ask,
             renderTemplate(step.title, values),
             inputs,
+            source?.templateLabel ?? step.templateLabel,
           ))
         ) {
           return state;
@@ -485,6 +488,7 @@ const askPermission = Effect.fnUntraced(function* (
   role: string,
   title: string,
   inputs: Record<string, Schema.Json>,
+  template: string | undefined,
 ) {
   const runner = yield* StepRunner;
   const deferred = humanDeferred(`${step.id}/approval`);
@@ -492,7 +496,15 @@ const askPermission = Effect.fnUntraced(function* (
   yield* Activity.make({
     name: `${step.id}/approval-request`,
     error: StepFailed,
-    execute: runner.requestPermission({ runId: state.runId, token, step, role, title, inputs }),
+    execute: runner.requestPermission({
+      runId: state.runId,
+      token,
+      step,
+      role,
+      title,
+      inputs,
+      ...(template === undefined ? {} : { template }),
+    }),
   }).pipe(Activity.retry(retried));
   yield* report({ runId: state.runId, step: step.id, status: "waiting" });
   const { approved } = yield* DurableDeferred.await(deferred);

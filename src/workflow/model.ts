@@ -435,6 +435,8 @@ export interface TemplateUse extends Schema.Schema.Type<typeof TemplateUse> {}
 export const InputSource = Schema.Struct({
   with: Schema.optionalKey(ActionInputs),
   template: Schema.optionalKey(TemplateUse),
+  /** Set when a run starts: the label of the template these inputs were expanded from. */
+  templateLabel: Schema.optionalKey(Schema.String),
 });
 export interface InputSource extends Schema.Schema.Type<typeof InputSource> {}
 
@@ -465,6 +467,8 @@ export const ActionStep = Schema.Struct({
   use: OperationId,
   with: ActionInputs,
   template: Schema.optionalKey(TemplateUse),
+  /** Set when a run starts: the label of the template `with` was expanded from. */
+  templateLabel: Schema.optionalKey(Schema.String),
   match: Schema.optionalKey(ActionMatch),
 });
 export interface ActionStep extends Schema.Schema.Type<typeof ActionStep> {}

@@ -52,6 +52,7 @@ test("stable chat IDs survive completion and never answer an unrelated planner q
           read: () => Effect.succeed(undefined),
           catalog: Effect.succeed({ types: [], templates: [], roles: [] }),
           save: () => Effect.die("Never save"),
+          studioLink: Effect.succeed(undefined),
         });
         const first = yield* session.chat("a1", "Design welcome", "stable");
         const duplicate = yield* session.chat("a1", "Design welcome", "stable");
