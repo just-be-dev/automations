@@ -1,4 +1,4 @@
-/** Executes action operations: guarded HTTP requests and replay-stable simulations of uncredentialed services. */
+/** Executes action operations: guarded HTTP requests, email and Slack when credentialed, and replay-stable simulations otherwise. */
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FetchHttpClient from "effect/http/FetchHttpClient";
@@ -7,6 +7,7 @@ import * as HttpClientRequest from "effect/http/HttpClientRequest";
 import * as Schema from "effect/Schema";
 import { EntityPut, MAX_EVENT_DEPTH, PublishEvent } from "../events/model.ts";
 import { Events } from "../events/service.ts";
+import { EmailSender } from "./email.ts";
 import { SlackSender } from "./slack.ts";
 import { StepFailed } from "../workflow/interpreter.ts";
 import {
@@ -20,11 +21,13 @@ import type { ExecutionValues } from "../workflow/execution.ts";
 
 /**
  * Executes connection operations for action steps. `http.post` really sends and `events.emit`
- * really publishes. Slack posts for real when the deployment provides a `SlackSender` (a bot
- * token); delivery is at least once, because Slack takes no idempotency key. Email, Calendar, and
- * Slack without a token are simulated: they succeed, contact nothing, and
- * record what they would have sent with `simulated: true`. Their IDs derive from the step's
- * idempotency key, so a retried step records the same thing.
+ * really publishes. Email sends for real when the deployment provides an `EmailSender` (a Resend
+ * API key), passing the step's idempotency key so a retried step sends once. Slack posts for real
+ * when the deployment provides a `SlackSender` (a bot token); delivery is at least once, because
+ * Slack takes no idempotency key. Calendar, and Email and Slack without credentials, are
+ * simulated: they succeed, contact nothing, and record what they would have sent with
+ * `simulated: true`. Their IDs derive from the step's idempotency key, so a retried step records
+ * the same thing.
  */
 
 type Inputs = Readonly<Record<string, Schema.Json>>;
@@ -160,13 +163,19 @@ export const runAction = Effect.fn("Connections.runAction")(function* (
     }
     case "email.send": {
       const to = yield* recipient(step, "to", inputs["to"]);
-      return recorded({
-        simulated: true,
-        messageId: simulatedId,
+      const message = {
         to: to.email,
         subject: text(inputs, "subject"),
         body: text(inputs, "body"),
-      });
+      };
+      const email = yield* EmailSender;
+      if (email !== null) {
+        const sent = yield* email
+          .send(message, idempotencyKey)
+          .pipe(Effect.mapError((error) => fail(step, error.message)));
+        return recorded({ messageId: sent.messageId, ...message });
+      }
+      return recorded({ simulated: true, messageId: simulatedId, ...message });
     }
     case "slack.sendMessage": {
       const to = text(inputs, "to");

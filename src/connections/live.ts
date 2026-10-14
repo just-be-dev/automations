@@ -2,7 +2,7 @@
 import * as Context from "effect/Context";
 
 /**
- * Connection IDs (such as `"slack"`) that the registry marks simulated but this deployment really
+ * Connection IDs (such as `"email"` or `"slack"`) that the registry marks simulated but this deployment really
  * connects. The host provides it from its configuration; tests and other hosts default to none.
  * `GET /api/connections` serves it so the studio says "Simulated" only where it's true.
  */

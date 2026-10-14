@@ -5,6 +5,7 @@ test("an operation is simulated unless the deployment connects it; a result says
   expect(isSimulated("slack.sendMessage", [])).toBe(true);
   expect(isSimulated("slack.sendMessage", ["slack"])).toBe(false);
   expect(isSimulated("email.send", ["slack"])).toBe(true);
+  expect(isSimulated("email.send", ["email"])).toBe(false);
   expect(isSimulated("http.post", [])).toBe(false);
   // A run from before Slack was connected keeps saying it sent nothing.
   expect(recordIsSimulated({ simulated: true, channel: "#team" })).toBe(true);

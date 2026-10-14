@@ -146,6 +146,10 @@ The body is `{id, name, data, subject?}`, where `subject` is an optional `{type,
 
 With `SLACK_BOT_TOKEN` set, `slack.sendMessage` posts for real, and open tasks reach the people who answer them as DMs that link to the run. `STUDIO_URL` optionally sets the studio address those links use. With `SLACK_SIGNING_SECRET` as well, the stack deploys the public `Channels` Worker, and Slack mentions, thread messages and reactions start automations as [`slack.*` events](workflow-dsl.md#event). [Slack integration](slack.md) covers setup, what automations receive, and troubleshooting.
 
+### Email
+
+With `RESEND_API_KEY` set, `email.send` sends real email through Resend, from `EMAIL_FROM` if that's set. Without the key it's simulated. [Email](email.md) covers why Resend, setup, how to check a real send, and troubleshooting.
+
 ### Schedules, dates and templates
 
 Schedule and date triggers start runs on a cron schedule or relative to a date each entity holds. The overview shows a schedule in words and when it next runs. See [Triggers](workflow-dsl.md#schedule) for the limits and redelivery behavior.
@@ -215,7 +219,8 @@ The screenshot demonstrates the conversation and workflow UI, not a live model r
 
 ## Caveats
 
-- Email and Calendar are simulated, and so is Slack without `SLACK_BOT_TOKEN`. Their steps succeed, contact nothing, and record what they would have sent with `simulated: true`. Without Slack, a human step's `notify` is recorded, not sent, and `notify: "email"` is never sent. With [Slack connected](#slack), messages really arrive, `slack.sendMessage` really posts, and open tasks are sent as [DMs](slack.md#task-messages).
+- Calendar is simulated, and so are Email without `RESEND_API_KEY` and Slack without `SLACK_BOT_TOKEN`. Their steps succeed, contact nothing, and record what they would have sent with `simulated: true`. Without Slack, a human step's `notify` is recorded, not sent, and `notify: "email"` is never sent. With [Email connected](#email), `email.send` really sends; with [Slack connected](#slack), messages really arrive, `slack.sendMessage` really posts, and open tasks are sent as [DMs](slack.md#task-messages).
+- `email.send` sends once per step and run for 24 hours: it passes the step's idempotency key to Resend. A step retried after that sends again.
 - `slack.sendMessage` is delivered **at least once**: Slack takes no idempotency key, so if a run restarts after Slack accepted a message but before the run recorded it, the message posts again.
 - Anyone who can post in a channel the bot is in can start a `slack.*`-triggered automation. Treat `event.data.text` as untrusted input, and ask a role in the permissions of anything such a run sends or changes.
 - Only a role's members may answer its approval tasks, going by the email Cloudflare Access sends in `Cf-Access-Authenticated-User-Email`. The Api trusts that header because only the Access-protected Studio Worker reaches it. Verify the Access JWT before production. Under `alchemy dev`, and with the test service token, there's no email, so anyone can answer. A click on an approval DM's buttons always carries the clicker's Slack email, even in dev, so only members can approve from Slack.

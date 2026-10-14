@@ -245,7 +245,7 @@ Saving validates the draft and refuses a timed trigger that already matches more
                   │└───────────────────┘                      ▼         │
                   │                            ┌──────────────────────┐ │
                   │                            │ action runner        │ │
-                  │                            │ Events queue, Slack, │ │
+                  │                            │ Events, Slack, email │ │
                   │                            │ HTTPS, simulated ops │ │
                   │                            └──────────────────────┘ │
                   └─────────────────────────────────────────────────────┘
@@ -554,7 +554,7 @@ An approval task's DM has **Approve** and **Reject** buttons. [The interactivity
 
 - [`src/workflow/model.ts`](src/workflow/model.ts) defines the pure workflow DSL, references, and conditions. [`catalog.ts`](src/workflow/catalog.ts) checks entity references, path ordering, operation inputs, template slots, and permissions.
 - [`src/entities/`](src/entities/store.ts) owns entity models, approved templates, roles, subscriptions, and shared storage validation. The memory store and D1 adapter use the same rules.
-- [`src/connections/registry.ts`](src/connections/registry.ts) describes operations without executing them. The planner, checker, and UI share it. [`runner.ts`](src/connections/runner.ts) executes those operations.
+- [`src/connections/registry.ts`](src/connections/registry.ts) describes operations without executing them. The planner, checker, and UI share it. [`runner.ts`](src/connections/runner.ts) executes those operations; [`email.ts`](src/connections/email.ts) and [`slack.ts`](src/connections/slack.ts) send through Resend and Slack when the deployment has their credentials.
 - [`src/ai/pi.ts`](src/ai/pi.ts) defines the `PiAgent` conversation contract and tools; [`trace.ts`](src/ai/trace.ts) defines traces. The Cloudflare implementation wraps Promise-based pi-ai and pi-durable in Effect and stores conversations in Durable Object SQLite. [`src/ai/classifier.ts`](src/ai/classifier.ts) defines the clef classifier that picks progress phrases and makes decide steps' decisions. [`workers-ai.ts`](src/platform/cloudflare/workers-ai.ts) selects the pi, classifier and naming models; evals reuse it.
 - [`src/http/entity-mcp.ts`](src/http/entity-mcp.ts) exposes the entity store over stateless MCP JSON-RPC. Handlers run within the request so they retain access to D1; the assistant uses application tools directly, not MCP.
 
@@ -574,14 +574,14 @@ Routes preserve the open automation and run in the URL. Page changes increment a
 
 The global assistant sits outside the page lifecycle and uses its own request sequence. Follow-along navigates to the assistant's latest activity link, but never over dirty forms or an unsent planner message. Navigating by hand turns follow-along off.
 
-Agent replies render Markdown tokens without setting raw HTML. Run results render as labelled fields, not raw JSON. The operation registry marks Email, Slack, and Calendar as simulated. A deployment with `SLACK_BOT_TOKEN` connects Slack; `GET /api/connections` lists what is connected, so the UI tags an operation "Simulated" only when it is, and a run's result says so from its own `simulated: true` record.
+Agent replies render Markdown tokens without setting raw HTML. Run results render as labelled fields, not raw JSON. The operation registry marks Email, Slack, and Calendar as simulated. A deployment with `RESEND_API_KEY` connects Email, and one with `SLACK_BOT_TOKEN` connects Slack; `GET /api/connections` lists what is connected, so the UI tags an operation "Simulated" only when it is, and a run's result says so from its own `simulated: true` record.
 
 ## Guarantees have deliberate limits
 
 - Approval tasks record the role's members when opened and check the Access email, or the Slack email of whoever clicked in a DM, when answered. The private API trusts the Studio's identity header; local dev and service-token requests have no email restriction and share the `local` owner. JWT verification and the rest of the security boundary need production review.
 - `http.post` accepts only literal public HTTPS URLs without credentials. Both the catalog and connection runner enforce the URL boundary. It does not forward trace headers. Workflows must not contain secrets.
 - Steps that are declined or skipped record nothing. Dependent steps are skipped; catalog checks guarantee that referenced steps precede their readers on every path.
-- Email and Calendar, and `notify: "email"`, send nothing in the prototype. Slack posts, including task DMs, only when `SLACK_BOT_TOKEN` is set. Slack takes no idempotency key, so a retried step can post twice. A task DM records each recipient before and after posting, and looks for its own key in the DM before posting again. HTTP requests are real.
+- Calendar and `notify: "email"` send nothing in the prototype. Email sends only when `RESEND_API_KEY` is set ([setup](docs/email.md)), passing the step's idempotency key so a retried step sends once within 24 hours. Slack posts, including task DMs, only when `SLACK_BOT_TOKEN` is set. Slack takes no idempotency key, so a retried step can post twice. A task DM records each recipient before and after posting, and looks for its own key in the DM before posting again. HTTP requests are real.
 
 Application tests use memory implementations and scripted models. UI Story and Scene tests exercise state transitions and accessible views. Native Worker behavior requires local end-to-end checks, and real-model evals measure prompt behavior that scripted tests cannot. See [the development guide](docs/development.md#evals) for commands.
 

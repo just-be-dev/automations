@@ -10,6 +10,7 @@ import { PiAgent } from "../../ai/pi.ts";
 import { Classifier } from "../../ai/classifier.ts";
 import { AnswerHub, makeAnswerHub } from "../../ai/ask-question/answer-hub.ts";
 import { makeAutomation } from "../../automation/application.ts";
+import { EmailSender, makeResendSender } from "../../connections/email.ts";
 import { makeSlackWebSender, SlackSender } from "../../connections/slack.ts";
 import { AutomationHost, AutomationStorageError } from "../../automation/host.ts";
 import { ConfiguredStudioOrigin, studioOrigin } from "../../automation/studio-link.ts";
@@ -48,6 +49,9 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
     if (studio !== undefined && configuredOrigin === undefined) {
       return yield* Effect.die(`STUDIO_URL must be an http or https URL, not ${studio}`);
     }
+    // Like Slack, email sends with a Resend key, from EMAIL_FROM when set. See docs/email.md.
+    const resendKey = yield* Config.option(Config.Redacted("RESEND_API_KEY")).pipe(Effect.orDie);
+    const emailFrom = yield* Config.option(Config.String("EMAIL_FROM")).pipe(Effect.orDie);
 
     // @effect-diagnostics-next-line returnEffectInGen:off
     return Effect.gen(function* () {
@@ -118,6 +122,12 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
           Option.isSome(slackToken) ? makeSlackWebSender(slackToken.value) : null,
         ),
         Effect.provideService(ConfiguredStudioOrigin, configuredOrigin ?? null),
+        Effect.provideService(
+          EmailSender,
+          Option.isSome(resendKey)
+            ? makeResendSender(resendKey.value, Option.getOrUndefined(emailFrom))
+            : null,
+        ),
       );
       const planReply = yield* Alchemy.makeCallback("planReply", (payload: unknown) =>
         Schema.decodeUnknownEffect(PlanReply)(payload).pipe(

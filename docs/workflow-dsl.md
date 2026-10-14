@@ -368,7 +368,7 @@ Pauses the run until a person responds.
 
 - `prompt` is up to 4000 characters.
 - `assignee` is a ref to a person: an entity with a text field named `email`. The schema allows leaving it out, but the planner is told to always set it.
-- `notify` (`slack` or `email`) names the channel to reach the assignee on. With [Slack connected](slack.md#task-messages), `slack` sends the assignee a DM, found by their `email`, that says what's needed and links to the run in the studio. Otherwise, and always for `email`, it is only recorded: email is simulated.
+- `notify` (`slack` or `email`) names the channel to reach the assignee on. With [Slack connected](slack.md#task-messages), `slack` sends the assignee a DM, found by their `email`, that says what's needed and links to the run in the studio. Otherwise it is only recorded, and `email` is always only recorded, even when Email is connected.
 - `response` is `"approval"` (approve or reject), or a form of at least one field. Field types are `text`, `number`, `boolean`, `date`, and `datetime`, and a field's `default` is a template that prefills the answer.
 - `timeout` is an optional duration. When it passes first, the step finishes with `timedOut: true`, and a form keeps its defaults, so a proposal nobody objects to goes ahead.
 
@@ -447,7 +447,7 @@ An action can also take inputs from a [template](#templates) with `template: { "
 | `http.post`            | `url` (literal), `body?` JSON                                                        | `status`, `body` (up to 4000 characters) |
 | `events.emit`          | `name`, `data` JSON text or one exact `{{ref}}`                                      | `eventId`, `name`                        |
 
-Email and Calendar are **simulated**: there are no credentials yet, so their operations contact nothing. They succeed and record what they would have sent, with `simulated: true`. Slack is simulated the same way unless the deployment has a bot token ([setup](slack.md)); then `slack.sendMessage` posts and records Slack's `channel` ID and `ts`, delivered at least once. Their IDs derive from the step's idempotency key. `calendar.findTimes` offers weekday slots at 10:00 and 14:00 UTC.
+Calendar is **simulated**: there are no credentials yet, so its operations contact nothing. They succeed and record what they would have sent, with `simulated: true`. Email and Slack are simulated the same way unless the deployment connects them. With a Resend API key ([setup](email.md)), `email.send` sends a plain-text email and records Resend's `messageId`; a retried step sends once, because it passes its idempotency key to Resend. With a bot token ([setup](slack.md)), `slack.sendMessage` posts and records Slack's `channel` ID and `ts`, delivered at least once. Simulated IDs derive from the step's idempotency key. `calendar.findTimes` offers weekday slots at 10:00 and 14:00 UTC.
 
 ### Publishing events and entity commands
 

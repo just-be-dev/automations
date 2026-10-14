@@ -13,6 +13,7 @@ import { PiAgent } from "../ai/pi.ts";
 import { emptyTrace } from "../ai/trace.ts";
 import { checkWorkflow } from "../workflow/catalog.ts";
 import { runAction } from "../connections/runner.ts";
+import { EmailSender } from "../connections/email.ts";
 import { SlackSender } from "../connections/slack.ts";
 import { findOperation } from "../connections/registry.ts";
 import { makeDurableEngine, type DurableEngine } from "../workflow/durable-engine.ts";
@@ -99,9 +100,10 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
   const storage = host.storage;
   const entities = yield* EntityStore;
   const events = yield* Events;
-  // A Reference: null (Slack simulated) unless the host provides a sender.
+  // References: null (simulated) unless the host provides a sender.
   const slack = yield* SlackSender;
   const configuredOrigin = yield* ConfiguredStudioOrigin;
+  const email = yield* EmailSender;
   const pi = yield* PiAgent;
   const classifier = yield* Classifier;
   const { read: readWorkflow, catalog } = workflows;
@@ -238,6 +240,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
       runAction(step, inputs, known, idempotencyKey).pipe(
         Effect.provideService(Events, events),
         Effect.provideService(SlackSender, slack),
+        Effect.provideService(EmailSender, email),
       ),
     // A classifier call keeps no conversation, so asking again on a replay repeats nothing.
     decide: ({ step, question, state: known }) =>

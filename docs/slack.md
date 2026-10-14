@@ -126,7 +126,7 @@ The planner should give it an event trigger on `slack.mention` and a message suc
 A run that waits on a person sends them a DM from the bot:
 
 - **Ask-first actions.** Each member of the role the action asks gets one. It says which automation needs the role to approve what, and for whom. It shows the exact content the action will send. For an email, that is the template it came from, the subject, and the start of the body.
-- **Human steps with `notify: "slack"`.** The assignee gets one with the step's title, its prompt, and the fields they'll fill in. With `notify: "email"`, nothing is sent: email is simulated.
+- **Human steps with `notify: "slack"`.** The assignee gets one with the step's title, its prompt, and the fields they'll fill in. With `notify: "email"`, nothing is sent, even when [email](email.md) is connected.
 
 People are found by the `email` field of their entity, the same way `slack.sendMessage` finds them. Each DM ends with an **Open in Studio** button that opens the run (`/?automation=<id>&run=<runId>`), where the task can be answered. An approval's DM also has **Approve** and **Reject** beside it; see [Approving from Slack](#approving-from-slack).
 

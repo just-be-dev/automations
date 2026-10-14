@@ -53,9 +53,13 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const index = yield* AutomationIndexD1;
     const entities = yield* EntityStoreD1;
     const events = yield* EventsQueue;
-    // The Automation objects this Worker hosts send with the same token; see automation.ts.
+    // The Automation objects this Worker hosts send with the same credentials; see automation.ts.
     const slackToken = yield* Config.option(Config.Redacted("SLACK_BOT_TOKEN")).pipe(Effect.orDie);
-    const live = Option.isSome(slackToken) ? ["slack"] : [];
+    const resendKey = yield* Config.option(Config.Redacted("RESEND_API_KEY")).pipe(Effect.orDie);
+    const live = [
+      ...(Option.isSome(resendKey) ? ["email"] : []),
+      ...(Option.isSome(slackToken) ? ["slack"] : []),
+    ];
     const automations = automationsLayer(namespace);
     const subscribers = Layer.unwrap(
       Automations.use((service) =>
