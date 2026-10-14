@@ -2,5 +2,6 @@
 export * from "./workflow/model.ts";
 export * from "./workflow/run.ts";
 export * from "./workflow/schedule.ts";
+export * from "./workflow/changes.ts";
 export * from "./automation/model.ts";
 export * from "./ai/ask-question/question.ts";

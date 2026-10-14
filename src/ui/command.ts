@@ -16,6 +16,7 @@ import {
   RunSummary,
   TitledRun,
   Workflow,
+  WorkflowChanges,
 } from "../workflow.ts";
 import { errorText, loadEventInput, loadSubjectOptions, requestJson } from "./api.ts";
 import { ownAnswerId } from "./constant.ts";
@@ -46,6 +47,7 @@ const AutomationState = Schema.Struct({
       prompt: Schema.String,
       reply: Schema.String,
       asked: Schema.optionalKey(Schema.Array(AskedQuestions)),
+      changes: Schema.OptionFromOptional(WorkflowChanges),
     }),
   ),
   pendingChat: Schema.OptionFromOptional(PendingChat),
@@ -60,12 +62,16 @@ const loadAutomation = (automationId: string, revision: number) =>
         revision,
         maybeDraft: state.draft,
         maybeSaved: state.saved,
-        conversation: Array.map(state.conversation, ({ prompt, asked = [], reply }, id) => ({
-          id,
-          prompt,
-          asked,
-          reply,
-        })),
+        conversation: Array.map(
+          state.conversation,
+          ({ prompt, asked = [], reply, changes }, id) => ({
+            id,
+            prompt,
+            asked,
+            reply,
+            maybeChanges: changes,
+          }),
+        ),
         maybePendingChat: state.pendingChat,
         runs: state.runs,
         maybeProgress: state.progress,

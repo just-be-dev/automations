@@ -25,6 +25,7 @@ import {
   stepLanes,
   stepResultView,
   templateView,
+  unchanged,
 } from "./workflow.ts";
 
 /** A run's wait steps that wait on a clock, and whether one can be resumed now. */
@@ -136,7 +137,7 @@ const stepRowDetailView = (step: Step, context: ChecklistContext, h: HtmlBuilder
   return h.div(
     [componentName("step-row-detail"), h.Class("flex flex-col gap-2.5 pb-3 pl-[30px]")],
     [
-      stepDetailView(step, context.step, true, h),
+      stepDetailView(step, context.step, true, unchanged, h),
       Option.match(closedTaskOf(context.run, step), {
         onNone: () => h.empty,
         onSome: (task) => taskMetaView(task, context.step.liveConnections, h),
@@ -162,7 +163,7 @@ const laneView = (lane: Lane, context: ChecklistContext, h: HtmlBuilder<Message>
   );
 
 const lanesView = (step: Step, context: ChecklistContext, h: HtmlBuilder<Message>) => {
-  const lanes = stepLanes(step, h);
+  const lanes = stepLanes(step, unchanged, h);
   return Array.match(
     Array.flatMap(shownLaneIndexes(step, context.run, lanes.length), (index) => {
       const lane = lanes[index];
@@ -290,6 +291,7 @@ export const runChecklistView = (
       permissions: run.workflow.permissions ?? {},
       roles: options.roles,
       liveConnections: options.liveConnections,
+      maybeChanges: Option.none(),
     },
     waits: options.waits,
   };

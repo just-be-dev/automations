@@ -16,6 +16,7 @@ These instructions apply to `src/ui/` and its descendants. The UI uses Foldkit, 
 - Agent replies render through `components/markdown.ts`, which builds elements from marked's tokens and never sets HTML. Raw HTML shows as text, and links open only web and mail addresses.
 - People using the studio don't read JSON. Step results render through `components/record.ts` as labelled fields with readable dates, and run views never show raw JSON. The draft's JSON toggle is for designing.
 - The assistant lives outside the page lifecycle. Its polls use their own sequencing, never page `revision`. Follow-along navigates only to actual activity links and must preserve dirty forms and unsent messages.
+- The draft marks what the agent's latest reply changed from the `changes` its exchange recorded, and `replyChanges` keeps only what still differs from the saved version, so saving clears the marks and a reload keeps them. Run views never show them.
 - Tag an operation or result "Simulated" from `GET /api/connections` for operations and from the record's `simulated` for results, never from the registry alone.
 - `public/_headers` sets the CSP for static assets.
 

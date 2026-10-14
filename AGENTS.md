@@ -41,6 +41,7 @@ Most modules open with a comment saying what they own.
 - The planner never writes a whole workflow. Its tools set values or replace steps by ID, and no tool argument nests steps, so a call pi repeats after a restart changes nothing more. Keep every planner tool idempotent.
 - The assembled answer must decode and check against the catalog; otherwise the planner gets exactly one retry with the problems. An answer that changed nothing leaves the draft as it is.
 - Questions are kept beside the working copy, not in it, so asking never counts as a change.
+- A reply that edits an existing draft records `diffWorkflows` (`src/workflow/changes.ts`) with its exchange. The studio marks the latest reply's changes only while they differ from the saved version (`unsavedChanges`), so saving clears them and a reload keeps them.
 - Asking parks the planner's pi turn, possibly for days, so nothing may wait on it. `planReply` returns as soon as the turn parks and writes nothing. An answer is stored and `planReply` rescheduled in one transaction.
 - The planner reads workflows as YAML (`planYaml`); its tool arguments stay JSON.
 - Progress phrases are read by non-technical users. Keep them plain, and never let them reveal the retry or show the agent's raw reasoning.

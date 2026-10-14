@@ -277,6 +277,46 @@ describe("Automation application without a platform", () => {
     expect(h.recorded).toEqual([]);
   });
 
+  test("a reply that edits an existing draft records what it changed; the first draft records nothing", async () => {
+    const h = harness();
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const app = yield* makeAutomation();
+        const first = yield* app.chat("a1", "Design it");
+        yield* app.callbacks.planReply({ automationId: "a1", chatId: first.pendingChat.id });
+        h.answerWith((call) =>
+          Effect.gen(function* () {
+            yield* call("put_steps", {
+              steps: [{ id: "stop", title: "Stop", kind: "stop", reason: "All done" }],
+            });
+            return "Changed the reason";
+          }),
+        );
+        const second = yield* app.chat("a1", "Say it's all done");
+        yield* app.callbacks.planReply({ automationId: "a1", chatId: second.pendingChat.id });
+        return yield* app.inspectWorkflow();
+      }).pipe(Effect.provide(h.layer)),
+    );
+    expect(result.conversation).toEqual([
+      { prompt: "Design it", reply: "Designed" },
+      {
+        prompt: "Say it's all done",
+        reply: "Changed the reason",
+        changes: {
+          steps: [
+            {
+              kind: "changed",
+              id: "stop",
+              fields: [{ path: "reason", before: "Snapshot finished" }],
+              moved: false,
+            },
+          ],
+          permissions: [],
+        },
+      },
+    ]);
+  });
+
   test("a question parks the reply, and answering resumes the same turn", async () => {
     const h = harness();
     const questions = [

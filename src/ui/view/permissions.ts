@@ -9,9 +9,14 @@ import { icon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { permissionOf } from "../../connections.ts";
 import type { Role } from "../../entities.ts";
-import { operationsUsed, type Permission, type Workflow } from "../../workflow.ts";
+import {
+  operationsUsed,
+  type Permission,
+  type PermissionChange,
+  type Workflow,
+} from "../../workflow.ts";
 import { Message } from "../message.ts";
-import { Activity, type Model, readyRoles } from "../model.ts";
+import { Activity, type Model, readyRoles, replyChanges } from "../model.ts";
 import {
   type IconNode,
   isSimulated,
@@ -50,6 +55,12 @@ export const permissionsView = (workflow: Workflow, model: Model, h: HtmlBuilder
               permissionRowView(
                 operationId,
                 Option.fromNullishOr(permissionOf(workflow, operationId)),
+                Option.flatMap(replyChanges(model), (changes) =>
+                  Array.findFirst(
+                    changes.permissions,
+                    (change) => change.operation === operationId,
+                  ),
+                ),
                 readyRoles(model.roles),
                 Activity.guards.Working(model.activity),
                 model.liveConnections,
@@ -61,9 +72,44 @@ export const permissionsView = (workflow: Workflow, model: Model, h: HtmlBuilder
       ),
   });
 
+const permissionLabel = (permission: Permission, roles: ReadonlyArray<Role>) =>
+  permission === "auto"
+    ? "Allow"
+    : `Ask ${Option.match(
+        Array.findFirst(roles, (role) => role.name === permission.ask),
+        { onNone: () => permission.ask, onSome: (role) => role.label },
+      )}`;
+
+/** Marks a permission the agent's latest reply set, with the one it replaced struck through. */
+const permissionChangeView = (
+  change: PermissionChange,
+  roles: ReadonlyArray<Role>,
+  h: HtmlBuilder<Message>,
+) =>
+  h.span(
+    [componentName("permission-change"), h.Class("flex items-center gap-1.5 text-xs")],
+    [
+      h.span(
+        [
+          h.Class(
+            "inline-flex items-center rounded-[5px] bg-change px-1.5 text-[11px] leading-[18px] font-medium text-white",
+          ),
+        ],
+        [change.before === undefined ? "Added" : "Changed"],
+      ),
+      change.before === undefined
+        ? h.empty
+        : h.del(
+            [h.Class("text-muted-foreground line-through")],
+            [permissionLabel(change.before, roles)],
+          ),
+    ],
+  );
+
 const permissionRowView = (
   operationId: string,
   maybePermission: Option.Option<Permission>,
+  maybeChange: Option.Option<PermissionChange>,
   roles: ReadonlyArray<Role>,
   isWorking: boolean,
   liveConnections: ReadonlyArray<string>,
@@ -74,7 +120,16 @@ const permissionRowView = (
     Message.SelectedPermission({ operation: operationId, permission });
   return h.keyed("li")(
     operationId,
-    [componentName("permission-row"), h.Class("flex flex-wrap items-center gap-2.5 py-1.5")],
+    [
+      componentName("permission-row"),
+      h.Class(
+        cn(
+          "flex flex-wrap items-center gap-2.5 py-1.5",
+          Option.isSome(maybeChange) &&
+            "-mx-2 my-0.5 rounded-lg bg-change-soft px-2 ring-1 ring-change-line ring-inset",
+        ),
+      ),
+    ],
     [
       h.span(
         [h.Class("icon-tile"), h.AriaHidden(true)],
@@ -85,6 +140,10 @@ const permissionRowView = (
         [
           h.span([], [operationTitle(operationId)]),
           isSimulated(operationId, liveConnections) ? simulatedTagView(h) : h.empty,
+          Option.match(maybeChange, {
+            onNone: () => h.empty,
+            onSome: (change) => permissionChangeView(change, roles, h),
+          }),
         ],
       ),
       Option.match(maybeRole, {

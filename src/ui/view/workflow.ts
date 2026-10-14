@@ -4,7 +4,7 @@ import * as Array from "effect/Array";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
-import type * as Schema from "effect/Schema";
+import * as Schema from "effect/Schema";
 import type { Html, HtmlBuilder } from "foldkit/html";
 import { Disclosure } from "@foldkit/ui";
 import {
@@ -31,7 +31,7 @@ import {
   type ActionStep,
   type Comparison,
   checkTimePhrase,
-  type Condition,
+  Condition,
   describeSchedule,
   offsetPhrase,
   type HumanField,
@@ -40,10 +40,12 @@ import {
   type Permission,
   type Permissions,
   type Step,
+  type StepChange,
   type TemplateUse,
   templateParts,
   type Trigger,
   type Workflow,
+  type WorkflowChanges,
   workflowRefs,
 } from "../../workflow.ts";
 import { Message } from "../message.ts";
@@ -58,6 +60,95 @@ import {
   tagView,
 } from "./operation.ts";
 import { chipClass, notifyLabel, stepMetaView } from "./shared.ts";
+
+/** A step the agent's latest reply added or changed. */
+type ShownChange = Extract<StepChange, { readonly kind: "added" | "changed" }>;
+
+/** A field's value before the agent's latest reply, by its path in the step. */
+type Previous = (path: string) => Option.Option<Schema.Json>;
+
+/** For views that show no reply's changes, such as a run's steps. */
+export const unchanged: Previous = () => Option.none();
+
+const within =
+  (previous: Previous, prefix: string): Previous =>
+  (path) =>
+    previous(`${prefix}.${path}`);
+
+const previousOf =
+  (maybeChange: Option.Option<ShownChange>): Previous =>
+  (path) =>
+    Option.flatMap(maybeChange, (change) =>
+      change.kind === "added"
+        ? Option.none()
+        : Option.flatMap(
+            Array.findFirst(change.fields, (field) => field.path === path),
+            (field) => (field.before === undefined ? Option.none() : Option.some(field.before)),
+          ),
+    );
+
+/** Whether the latest reply changed something the steps show, so everything else steps back. */
+const highlightsSomething = (changes: WorkflowChanges) =>
+  changes.trigger !== undefined || Array.some(changes.steps, (change) => change.kind !== "removed");
+
+const dimmedClass = "opacity-45 transition-opacity duration-200 hover:opacity-100";
+
+const jsonText = (value: Schema.Json): string =>
+  Predicate.isString(value)
+    ? value
+    : globalThis.Array.isArray(value)
+      ? value.map(jsonText).join(", ")
+      : JSON.stringify(value);
+
+const changeBadgeView = (label: string, h: HtmlBuilder<Message>) =>
+  h.span(
+    [
+      componentName("change-badge"),
+      h.Class(
+        "ml-2 inline-flex -translate-y-px items-center rounded-[5px] bg-change px-1.5 align-middle text-[11px] leading-[18px] font-medium text-white",
+      ),
+    ],
+    [label],
+  );
+
+const stepChangeLabel = (change: ShownChange) =>
+  change.kind === "added"
+    ? "Added"
+    : Array.isReadonlyArrayEmpty(change.fields)
+      ? "Moved"
+      : "Changed";
+
+/** A short value as it was before the latest reply, struck through after the current one. */
+const previousValueView = (maybeBefore: Option.Option<Schema.Json>, h: HtmlBuilder<Message>) =>
+  Option.match(maybeBefore, {
+    onNone: () => h.empty,
+    onSome: (before) =>
+      h.del(
+        [
+          componentName("previous-value"),
+          h.Class("ml-1.5 break-words text-muted-foreground line-through"),
+          h.Title(`Before the agent's last reply: ${jsonText(before)}`),
+        ],
+        [jsonText(before)],
+      ),
+  });
+
+/** Longer text as it was before the latest reply, struck through below the current text. */
+const previousTextView = (maybeBefore: Option.Option<Schema.Json>, h: HtmlBuilder<Message>) =>
+  Option.match(maybeBefore, {
+    onNone: () => h.empty,
+    onSome: (before) =>
+      h.del(
+        [
+          componentName("previous-text"),
+          h.Class(
+            "line-clamp-2 block text-xs break-words whitespace-pre-wrap text-muted-foreground line-through",
+          ),
+          h.Title(`Before the agent's last reply: ${jsonText(before)}`),
+        ],
+        [jsonText(before)],
+      ),
+  });
 
 const subjectRefView = (ref: string, h: HtmlBuilder<Message>) =>
   h.span(
@@ -181,26 +272,112 @@ const triggerTextView = (trigger: Trigger, h: HtmlBuilder<Message>): ReadonlyArr
     }),
   );
 
-const triggerView = (workflow: Workflow, h: HtmlBuilder<Message>) =>
-  h.div(
+const triggerView = (
+  workflow: Workflow,
+  maybeChanges: Option.Option<WorkflowChanges>,
+  h: HtmlBuilder<Message>,
+) => {
+  const maybeBefore = Option.flatMap(maybeChanges, (changes) =>
+    Option.fromNullishOr(changes.trigger?.before),
+  );
+  const isChanged = Option.isSome(maybeBefore);
+  const isDimmed = !isChanged && Option.exists(maybeChanges, highlightsSomething);
+  return h.div(
     [componentName("trigger"), h.Class("flex gap-3")],
     [
       h.div(
         [h.Class("flex w-[18px] shrink-0 flex-col items-center"), h.AriaHidden(true)],
         [
-          icon(h, triggerIcon(workflow.trigger), "mt-[3px] size-[18px] text-muted-foreground"),
+          icon(
+            h,
+            triggerIcon(workflow.trigger),
+            cn("size-[18px] text-muted-foreground", isChanged ? "mt-[15px]" : "mt-[3px]"),
+          ),
           h.div([h.Class("mt-1.5 w-[1.5px] flex-1 bg-rail")]),
         ],
       ),
       h.div(
-        [h.Class("flex min-w-0 flex-1 flex-col gap-2 text-sm")],
         [
-          h.p([h.Class("leading-6 text-muted-foreground")], triggerTextView(workflow.trigger, h)),
+          h.Class(
+            cn(
+              "flex min-w-0 flex-1 flex-col gap-2 text-sm",
+              isChanged && "rounded-lg bg-change-soft p-3 ring-1 ring-change-line ring-inset",
+              isDimmed && dimmedClass,
+            ),
+          ),
+        ],
+        [
+          h.p(
+            [h.Class("leading-6 text-muted-foreground")],
+            [
+              ...triggerTextView(workflow.trigger, h),
+              ...(isChanged ? [changeBadgeView("Changed", h)] : []),
+            ],
+          ),
+          Option.match(maybeBefore, {
+            onNone: () => h.empty,
+            onSome: (before) =>
+              h.del(
+                [
+                  componentName("previous-trigger"),
+                  h.Class("block text-xs leading-5 text-muted-foreground line-through"),
+                ],
+                triggerTextView(before, h),
+              ),
+          }),
           readsView(workflow, h),
         ],
       ),
     ],
   );
+};
+
+const quotedTitles = (changes: ReadonlyArray<Extract<StepChange, { readonly kind: "removed" }>>) =>
+  changes.map((change) => `“${change.title}”`).join(", ");
+
+const countText = (count: number, noun: string) => `${count} ${noun}${count === 1 ? "" : "s"}`;
+
+/** One line naming what the agent's latest reply changed, including what the steps can't show. */
+const replyChangesView = (changes: WorkflowChanges, h: HtmlBuilder<Message>) => {
+  const added = Array.filter(changes.steps, (change) => change.kind === "added").length;
+  const changed = Array.filter(
+    changes.steps,
+    (change) => change.kind === "changed" && Array.isReadonlyArrayNonEmpty(change.fields),
+  ).length;
+  const moved = Array.filter(
+    changes.steps,
+    (change) => change.kind === "changed" && Array.isReadonlyArrayEmpty(change.fields),
+  ).length;
+  const removed = Array.filter(
+    changes.steps,
+    (change): change is Extract<StepChange, { readonly kind: "removed" }> =>
+      change.kind === "removed",
+  );
+  const parts = [
+    ...(changes.name === undefined ? [] : [`renamed it from “${changes.name.before}”`]),
+    ...(changes.trigger === undefined ? [] : ["changed the trigger"]),
+    ...(changed === 0 ? [] : [`changed ${countText(changed, "step")}`]),
+    ...(added === 0 ? [] : [`added ${countText(added, "step")}`]),
+    ...(moved === 0 ? [] : [`moved ${countText(moved, "step")}`]),
+    ...(Array.isReadonlyArrayEmpty(removed) ? [] : [`removed ${quotedTitles(removed)}`]),
+    ...(Array.isReadonlyArrayEmpty(changes.permissions)
+      ? []
+      : [`changed ${countText(changes.permissions.length, "permission")}`]),
+  ];
+  return h.p(
+    [
+      componentName("reply-changes"),
+      h.Class("mb-5 flex items-baseline gap-2 text-xs leading-5 text-muted-foreground"),
+    ],
+    [
+      h.span([
+        h.Class("size-1.5 shrink-0 -translate-y-px rounded-full bg-change"),
+        h.AriaHidden(true),
+      ]),
+      h.span([], [`The agent's last reply ${parts.join(", ")}. Save the draft to keep it.`]),
+    ],
+  );
+};
 
 export interface StepContext {
   /** Tells apart the same step shown in the draft and in a run beside it. */
@@ -211,6 +388,8 @@ export interface StepContext {
   readonly roles: ReadonlyArray<Role>;
   /** Connections simulated by default that this deployment really connects. */
   readonly liveConnections: ReadonlyArray<string>;
+  /** What the agent's latest reply changed that isn't saved yet. Only the draft shows it. */
+  readonly maybeChanges: Option.Option<WorkflowChanges>;
 }
 
 export const workflowView = (
@@ -221,7 +400,11 @@ export const workflowView = (
   h.div(
     [componentName("workflow"), h.Class("flex max-w-2xl flex-col")],
     [
-      triggerView(workflow, h),
+      Option.match(context.maybeChanges, {
+        onNone: () => h.empty,
+        onSome: (changes) => replyChangesView(changes, h),
+      }),
+      triggerView(workflow, context.maybeChanges, h),
       h.ol(
         [h.AriaLabel("Steps"), h.Class("mt-3 flex flex-col gap-3")],
         Array.map(workflow.steps, (step) =>
@@ -528,6 +711,7 @@ const messageCardView = (
   messageField: "text" | "body",
   isExpanded: boolean,
   operationId: string,
+  previous: Previous,
   h: HtmlBuilder<Message>,
 ) =>
   h.div(
@@ -551,11 +735,14 @@ const messageCardView = (
                 ),
                 h.span(
                   [h.Class("min-w-0 break-words")],
-                  actionInputView(
-                    value,
-                    findOperation(operationId)?.inputs.find((input) => input.name === name)?.type,
-                    h,
-                  ),
+                  [
+                    ...actionInputView(
+                      value,
+                      findOperation(operationId)?.inputs.find((input) => input.name === name)?.type,
+                      h,
+                    ),
+                    previousValueView(previous(name), h),
+                  ],
                 ),
               ],
             ),
@@ -573,6 +760,7 @@ const messageCardView = (
             ],
             actionInputView(inputs[messageField] ?? "", "text", h),
           ),
+          previousTextView(previous(messageField), h),
         ],
       ),
     ],
@@ -583,6 +771,7 @@ const inputListView = (
   inputs: Readonly<Record<string, ActionInput>>,
   isExpanded: boolean,
   operationId: string | undefined,
+  previous: Previous,
   h: HtmlBuilder<Message>,
 ) => {
   const messageField =
@@ -602,7 +791,7 @@ const inputListView = (
       ),
     ],
     messageField !== undefined && inputs[messageField] !== undefined && operationId !== undefined
-      ? [h.li([], [messageCardView(inputs, messageField, isExpanded, operationId, h)])]
+      ? [h.li([], [messageCardView(inputs, messageField, isExpanded, operationId, previous, h)])]
       : Array.map(Object.entries(inputs), ([name, value]) => {
           const inputType = findOperation(operationId ?? "")?.inputs.find(
             (input) => input.name === name,
@@ -626,7 +815,7 @@ const inputListView = (
                     ),
                   ),
                 ],
-                actionInputView(value, inputType, h),
+                [...actionInputView(value, inputType, h), previousValueView(previous(name), h)],
               ),
             ],
           );
@@ -634,7 +823,7 @@ const inputListView = (
   );
 };
 
-const templateUseView = (use: TemplateUse, h: HtmlBuilder<Message>) =>
+const templateUseView = (use: TemplateUse, previous: Previous, h: HtmlBuilder<Message>) =>
   h.div(
     [
       componentName("template-use"),
@@ -666,6 +855,14 @@ const templateUseView = (use: TemplateUse, h: HtmlBuilder<Message>) =>
               h.span([h.Class("min-w-0 break-words")], [labelFromName(use.use)]),
             ],
           ),
+          Option.match(previous("use"), {
+            onNone: () => h.empty,
+            onSome: (before) =>
+              previousValueView(
+                Option.some(Predicate.isString(before) ? labelFromName(before) : before),
+                h,
+              ),
+          }),
         ],
       ),
       Array.match(Object.entries(use.with), {
@@ -680,6 +877,7 @@ const templateUseView = (use: TemplateUse, h: HtmlBuilder<Message>) =>
                 use.with,
                 true,
                 undefined,
+                within(previous, "with"),
                 h,
               ),
             ],
@@ -693,12 +891,15 @@ const inputSourceView = (
   source: InputSource,
   isExpanded: boolean,
   operationId: string,
+  previous: Previous,
   h: HtmlBuilder<Message>,
 ) => [
-  source.template === undefined ? h.empty : templateUseView(source.template, h),
+  source.template === undefined
+    ? h.empty
+    : templateUseView(source.template, within(previous, "template"), h),
   source.with === undefined
     ? h.empty
-    : inputListView(label, source.with, isExpanded, operationId, h),
+    : inputListView(label, source.with, isExpanded, operationId, within(previous, "with"), h),
 ];
 
 const matchCaseClass = "decision-branch flex min-w-0 flex-col gap-2 pl-6";
@@ -707,6 +908,7 @@ const matchView = (
   action: ActionStep,
   match: ActionMatch,
   isExpanded: boolean,
+  previous: Previous,
   h: HtmlBuilder<Message>,
 ) =>
   h.ol(
@@ -724,7 +926,14 @@ const matchView = (
               [h.Class("break-words")],
               [ifConditionView(patternCondition(match.on, branch.when), h)],
             ),
-            ...inputSourceView(`Case ${index + 1} inputs`, branch, isExpanded, action.use, h),
+            ...inputSourceView(
+              `Case ${index + 1} inputs`,
+              branch,
+              isExpanded,
+              action.use,
+              within(previous, `cases.${index}`),
+              h,
+            ),
           ],
         ),
       ),
@@ -732,7 +941,14 @@ const matchView = (
         [h.Class(matchCaseClass)],
         [
           h.div([], ["Otherwise"]),
-          ...inputSourceView("Otherwise inputs", match.otherwise, isExpanded, action.use, h),
+          ...inputSourceView(
+            "Otherwise inputs",
+            match.otherwise,
+            isExpanded,
+            action.use,
+            within(previous, "otherwise"),
+            h,
+          ),
         ],
       ),
     ],
@@ -768,6 +984,7 @@ export const stepDetailView = (
   step: Step,
   context: StepContext,
   isExpanded: boolean,
+  previous: Previous,
   h: HtmlBuilder<Message>,
 ) =>
   Match.value(step).pipe(
@@ -777,6 +994,7 @@ export const stepDetailView = (
           [componentName("step-detail"), h.Class("flex flex-col gap-1.5")],
           [
             h.p([h.Class(detailClass(isExpanded))], templateView(agent.instruction, h)),
+            previousTextView(previous("instruction"), h),
             agent.output === undefined
               ? h.empty
               : stepMetaView(
@@ -808,9 +1026,20 @@ export const stepDetailView = (
                 permissionTagView(context.permissions[action.use], context.roles, h),
               ],
             ),
-            inputListView(`${action.title} inputs`, action.with, isExpanded, action.use, h),
-            action.template === undefined ? h.empty : templateUseView(action.template, h),
-            action.match === undefined ? h.empty : matchView(action, action.match, isExpanded, h),
+            inputListView(
+              `${action.title} inputs`,
+              action.with,
+              isExpanded,
+              action.use,
+              within(previous, "with"),
+              h,
+            ),
+            action.template === undefined
+              ? h.empty
+              : templateUseView(action.template, within(previous, "template"), h),
+            action.match === undefined
+              ? h.empty
+              : matchView(action, action.match, isExpanded, within(previous, "match"), h),
           ],
         ),
       wait: (wait) =>
@@ -821,8 +1050,10 @@ export const stepDetailView = (
                 "Until ",
                 wait.offset === undefined ? "" : offsetText(wait.offset),
                 refView(wait.until, h),
+                previousValueView(previous("until"), h),
+                previousValueView(previous("offset"), h),
               ]
-            : [`Pauses for ${wait.duration}`],
+            : [`Pauses for ${wait.duration}`, previousValueView(previous("duration"), h)],
         ),
       parallel: (parallel) =>
         h.p(
@@ -839,19 +1070,27 @@ export const stepDetailView = (
           [componentName("step-detail"), h.Class("flex flex-col gap-1.5")],
           [
             h.p([h.Class(detailClass(isExpanded))], templateView(decide.question, h)),
+            previousTextView(previous("question"), h),
             stepMetaView([`Model: ${decide.model}`], h),
           ],
         ),
       stop: (stop) =>
-        h.p(
-          [componentName("step-detail"), h.Class(detailClass(isExpanded))],
-          ["Ends the run: ", ...templateView(stop.reason, h)],
+        h.div(
+          [componentName("step-detail"), h.Class("flex flex-col gap-1.5")],
+          [
+            h.p(
+              [h.Class(detailClass(isExpanded))],
+              ["Ends the run: ", ...templateView(stop.reason, h)],
+            ),
+            previousTextView(previous("reason"), h),
+          ],
         ),
       human: (human) =>
         h.div(
           [componentName("step-detail"), h.Class("flex flex-col gap-1.5")],
           [
             h.p([h.Class(detailClass(isExpanded))], templateView(human.prompt, h)),
+            previousTextView(previous("prompt"), h),
             stepMetaView(
               [
                 ...(human.assignee === undefined
@@ -879,13 +1118,21 @@ export const stepDetailView = (
     }),
   );
 
+const decodeCondition = Schema.decodeUnknownOption(Condition);
+
 export interface Lane {
   readonly label: string;
   readonly heading: ReadonlyArray<Html | string>;
+  /** The heading before the agent's latest reply changed it. */
+  readonly maybePreviousHeading: Option.Option<Html>;
   readonly steps: ReadonlyArray<Step>;
 }
 
-export const stepLanes = (step: Step, h: HtmlBuilder<Message>): ReadonlyArray<Lane> =>
+export const stepLanes = (
+  step: Step,
+  previous: Previous,
+  h: HtmlBuilder<Message>,
+): ReadonlyArray<Lane> =>
   Match.value(step).pipe(
     Match.discriminatorsExhaustive("kind")({
       agent: () => [],
@@ -897,35 +1144,72 @@ export const stepLanes = (step: Step, h: HtmlBuilder<Message>): ReadonlyArray<La
         Array.map(parallel.branches, (steps, index) => ({
           label: `Branch ${index + 1}`,
           heading: [`Branch ${index + 1}`],
+          maybePreviousHeading: Option.none(),
           steps,
         })),
       if: (branch) => [
         ...Array.map(branch.cases, (branchCase, index) => ({
           label: `Case ${index + 1}`,
           heading: [ifConditionView(branchCase.when, h)],
+          maybePreviousHeading: Option.map(
+            Option.flatMap(previous(`cases.${index}.when`), decodeCondition),
+            (before) =>
+              h.del(
+                [componentName("previous-condition"), h.Class("block line-through")],
+                [ifConditionView(before, h)],
+              ),
+          ),
           steps: branchCase.steps,
         })),
         ...(branch.otherwise === undefined || Array.isReadonlyArrayEmpty(branch.otherwise)
           ? []
-          : [{ label: "Otherwise", heading: ["Otherwise"], steps: branch.otherwise }]),
+          : [
+              {
+                label: "Otherwise",
+                heading: ["Otherwise"],
+                maybePreviousHeading: Option.none(),
+                steps: branch.otherwise,
+              },
+            ]),
       ],
       decide: (decide) =>
-        Array.map(decide.options, (option) => ({
+        Array.map(decide.options, (option, index) => ({
           label: `Option ${option.id}`,
           heading: [
             h.span([h.Class("font-mono text-foreground")], [option.id]),
             ` · ${option.description}`,
           ],
+          maybePreviousHeading: Option.map(previous(`options.${index}.description`), (before) =>
+            previousTextView(Option.some(before), h),
+          ),
           steps: option.steps,
         })),
     }),
   );
 
-const laneView = (lane: Lane, context: StepContext, h: HtmlBuilder<Message>) =>
+const laneView = (lane: Lane, context: StepContext, isDimmed: boolean, h: HtmlBuilder<Message>) =>
   h.li(
     [componentName("lane"), h.Class("flex flex-col gap-2")],
     [
-      h.div([h.Class("text-xs text-muted-foreground")], lane.heading),
+      Option.match(lane.maybePreviousHeading, {
+        onNone: () =>
+          h.div(
+            [h.Class(cn("text-xs text-muted-foreground", isDimmed && dimmedClass))],
+            lane.heading,
+          ),
+        onSome: (previousHeading) =>
+          h.div(
+            [
+              h.Class(
+                "flex flex-col gap-1 rounded-lg bg-change-soft px-3 py-2 text-xs text-muted-foreground ring-1 ring-change-line ring-inset",
+              ),
+            ],
+            [
+              h.div([], [...lane.heading, changeBadgeView("Changed", h)]),
+              h.div([h.Class("text-muted-foreground")], [previousHeading]),
+            ],
+          ),
+      }),
       h.ol(
         [h.AriaLabel(lane.label), h.Class("rail-start flex flex-col gap-3")],
         Array.map(lane.steps, (step) => stepView(step, context, h)),
@@ -963,11 +1247,24 @@ export const stepResultView = (
 const stepView = (step: Step, context: StepContext, h: HtmlBuilder<Message>): Html => {
   const expansionKey = `${context.scope}:${step.id}`;
   const isExpanded = Array.contains(context.expandedStepIds, expansionKey);
+  const maybeChange = Option.flatMap(context.maybeChanges, (changes) =>
+    Array.findFirst(
+      changes.steps,
+      (change): change is ShownChange => change.id === step.id && change.kind !== "removed",
+    ),
+  );
+  const isHighlighted = Option.isSome(maybeChange);
+  const isDimmed = !isHighlighted && Option.exists(context.maybeChanges, highlightsSomething);
   return h.keyed("li")(
     step.id,
     [
       componentName("step"),
-      h.Class("rail-item animate-in fade-in slide-in-from-top-1 duration-300"),
+      h.Class(
+        cn(
+          "rail-item animate-in fade-in slide-in-from-top-1 duration-300",
+          isHighlighted && "step-highlight-item",
+        ),
+      ),
     ],
     [
       Disclosure.view(
@@ -979,42 +1276,67 @@ const stepView = (step: Step, context: StepContext, h: HtmlBuilder<Message>): Ht
             h.div(
               [h.Class("flex flex-col gap-1")],
               [
-                h.button(
+                h.div(
                   [
-                    ...button,
                     h.Class(
-                      "group/step flex w-full cursor-pointer items-start gap-2.5 rounded-md text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+                      cn(
+                        "flex flex-col gap-1",
+                        isHighlighted && "step-highlight",
+                        isDimmed && dimmedClass,
+                      ),
                     ),
                   ],
                   [
-                    h.span(
-                      [h.Class("icon-tile"), h.Title(stepLabel(step)), h.AriaHidden(true)],
-                      [icon(h, stepIcon(step), "size-3.5")],
-                    ),
-                    h.span(
-                      [h.Class("min-w-0 flex-1 py-0.5 text-sm")],
+                    h.button(
                       [
-                        h.span([h.Class("sr-only")], [`${stepLabel(step)}: `]),
-                        ...templateView(step.title, h),
+                        ...button,
+                        h.Class(
+                          cn(
+                            "group/step flex w-full cursor-pointer items-start rounded-md text-left outline-none focus-visible:ring-3 focus-visible:ring-ring/50",
+                            isHighlighted ? "gap-[18px]" : "gap-2.5",
+                          ),
+                        ),
+                      ],
+                      [
+                        h.span(
+                          [h.Class("icon-tile"), h.Title(stepLabel(step)), h.AriaHidden(true)],
+                          [icon(h, stepIcon(step), "size-3.5")],
+                        ),
+                        h.span(
+                          [h.Class("min-w-0 flex-1 py-0.5 text-sm")],
+                          [
+                            h.span([h.Class("sr-only")], [`${stepLabel(step)}: `]),
+                            ...templateView(step.title, h),
+                            Option.match(maybeChange, {
+                              onNone: () => h.empty,
+                              onSome: (change) => changeBadgeView(stepChangeLabel(change), h),
+                            }),
+                          ],
+                        ),
+                        icon(
+                          h,
+                          ChevronDown,
+                          "mt-1 size-4 shrink-0 text-muted-foreground opacity-0 transition group-hover/step:opacity-100 group-focus-visible/step:opacity-100 group-aria-expanded/step:rotate-180 group-aria-expanded/step:opacity-100",
+                        ),
                       ],
                     ),
-                    icon(
-                      h,
-                      ChevronDown,
-                      "mt-1 size-4 shrink-0 text-muted-foreground opacity-0 transition group-hover/step:opacity-100 group-focus-visible/step:opacity-100 group-aria-expanded/step:rotate-180 group-aria-expanded/step:opacity-100",
+                    h.div(
+                      [
+                        ...panel,
+                        h.Class(
+                          cn("flex flex-col gap-2", isHighlighted ? "pl-[42px]" : "pl-[34px]"),
+                        ),
+                      ],
+                      [stepDetailView(step, context, isExpanded, previousOf(maybeChange), h)],
                     ),
                   ],
                 ),
-                h.div(
-                  [...panel, h.Class("flex flex-col gap-2 pl-[34px]")],
-                  [stepDetailView(step, context, isExpanded, h)],
-                ),
-                Array.match(stepLanes(step, h), {
+                Array.match(stepLanes(step, previousOf(maybeChange), h), {
                   onEmpty: () => h.empty,
                   onNonEmpty: (lanes) =>
                     h.ul(
                       [h.Class("flex flex-col gap-3 pt-1.5 pl-[34px]")],
-                      Array.map(lanes, (lane) => laneView(lane, context, h)),
+                      Array.map(lanes, (lane) => laneView(lane, context, isDimmed, h)),
                     ),
                 }),
               ],

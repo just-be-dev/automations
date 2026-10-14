@@ -49,6 +49,9 @@
   --color-dev: var(--dev);
   --color-dev-foreground: var(--dev-foreground);
   --color-attention: var(--attention);
+  --color-change: var(--change);
+  --color-change-soft: var(--change-soft);
+  --color-change-line: var(--change-line);
   --color-sand-2: var(--sand-2);
   --color-sand-3: var(--sand-3);
   --color-sand-4: var(--sand-4);
@@ -115,6 +118,9 @@
   --dev: #d13d00;
   --dev-foreground: #fff;
   --attention: #ef5f00;
+  --change: #ff3e02;
+  --change-soft: #fff5f1;
+  --change-line: #ffc9b8;
   --ref-blue-bg: #eaf1fc;
   --ref-blue-text: #294b78;
   --ref-violet-bg: #f0edfa;
@@ -158,6 +164,9 @@
     --rail: #393939;
     --success: #3dd68c;
     --attention: #ff801f;
+    --change: #ff6a3d;
+    --change-soft: #35221a;
+    --change-line: #6e3420;
     --ref-blue-bg: #26364b;
     --ref-blue-text: #b8d3f5;
     --ref-violet-bg: #383047;
@@ -251,12 +260,12 @@
   }
   &:last-child::before {
     bottom: auto;
-    height: calc(4px - var(--rail-top, -12px));
+    height: calc(var(--rail-curve-top, 4px) - var(--rail-top, -12px));
   }
   &::after {
     content: "";
     position: absolute;
-    top: 4px;
+    top: var(--rail-curve-top, 4px);
     left: 8.25px;
     width: 9.75px;
     height: 8.75px;
@@ -297,4 +306,28 @@
     width: 1px;
     background-color: var(--rail);
   }
+}
+
+/* A step the agent's latest reply added or changed: a soft box that starts just right of the step's
+   icon, with even padding around the title and details. Its content moves down by the padding, so
+   the rail's curve moves with the icon. Put it on the element that holds the step's header and
+   details, inside a `rail-item` given `step-highlight-item`. */
+@utility step-highlight {
+  position: relative;
+  isolation: isolate;
+  padding-block: 12px;
+  padding-right: 12px;
+  &::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 0 0 0 30px;
+    border-radius: 8px;
+    background-color: var(--change-soft);
+    box-shadow: inset 0 0 0 1px var(--change-line);
+  }
+}
+
+@utility step-highlight-item {
+  --rail-curve-top: 16px;
 }

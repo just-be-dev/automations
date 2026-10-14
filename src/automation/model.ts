@@ -1,6 +1,7 @@
 /** Defines chat state and automation directory, overview, and template-usage records shared with callers. */
 import * as Schema from "effect/Schema";
 import { AskedQuestions, Question } from "../ai/ask-question/question.ts";
+import { WorkflowChanges } from "../workflow/changes.ts";
 import { Trigger } from "../workflow/model.ts";
 import { RunSummary } from "../workflow/run.ts";
 
@@ -11,12 +12,14 @@ export class AutomationError extends Schema.TaggedError<AutomationError>()("Auto
 /**
  * One chat turn, stored so the studio can show the conversation again after a reload: the
  * person's message, the questions the planner asked on the way and how they were answered, and
- * the planner's reply in Markdown.
+ * the planner's reply in Markdown. `changes` is what the reply changed in a draft that already
+ * existed; it's absent when the reply changed nothing or wrote the first draft.
  */
 export const Exchange = Schema.Struct({
   prompt: Schema.String,
   asked: Schema.optionalKey(Schema.Array(AskedQuestions)),
   reply: Schema.String,
+  changes: Schema.optionalKey(WorkflowChanges),
 });
 export interface Exchange extends Schema.Schema.Type<typeof Exchange> {}
 

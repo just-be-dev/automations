@@ -72,7 +72,8 @@ Agents write a workflow, the DSL holds it, and an interpreter runs a saved snaps
 ┌────────────────────────────────┐
 │ One transaction: draft, plus   │
 │ permissions set meanwhile;     │
-│ exchange:<n> with asked rounds;│
+│ exchange:<n> with asked rounds │
+│ and diffWorkflows(old, new);   │
 │ clear pendingChat and plan     │
 └───────────────┬────────────────┘
                 ▼
@@ -84,6 +85,7 @@ Agents write a workflow, the DSL holds it, and an interpreter runs a saved snaps
 - [`planDraft`](../src/agents/planner/planner.ts) sets the instructions, generated from the catalog, as the root pi conversation's system prompt on every turn. pi resends them only when they change.
 - [The tools](../src/agents/planner/tools.ts) edit [the `Plan`](../src/agents/planner/plan.ts) stored under `plan`. Each step lives once in `stepsById`, and container steps name their children by ID. Every edit sets or replaces by ID, so a call pi reruns after a restart changes nothing more.
 - Settling compares the working copy with where it started (`samePlan`) before assembling it. `assemblePlan` reports missing, repeated, and unplaced steps before `decodeWorkflow` and `checkWorkflow` run. pi failures are not retried.
+- When the reply edits an existing draft, its exchange records [`diffWorkflows`](../src/workflow/changes.ts) against the draft as it is at commit, so permissions the person set meanwhile don't count as the planner's. Steps match by ID wherever they sit, and each changed step keeps its fields' old values. A first draft or a reply that changed nothing records no changes.
 - While the turn runs, `trackProgress` polls pi's live answer every 2 seconds. Tool names map to fixed phrases; otherwise [`pickProgress`](../src/agents/planner/planner.ts) asks the [`Classifier`](../src/ai/classifier.ts) to pick one from the latest reasoning with `clef-flash`, keeping the last phrase when it fails or isn't sure.
 
 ### Questions park the turn without holding the object

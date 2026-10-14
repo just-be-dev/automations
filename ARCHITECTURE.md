@@ -209,7 +209,7 @@ Each automation's Durable Object holds its draft, saved workflow, chat exchanges
 
 The planner's instructions come from the current entity types, templates, roles, and connection registry, rebuilt on each turn and resent only when they change. [Planner tools](src/agents/planner/tools.ts) edit [a flat working copy](src/agents/planner/plan.ts): each step is stored once, and container steps name their children by ID. Tools set or replace values so replaying a call does not apply the edit twice. The planner reads workflow content as YAML; tool arguments remain JSON.
 
-When the answer arrives, the application assembles the tree and checks its schema and catalog references. An invalid, empty or oversized answer gets one retry with the problems; a pi failure marks the chat failed. A turn that changes nothing leaves the draft alone. Questions live beside the working copy, so asking one is not a workflow edit.
+When the answer arrives, the application assembles the tree and checks its schema and catalog references. An invalid, empty or oversized answer gets one retry with the problems; a pi failure marks the chat failed. A turn that changes nothing leaves the draft alone. A turn that edits an existing draft records [what it changed](src/workflow/changes.ts) with its exchange: steps matched by ID, old field values, and the name, trigger and permissions. Questions live beside the working copy, so asking one is not a workflow edit.
 
 `ask_question` parks the pi turn without holding the Durable Object's callback open: the callback returns, and the pi submission waits. Answers and rescheduling commit together. [AnswerHub](src/ai/ask-question/answer-hub.ts) wakes a turn still in memory; after a restart, the replayed tool finds the persisted answer by call ID. Browsers poll while the chat is working or asking.
 
@@ -573,6 +573,8 @@ An approval task's DM has **Approve** and **Reject** buttons. [The interactivity
 Routes preserve the open automation and run in the URL. Page changes increment a revision so old requests and polls cannot overwrite the new page; the open run and the overview keep their own counters. Polling is driven by Commands and stops when there is nothing in flight.
 
 The global assistant sits outside the page lifecycle and uses its own request sequence. Follow-along navigates to the assistant's latest activity link, but never over dirty forms or an unsent planner message. Navigating by hand turns follow-along off.
+
+The draft marks what the latest reply changed that isn't saved yet: it compares the reply's recorded changes with the saved version, so saving clears the marks and a reload keeps them. Steps the reply added or changed get a box and a badge, old values are struck through, the rest is dimmed, and one line names removed steps and other changes.
 
 Agent replies render Markdown tokens without setting raw HTML. Run results render as labelled fields, not raw JSON. The operation registry marks Email, Slack, and Calendar as simulated. A deployment with `EMAIL_FROM` connects Email, and one with `SLACK_BOT_TOKEN` connects Slack; `GET /api/connections` lists what is connected, so the UI tags an operation "Simulated" only when it is, and a run's result says so from its own `simulated: true` record.
 

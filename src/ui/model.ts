@@ -7,11 +7,14 @@ import { defineTaggedUnion } from "foldkit/schema";
 import * as Dialog from "@/components/ui/dialog";
 import {
   AskedQuestions,
+  isUnchanged,
   PendingChat,
   Run,
   RunSummary,
   subjectType,
+  unsavedChanges,
   Workflow,
+  WorkflowChanges,
 } from "../workflow.ts";
 import { Role } from "../entities.ts";
 import { SubjectOption } from "./api.ts";
@@ -28,12 +31,16 @@ export const Activity = defineTaggedUnion({
   Failed: { error: Schema.String },
 });
 
-/** One chat turn: the message, the questions the agent asked on the way, and its Markdown reply. */
+/**
+ * One chat turn: the message, the questions the agent asked on the way, its Markdown reply, and
+ * what the reply changed in the draft.
+ */
 export const Exchange = Schema.Struct({
   id: Schema.Int,
   prompt: Schema.String,
   asked: Schema.Array(AskedQuestions),
   reply: Schema.String,
+  maybeChanges: Schema.Option(WorkflowChanges),
 });
 export type Exchange = typeof Exchange.Type;
 
@@ -223,6 +230,22 @@ export const openQuestionnaire = (model: Model) =>
               ),
             }),
         }),
+  );
+
+/**
+ * What the agent's latest reply changed in the draft that isn't saved yet. Saving clears it, and so
+ * does a reply that changes nothing, since only the latest reply counts.
+ */
+export const replyChanges = (model: Model): Option.Option<WorkflowChanges> =>
+  Option.flatMap(Array.last(model.conversation), (exchange) =>
+    Option.filter(
+      Option.flatMap(exchange.maybeChanges, (changes) =>
+        Option.map(model.maybeDraft, (draft) =>
+          unsavedChanges(changes, Option.getOrUndefined(model.maybeSaved), draft),
+        ),
+      ),
+      (changes) => !isUnchanged(changes),
+    ),
   );
 
 /** The open automation's unsent message. */

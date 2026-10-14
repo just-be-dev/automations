@@ -16,6 +16,7 @@ import type { QuestionsAnswer } from "../ai/ask-question/question.ts";
 import { PiAgent } from "../ai/pi.ts";
 import { findOperation } from "../connections/registry.ts";
 import { EntityStore } from "../entities/store.ts";
+import { diffWorkflows, isUnchanged } from "../workflow/changes.ts";
 import type { Permissions, Workflow } from "../workflow/model.ts";
 import { AutomationHost } from "./host.ts";
 import { AutomationIndex } from "./index.ts";
@@ -140,6 +141,24 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
   const isWorking = (pending: StoredPendingChat | undefined, chatId: string) =>
     pending?.id === chatId && pending.status === "working";
 
+  /**
+   * Writes the planner's workflow as the draft and returns what it changed in the draft before it,
+   * if there was one. The working copy started from the draft, so its permissions win; this only
+   * adds the ones the person set for other operations while the planner worked. Comparing with the
+   * draft as it is now keeps those edits from reading as the planner's.
+   */
+  const writeDraft = (workflow: Workflow) =>
+    Effect.gen(function* () {
+      const previous = yield* readWorkflow("draft");
+      const designed: Workflow = {
+        ...workflow,
+        permissions: { ...previous?.permissions, ...workflow.permissions },
+      };
+      yield* storage.put("draft", designed);
+      const changes = previous === undefined ? undefined : diffWorkflows(previous, designed);
+      return changes === undefined || isUnchanged(changes) ? undefined : changes;
+    });
+
   // Delivery is at least once. A redelivered reply keeps the working copy the first delivery
   // started and reuses the pi request IDs, so the agent answers each message (and its one retry)
   // once, and only the delivery that still finds the message pending writes it.
@@ -189,16 +208,7 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
             return false;
           }
           const { workflow } = reply.success;
-          if (workflow !== undefined) {
-            // The working copy started from the draft, so its permissions win; this only adds the
-            // ones the person set for other operations while the planner worked.
-            const previous = yield* readWorkflow("draft");
-            const designed: Workflow = {
-              ...workflow,
-              permissions: { ...previous?.permissions, ...workflow.permissions },
-            };
-            yield* storage.put("draft", designed);
-          }
+          const changes = workflow === undefined ? undefined : yield* writeDraft(workflow);
           const exchangeCount =
             (yield* storage
               .get("exchangeCount")
@@ -208,6 +218,7 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
             prompt: pending.prompt,
             ...(asked.length === 0 ? {} : { asked }),
             reply: reply.success.reply,
+            ...(changes === undefined ? {} : { changes }),
           };
           yield* storage.put(exchangeKey(exchangeCount), exchange);
           yield* storage.put("exchangeCount", exchangeCount + 1);

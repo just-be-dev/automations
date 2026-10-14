@@ -26,6 +26,7 @@ import {
   Activity,
   type Model,
   readyRoles,
+  replyChanges,
   SubjectChoices,
   type WorkflowDisplay,
 } from "../model.ts";
@@ -143,6 +144,7 @@ const draftView = (model: Model, h: HtmlBuilder<Message>) =>
                   expandedStepIds: model.expandedStepIds,
                   roles: readyRoles(model.roles),
                   liveConnections: model.liveConnections,
+                  maybeChanges: replyChanges(model),
                 },
                 h,
               ),

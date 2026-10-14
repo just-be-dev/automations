@@ -174,6 +174,7 @@ test("chat waits for the agent's reply, shows the draft, and saves that automati
             id: 0,
             prompt: "Summarize orders",
             reply: "Review these steps.",
+            maybeChanges: Option.none(),
             asked: [],
           },
         ],
@@ -186,6 +187,7 @@ test("chat waits for the agent's reply, shows the draft, and saves that automati
           id: 0,
           prompt: "Summarize orders",
           reply: "Review these steps.",
+          maybeChanges: Option.none(),
           asked: [],
         },
       ]);
@@ -836,6 +838,7 @@ test("a URL change loads that automation, restores its conversation, and leaves 
             id: 0,
             prompt: "Summarize orders",
             reply: "Review these steps.",
+            maybeChanges: Option.none(),
             asked: [],
           },
         ],
@@ -850,6 +853,7 @@ test("a URL change loads that automation, restores its conversation, and leaves 
           id: 0,
           prompt: "Summarize orders",
           reply: "Review these steps.",
+          maybeChanges: Option.none(),
           asked: [],
         },
       ]);

@@ -24,7 +24,7 @@ import {
   type,
   within,
 } from "foldkit/scene";
-import type { Question, Workflow } from "../workflow.ts";
+import { diffWorkflows, type Question, type Step, type Workflow } from "../workflow.ts";
 import * as Dialog from "@/components/ui/dialog";
 import {
   AnswerTask,
@@ -36,6 +36,7 @@ import {
   NavigateInternal,
   PollAutomation,
   ResumeNow,
+  SaveDraft,
   SendAnswers,
   SendMessage,
   SetPermission,
@@ -155,6 +156,7 @@ test("the accessible message input drives chat and safely renders the workflow",
             id: 0,
             prompt: "Summarize orders",
             reply: "Ready to review.",
+            maybeChanges: Option.none(),
             asked: [],
           },
         ],
@@ -180,6 +182,115 @@ test("the accessible message input drives chat and safely renders the workflow",
   );
 });
 
+test("the draft marks what the agent's latest reply changed until the draft is saved", () => {
+  const welcome = (channel: string, title: string): Step => ({
+    id: "welcome",
+    kind: "action",
+    title,
+    use: "slack.sendMessage",
+    with: { channel, text: "Say hi to {{employee.name}}" },
+  });
+  const [approve, laptop] = onboarding.steps;
+  if (approve === undefined || laptop === undefined) {
+    throw new Error("The onboarding fixture has changed");
+  }
+  const before: Workflow = {
+    ...onboarding,
+    steps: [approve, laptop, welcome("#general", "Welcome them in #general")],
+    permissions: { "slack.sendMessage": "auto" },
+  };
+  const after: Workflow = {
+    ...onboarding,
+    trigger: { kind: "entity", entity: "employee" },
+    steps: [
+      approve,
+      welcome("#eng-team", "Welcome them in #eng-team"),
+      { id: "done", kind: "stop", title: "Finish", reason: "Everyone knows" },
+    ],
+    permissions: { "slack.sendMessage": { ask: "ops" } },
+  };
+  const replied = automationLoaded({
+    maybeDraft: Option.some(after),
+    maybeSaved: Option.some(before),
+    conversation: [
+      {
+        id: 0,
+        prompt: "Welcome engineers in #eng-team instead",
+        reply: "Changed the welcome post to #eng-team.",
+        asked: [],
+        maybeChanges: Option.some(diffWorkflows(before, after)),
+      },
+    ],
+  });
+  const summary = text(/The agent's last reply/);
+  scene(
+    { update, view },
+    given(update(loaded, replied).model),
+    expect(summary).toContainText("changed the trigger"),
+    expect(summary).toContainText("changed 1 step"),
+    expect(summary).toContainText("added 1 step"),
+    expect(summary).toContainText("removed “Order a laptop”"),
+    expect(summary).toContainText("changed 1 permission"),
+    expect(role("button", { name: /Welcome them in #eng-team.*Changed/ })).toExist(),
+    expect(role("button", { name: /Finish.*Added/ })).toExist(),
+    expect(role("button", { name: /Approve the plan/ })).not.toContainText("Changed"),
+    expect(text("#general")).toExist(),
+    expect(text("Manual start for an employee")).toExist(),
+    expect(text("Allow")).toExist(),
+    click(role("button", { name: "Save draft" })),
+    Command.expectExact(SaveDraft(requestArgs)),
+    Command.resolve(SaveDraft, Message.SucceededSaveDraft({ revision: 0, saved: after })),
+    expect(summary).not.toExist(),
+    expect(text("#general")).not.toExist(),
+    expect(role("button", { name: /Welcome them in #eng-team/ })).not.toContainText("Changed"),
+    Command.resolve(LoadAutomations, Message.SucceededLoadAutomations({ automations: [] })),
+  );
+});
+
+test("a reply that changed nothing, or a draft that matches the saved version, marks nothing", () => {
+  const before: Workflow = onboarding;
+  const after: Workflow = { ...onboarding, name: "Onboarding" };
+  const exchange = (id: number, maybeChanges: Option.Option<ReturnType<typeof diffWorkflows>>) => ({
+    id,
+    prompt: "Rename it",
+    reply: "Done.",
+    asked: [],
+    maybeChanges,
+  });
+  const summary = text(/The agent's last reply/);
+  scene(
+    { update, view },
+    given(
+      update(
+        loaded,
+        automationLoaded({
+          maybeDraft: Option.some(after),
+          maybeSaved: Option.some(before),
+          conversation: [
+            exchange(0, Option.some(diffWorkflows(before, after))),
+            exchange(1, Option.none()),
+          ],
+        }),
+      ).model,
+    ),
+    expect(summary).not.toExist(),
+  );
+  scene(
+    { update, view },
+    given(
+      update(
+        loaded,
+        automationLoaded({
+          maybeDraft: Option.some(after),
+          maybeSaved: Option.some(after),
+          conversation: [exchange(0, Option.some(diffWorkflows(before, after)))],
+        }),
+      ).model,
+    ),
+    expect(summary).not.toExist(),
+  );
+});
+
 test("the agent's reply renders Markdown without letting it add markup", () => {
   const reply = [
     "**Almost done.** Two things:",
@@ -194,7 +305,9 @@ test("the agent's reply renders Markdown without letting it add markup", () => {
       update(
         loaded,
         automationLoaded({
-          conversation: [{ id: 0, prompt: "Summarize orders", reply, asked: [] }],
+          conversation: [
+            { id: 0, prompt: "Summarize orders", reply, asked: [], maybeChanges: Option.none() },
+          ],
         }),
       ).model,
     ),
@@ -309,6 +422,7 @@ test("a finished reply shows the questions it asked and how they were answered",
                 { questions: [timeZone], answer: { kind: "message", text: "Whatever HR uses" } },
               ],
               reply: "Done.",
+              maybeChanges: Option.none(),
             },
           ],
         }),
