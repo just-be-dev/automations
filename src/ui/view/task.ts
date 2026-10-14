@@ -1,4 +1,4 @@
-/** Presents a run's open human tasks, including approval details, assignees, and forms filled from defaults and edits. */
+/** Presents a run's human tasks: who they're for, approval details, and forms filled from defaults and edits. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
@@ -16,7 +16,6 @@ import {
   displayValue,
   type HumanField,
   type HumanTask,
-  type Run,
   type TaskNotification,
   type ValueType,
 } from "../../workflow.ts";
@@ -24,35 +23,7 @@ import { TaskAnswer } from "../domain/index.ts";
 import { Message } from "../message.ts";
 import { type OpenRun, RunNotice } from "../model.ts";
 import { isSimulated, operationIcon, operationTitle, simulatedTagView } from "./operation.ts";
-import { chipClass, eyebrowClass, notifyLabel, stepMetaView } from "./shared.ts";
-
-export const openTasksView = (
-  run: Run,
-  openRun: OpenRun,
-  liveConnections: ReadonlyArray<string>,
-  h: HtmlBuilder<Message>,
-) =>
-  Array.match(
-    Array.filter(run.tasks, (task) => task.status === "open"),
-    {
-      onEmpty: () => h.empty,
-      onNonEmpty: (tasks) =>
-        h.section(
-          [
-            componentName("open-tasks"),
-            h.AriaLabelledBy("open-tasks"),
-            h.Class("flex flex-col gap-2"),
-          ],
-          [
-            h.h3([h.Id("open-tasks"), h.Class(eyebrowClass)], ["Open tasks"]),
-            h.ul(
-              [h.AriaLabelledBy("open-tasks"), h.Class("flex flex-col gap-3")],
-              Array.map(tasks, (task) => taskView(task, openRun, liveConnections, h)),
-            ),
-          ],
-        ),
-    },
-  );
+import { chipClass, notifyLabel, stepMetaView } from "./shared.ts";
 
 const jsonString = (value: Schema.Json | null, key: string) =>
   Predicate.isObject(value) && !Array.isArray(value)
@@ -130,15 +101,34 @@ const notificationsView = (
 
 const isSendingAnswer = (openRun: OpenRun) => RunNotice.guards.Sending(openRun.notice);
 
-const taskView = (
+/** Who a task is for, who may approve it, and how they heard about it. */
+export const taskMetaView = (
+  task: HumanTask,
+  liveConnections: ReadonlyArray<string>,
+  h: HtmlBuilder<Message>,
+) =>
+  stepMetaView(
+    [
+      ...assigneeView(task.assignee, h),
+      ...(task.approvers === undefined ? [] : [approversView(task.approvers, h)]),
+      ...notificationsView(task, liveConnections, h),
+    ],
+    h,
+  );
+
+/** An open task under its step's row: what it asks, and the answer it waits for. */
+export const openTaskView = (
   task: HumanTask,
   openRun: OpenRun,
   liveConnections: ReadonlyArray<string>,
   h: HtmlBuilder<Message>,
 ) =>
-  h.keyed("li")(
-    task.step,
-    [componentName("task"), h.Class("flex flex-col gap-3 rounded-[10px] bg-card p-4 shadow-card")],
+  h.section(
+    [
+      componentName("open-task"),
+      h.AriaLabel(`Open task: ${task.title}`),
+      h.Class("flex flex-col gap-3 rounded-[10px] bg-card p-3.5 shadow-card"),
+    ],
     [
       h.div(
         [h.Class("flex items-start gap-2.5")],
@@ -156,17 +146,9 @@ const taskView = (
           h.div(
             [h.Class("flex min-w-0 flex-col gap-1")],
             [
-              h.h4([h.Class("text-sm font-medium")], [task.title]),
-              h.p([h.Class("text-sm whitespace-pre-wrap text-muted-foreground")], [task.prompt]),
+              h.p([h.Class("text-sm whitespace-pre-wrap")], [task.prompt]),
               task.action === undefined ? h.empty : taskActionView(task.action, liveConnections, h),
-              stepMetaView(
-                [
-                  ...assigneeView(task.assignee, h),
-                  ...(task.approvers === undefined ? [] : [approversView(task.approvers, h)]),
-                  ...notificationsView(task, liveConnections, h),
-                ],
-                h,
-              ),
+              taskMetaView(task, liveConnections, h),
             ],
           ),
         ],

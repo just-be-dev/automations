@@ -40,6 +40,7 @@ import {
   RoleChoices,
   RunDetail,
   RunNotice,
+  RunStart,
   SubjectChoices,
 } from "../model.ts";
 import { Entities, Overview, Templates, Traces } from "../page/index.ts";
@@ -58,6 +59,7 @@ import {
 } from "./new-automation.ts";
 import {
   answerTask,
+  chooseRunSubjects,
   isListedAsIs,
   modifyOpenRun,
   noticeRun,
@@ -65,6 +67,7 @@ import {
   pollDelayMillis,
   reloadOpenRun,
   resumeNow,
+  startSavedRun,
 } from "./open-run.ts";
 import {
   chooseOption,
@@ -401,6 +404,14 @@ export const update = (model: Model, message: Message) =>
       })),
     }),
     ClickedResumeNow: ({ step }) => resumeNow(model, step),
+    SelectedRunSubject: ({ subjectId }) => ({
+      model: modifyOpenRun(model, (openRun) => ({
+        ...openRun,
+        maybeSubjectId: subjectId === "" ? Option.none() : Option.some(subjectId),
+        start: RunStart.guards.Starting(openRun.start) ? openRun.start : RunStart.Idle(),
+      })),
+    }),
+    ClickedRunSavedVersion: () => startSavedRun(model),
     SubmittedTaskForm: ({ step }) =>
       answerTask(model, step, (task, edits) =>
         task.response === "approval"
@@ -528,6 +539,61 @@ export const update = (model: Model, message: Message) =>
               subjectChoices: () => SubjectChoices.Unavailable({ entityType, error }),
             }),
           },
+    SucceededLoadRunSubjects: ({ revision, runId, entityType, label, subjects }) =>
+      revision !== model.revision || Option.isNone(openRunWithId(model, runId))
+        ? { model }
+        : {
+            model: modifyOpenRun(model, (openRun) =>
+              SubjectChoices.guards.Loading(openRun.subjectChoices) &&
+              openRun.subjectChoices.entityType === entityType
+                ? {
+                    ...openRun,
+                    subjectChoices: SubjectChoices.Ready({ entityType, label, subjects }),
+                  }
+                : openRun,
+            ),
+          },
+    FailedLoadRunSubjects: ({ revision, runId, entityType, error }) =>
+      revision !== model.revision || Option.isNone(openRunWithId(model, runId))
+        ? { model }
+        : {
+            model: modifyOpenRun(model, (openRun) =>
+              SubjectChoices.guards.Loading(openRun.subjectChoices) &&
+              openRun.subjectChoices.entityType === entityType
+                ? {
+                    ...openRun,
+                    subjectChoices: SubjectChoices.Unavailable({ entityType, error }),
+                  }
+                : openRun,
+            ),
+          },
+    SucceededStartSavedRun: ({ revision, fromRunId, runId }) =>
+      revision !== model.revision
+        ? { model }
+        : Option.match(openRunWithId(model, fromRunId), {
+            onNone: () => ({ model }),
+            onSome: (openRun) => {
+              const started = modifyOpenRun(model, (current) => ({
+                ...current,
+                start: RunStart.Idle(),
+              }));
+              return Page.guards.Run(model.page)
+                ? {
+                    model: started,
+                    commands: [NavigateInternal({ url: runHref(openRun.automationId, runId) })],
+                  }
+                : openRunPanel(started, openRun.automationId, runId);
+            },
+          }),
+    FailedStartSavedRun: ({ revision, fromRunId, error }) =>
+      revision !== model.revision || Option.isNone(openRunWithId(model, fromRunId))
+        ? { model }
+        : {
+            model: modifyOpenRun(model, (openRun) => ({
+              ...openRun,
+              start: RunStart.Failed({ error }),
+            })),
+          },
     SucceededStartRun: ({ revision, runId }) =>
       revision !== model.revision
         ? { model }
@@ -547,20 +613,26 @@ export const update = (model: Model, message: Message) =>
           const automationId = openRun.automationId;
           // NOTE: the studio's list of recent runs follows the run it shows beside the draft.
           const isRecentRun = Page.guards.Studio(model.page) && automationId === model.automationId;
-          return {
-            model: modifyOpenRun(model, (current) => ({
+          return Update.combine(
+            modifyOpenRun(model, (current) => ({
               ...current,
               detail: RunDetail.Loaded({ run, maybeSubjectTitle, resumesAt }),
             })),
-            commands: [
-              ...Array.map(pollDelayMillis(run, openRun.notice), (delayMillis) =>
-                PollRun({ automationId, revision, poll, runId: run.id, delayMillis }),
-              ),
-              ...(isRecentRun && !isListedAsIs(model.runs, run)
-                ? [LoadRuns({ automationId, revision })]
-                : []),
+            [
+              (stepModel) => ({
+                model: stepModel,
+                commands: [
+                  ...Array.map(pollDelayMillis(run, openRun.notice), (delayMillis) =>
+                    PollRun({ automationId, revision, poll, runId: run.id, delayMillis }),
+                  ),
+                  ...(isRecentRun && !isListedAsIs(model.runs, run)
+                    ? [LoadRuns({ automationId, revision })]
+                    : []),
+                ],
+              }),
+              (stepModel) => chooseRunSubjects(stepModel, run),
             ],
-          };
+          );
         },
       });
     },

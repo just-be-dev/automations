@@ -56,6 +56,8 @@ export const Message = defineMessageUnion({
   UpdatedTaskField: { step: Schema.String, field: Schema.String, value: Schema.String },
   SubmittedTaskForm: { step: Schema.String },
   ClickedResumeNow: { step: Schema.String },
+  SelectedRunSubject: { subjectId: Schema.String },
+  ClickedRunSavedVersion: {},
   SucceededLoadAutomation: {
     revision: Schema.Int,
     maybeDraft: Schema.Option(Workflow),
@@ -80,6 +82,19 @@ export const Message = defineMessageUnion({
     subjects: Schema.Array(SubjectOption),
   },
   FailedLoadSubjects: { revision: Schema.Int, entityType: Schema.String, error: Schema.String },
+  SucceededLoadRunSubjects: {
+    revision: Schema.Int,
+    runId: Schema.String,
+    entityType: Schema.String,
+    label: Schema.String,
+    subjects: Schema.Array(SubjectOption),
+  },
+  FailedLoadRunSubjects: {
+    revision: Schema.Int,
+    runId: Schema.String,
+    entityType: Schema.String,
+    error: Schema.String,
+  },
   SucceededSendMessage: {
     revision: Schema.Int,
     sentMessage: Schema.String,
@@ -89,6 +104,8 @@ export const Message = defineMessageUnion({
   SucceededSaveDraft: { revision: Schema.Int, saved: Workflow },
   SucceededSetPermission: { revision: Schema.Int, draft: Workflow },
   SucceededStartRun: { revision: Schema.Int, runId: Schema.String },
+  SucceededStartSavedRun: { revision: Schema.Int, fromRunId: Schema.String, runId: Schema.String },
+  FailedStartSavedRun: { revision: Schema.Int, fromRunId: Schema.String, error: Schema.String },
   SucceededLoadRun: {
     revision: Schema.Int,
     poll: Schema.Int,

@@ -5,11 +5,21 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import type { Update } from "foldkit";
 import { modifyFields } from "foldkit/struct";
+import { withArticle } from "@/lib/format";
 import type { HumanTask, Run, RunSummary } from "../../workflow.ts";
-import { AnswerTask, LoadRun, ResumeNow } from "../command.ts";
+import { AnswerTask, LoadRun, LoadRunSubjects, ResumeNow, StartSavedRun } from "../command.ts";
 import type { TaskAnswer } from "../domain/index.ts";
 import type { Message } from "../message.ts";
-import { type Model, type OpenRun, Page, RunDetail, RunNotice } from "../model.ts";
+import {
+  type Model,
+  type OpenRun,
+  Page,
+  RunDetail,
+  RunNotice,
+  RunStart,
+  runSubjectType,
+  SubjectChoices,
+} from "../model.ts";
 
 export const openingRun = (automationId: string, runId: string): OpenRun => ({
   automationId,
@@ -17,10 +27,13 @@ export const openingRun = (automationId: string, runId: string): OpenRun => ({
   detail: RunDetail.Loading(),
   taskEdits: [],
   notice: RunNotice.Idle(),
+  subjectChoices: SubjectChoices.NotNeeded(),
+  maybeSubjectId: Option.none(),
+  start: RunStart.Idle(),
 });
 
 /** The run on its own page, or else the one in the panel. */
-const maybeOpenRun = (model: Model) =>
+export const maybeOpenRun = (model: Model) =>
   Page.guards.Run(model.page) ? Option.some(model.page.openRun) : model.maybeRunPanel;
 
 export const modifyOpenRun = (model: Model, modify: (openRun: OpenRun) => OpenRun): Model => {
@@ -168,3 +181,95 @@ export const answerTask = (
       });
     },
   });
+
+const choicesEntityType = (choices: SubjectChoices) =>
+  SubjectChoices.match(choices, {
+    NotNeeded: () => Option.none<string>(),
+    Loading: ({ entityType }) => Option.some(entityType),
+    Ready: ({ entityType }) => Option.some(entityType),
+    Unavailable: ({ entityType }) => Option.some(entityType),
+  });
+
+/** Loads the footer's subjects once per type, starting from the run's own subject. */
+export const chooseRunSubjects = (model: Model, run: Run): Update.Return<Model, Message> =>
+  Option.match(
+    Option.filter(
+      Option.flatMap(openRunWithId(model, run.id), (openRun) =>
+        Option.map(runSubjectType(run), (entityType) => ({ openRun, entityType })),
+      ),
+      ({ openRun, entityType }) =>
+        !Option.contains(choicesEntityType(openRun.subjectChoices), entityType),
+    ),
+    {
+      onNone: () => ({ model }),
+      onSome: ({ entityType }) => ({
+        model: modifyOpenRun(model, (openRun) => ({
+          ...openRun,
+          subjectChoices: SubjectChoices.Loading({ entityType }),
+          maybeSubjectId: Option.orElse(openRun.maybeSubjectId, () =>
+            Option.map(
+              Option.filter(
+                Option.fromNullishOr(run.subject),
+                (subject) => subject.type === entityType,
+              ),
+              (subject) => subject.id,
+            ),
+          ),
+        })),
+        commands: [LoadRunSubjects({ revision: model.revision, runId: run.id, entityType })],
+      }),
+    },
+  );
+
+const loadedRun = (openRun: OpenRun) =>
+  RunDetail.match(openRun.detail, {
+    Loading: () => Option.none<Run>(),
+    Unavailable: () => Option.none<Run>(),
+    Loaded: ({ run }) => Option.some(run),
+  });
+
+const failStart = (model: Model, error: string) =>
+  modifyOpenRun(model, (openRun) => ({ ...openRun, start: RunStart.Failed({ error }) }));
+
+/** Starts another run of the saved version for the footer's subject. */
+export const startSavedRun = (model: Model): Update.Return<Model, Message> =>
+  Option.match(
+    Option.filter(maybeOpenRun(model), (openRun) => !RunStart.guards.Starting(openRun.start)),
+    {
+      onNone: () => ({ model }),
+      onSome: (openRun) =>
+        Option.match(loadedRun(openRun), {
+          onNone: () => ({ model }),
+          onSome: (run) => {
+            if (run.workflow.trigger.kind === "event") {
+              return { model: failStart(model, "Start event runs from the studio") };
+            }
+            const maybeEntityType = runSubjectType(run);
+            if (Option.isSome(maybeEntityType) && Option.isNone(openRun.maybeSubjectId)) {
+              return {
+                model: failStart(
+                  model,
+                  `Choose ${withArticle(maybeEntityType.value)} to run it for`,
+                ),
+              };
+            }
+            return {
+              model: modifyOpenRun(model, (current) => ({
+                ...current,
+                start: RunStart.Starting(),
+              })),
+              commands: [
+                StartSavedRun({
+                  automationId: openRun.automationId,
+                  revision: model.revision,
+                  fromRunId: openRun.runId,
+                  maybeSubjectId: Option.isSome(maybeEntityType)
+                    ? openRun.maybeSubjectId
+                    : Option.none(),
+                }),
+              ],
+            };
+          },
+        }),
+    },
+  );

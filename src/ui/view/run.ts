@@ -1,19 +1,33 @@
-/** Presents a run's saved snapshot, outcomes, and open tasks on its own page or beside another page. */
+/** Presents a run as a live checklist of its saved plan, on its own page or beside another page,
+ * with a footer that runs the saved version again. */
+import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import type { HtmlBuilder } from "foldkit/html";
-import { CircleAlert, LoaderCircle, Maximize2, OctagonX, Pencil, X } from "lucide";
+import { CircleAlert, LoaderCircle, Maximize2, OctagonX, Pencil, Play, X } from "lucide";
+import { badge } from "@/components/ui/badge";
 import { button, buttonClass } from "@/components/ui/button";
+import { select } from "@/components/ui/select";
 import { componentName } from "@/lib/component";
-import { formatTime, runDotClass, runStatusClass, runStatusLabel } from "@/lib/format";
+import { formatTime, runDotClass, runStatusClass, runStatusLabel, withArticle } from "@/lib/format";
 import { icon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import type { Run } from "../../workflow.ts";
+import type { SubjectOption } from "../api.ts";
 import { Message } from "../message.ts";
-import { type Model, type OpenRun, readyRoles, RunDetail, RunNotice } from "../model.ts";
+import {
+  type Model,
+  type OpenRun,
+  Page,
+  readyRoles,
+  RunDetail,
+  RunNotice,
+  RunStart,
+  runSubjectType,
+  SubjectChoices,
+} from "../model.ts";
 import { automationHref } from "../route.ts";
-import { chipClass, eyebrowClass, panelTitleView } from "./shared.ts";
-import { openTasksView } from "./task.ts";
-import { workflowView } from "./workflow.ts";
+import { runChecklistView } from "./run-checklist.ts";
+import { panelTitleView } from "./shared.ts";
 
 const editAutomationView = (automationId: string, h: HtmlBuilder<Message>) =>
   h.a(
@@ -26,25 +40,143 @@ const editAutomationView = (automationId: string, h: HtmlBuilder<Message>) =>
     [icon(h, Pencil, "size-3.5", "inline-start"), "Edit automation"],
   );
 
-const runTitle = (openRun: OpenRun) =>
+const loadedRun = (openRun: OpenRun) =>
   RunDetail.match(openRun.detail, {
-    Loading: () => openRun.runId,
-    Unavailable: () => openRun.runId,
-    Loaded: ({ run }) => run.workflow.name,
+    Loading: () => Option.none<{ run: Run; maybeSubjectTitle: Option.Option<string> }>(),
+    Unavailable: () => Option.none<{ run: Run; maybeSubjectTitle: Option.Option<string> }>(),
+    Loaded: (loaded) => Option.some(loaded),
   });
 
-const runStatusBadgeView = (openRun: OpenRun, isCompact: boolean, h: HtmlBuilder<Message>) =>
-  RunDetail.match(openRun.detail, {
-    Loading: () => h.empty,
-    Unavailable: () => h.empty,
-    Loaded: ({ run }) => runBadgeView(run, isCompact, h),
+const automationName = (openRun: OpenRun) =>
+  Option.match(loadedRun(openRun), {
+    onNone: () => openRun.runId,
+    onSome: ({ run }) => run.workflow.name,
   });
+
+/** What the run is for: its subject, or the automation when it has none. */
+const runForText = (openRun: OpenRun) =>
+  Option.flatMap(loadedRun(openRun), ({ run, maybeSubjectTitle }) =>
+    Option.orElse(maybeSubjectTitle, () => Option.some(run.workflow.name)),
+  );
+
+const savedVersionTagView = (isSmall: boolean, h: HtmlBuilder<Message>) =>
+  badge(
+    {
+      variant: "secondary",
+      className: cn(
+        "rounded-md font-medium text-sand-12",
+        isSmall ? "h-5 px-1.5 text-[11px]" : "h-6 px-2 text-xs",
+      ),
+      attributes: [
+        componentName("saved-version-tag"),
+        h.Title("Runs the version saved when it started"),
+      ],
+    },
+    ["Saved version"],
+    h,
+  );
+
+const runBadgeView = (run: Run, h: HtmlBuilder<Message>) =>
+  h.span(
+    [
+      componentName("run-badge"),
+      h.Class(
+        cn(
+          "inline-flex items-center gap-1.5 font-medium whitespace-nowrap",
+          runStatusClass[run.status],
+        ),
+      ),
+    ],
+    [
+      h.span([h.Class(cn("size-1.5 rounded-full", runDotClass[run.status])), h.AriaHidden(true)]),
+      runStatusLabel[run.status],
+    ],
+  );
+
+const separatorView = (h: HtmlBuilder<Message>) => h.span([h.AriaHidden(true)], ["·"]);
+
+/** "Run · Ada Lovelace", then the automation, status, and start time beneath. */
+/** Where the heading sits: the run page's card, or the narrow panel, which may name the automation. */
+type HeadingPlace = "page" | "panel" | "panelBesideStudio";
+
+const runHeadingView = (openRun: OpenRun, place: HeadingPlace, h: HtmlBuilder<Message>) =>
+  h.div(
+    [componentName("run-heading"), h.Class("flex min-w-0 flex-col gap-1")],
+    [
+      h.h2(
+        [h.Class("flex min-w-0 items-baseline gap-1.5 text-base font-semibold")],
+        [
+          h.span([], ["Run"]),
+          ...Option.match(runForText(openRun), {
+            onNone: () => [],
+            onSome: (title) => [
+              h.span(
+                [h.Class("min-w-0 truncate font-normal text-muted-foreground")],
+                [` · ${title}`],
+              ),
+            ],
+          }),
+        ],
+      ),
+      Option.match(
+        Option.filter(
+          loadedRun(openRun),
+          ({ maybeSubjectTitle }) => place === "panel" && Option.isSome(maybeSubjectTitle),
+        ),
+        {
+          onNone: () => h.empty,
+          onSome: ({ run }) =>
+            h.p([h.Class("truncate text-xs text-muted-foreground")], [run.workflow.name]),
+        },
+      ),
+      Option.match(loadedRun(openRun), {
+        onNone: () => h.empty,
+        onSome: ({ run }) =>
+          h.p(
+            [
+              h.Class(
+                "flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground",
+              ),
+            ],
+            [
+              runBadgeView(run, h),
+              separatorView(h),
+              h.span([], [`Started ${formatTime(run.startedAt)}`]),
+              ...(place === "page"
+                ? [separatorView(h), h.span([h.Class("font-mono")], [run.id])]
+                : [savedVersionTagView(true, h)]),
+            ],
+          ),
+      }),
+    ],
+  );
+
+const alertClass = "flex items-start gap-2 rounded-[10px] px-3 py-2 text-sm";
+
+const runOutcomeView = (run: Run, h: HtmlBuilder<Message>) =>
+  h.div(
+    [componentName("run-outcome"), h.Class("flex flex-col gap-2 empty:hidden")],
+    [
+      run.error === undefined
+        ? h.empty
+        : h.p(
+            [h.Role("alert"), h.Class(cn(alertClass, "bg-destructive/10 text-destructive"))],
+            [icon(h, CircleAlert, "mt-0.5 size-3.5 shrink-0"), run.error],
+          ),
+      run.stopReason === undefined
+        ? h.empty
+        : h.p(
+            [h.Role("status"), h.Class(cn(alertClass, "bg-sidebar text-foreground"))],
+            [icon(h, OctagonX, "mt-0.5 size-3.5 shrink-0"), `Stopped: ${run.stopReason}`],
+          ),
+    ],
+  );
 
 const runBodyView = (openRun: OpenRun, model: Model, h: HtmlBuilder<Message>) =>
   RunDetail.match(openRun.detail, {
     Loading: () =>
       h.p(
-        [componentName("run-body"), h.Class("text-sm text-muted-foreground")],
+        [componentName("run-body"), h.Class("py-3 text-sm text-muted-foreground")],
         ["Loading the run…"],
       ),
     Unavailable: ({ error }) =>
@@ -52,15 +184,37 @@ const runBodyView = (openRun: OpenRun, model: Model, h: HtmlBuilder<Message>) =>
         [
           componentName("run-body"),
           h.Role("alert"),
-          h.Class(
-            "flex items-start gap-2 rounded-[10px] bg-destructive/10 px-3 py-2 text-sm text-destructive",
-          ),
+          h.Class(cn(alertClass, "my-3 bg-destructive/10 text-destructive")),
         ],
         [icon(h, CircleAlert, "mt-0.5 size-3.5"), `Couldn't load this run: ${error}`],
       ),
-    Loaded: ({ run, maybeSubjectTitle, resumesAt }) =>
-      runView(openRun, run, maybeSubjectTitle, resumesAt, model, h),
+    Loaded: ({ run, resumesAt }) =>
+      h.div(
+        [componentName("run-body"), h.Class("flex flex-col gap-3")],
+        [
+          runOutcomeView(run, h),
+          runChecklistView(
+            run,
+            openRun,
+            {
+              expandedStepIds: model.expandedStepIds,
+              roles: readyRoles(model.roles),
+              liveConnections: model.liveConnections,
+              waits: {
+                resumesAt,
+                canResumeNow: model.isLocalDevelopment,
+                isBusy:
+                  RunNotice.guards.Sending(openRun.notice) ||
+                  RunNotice.guards.Resuming(openRun.notice),
+              },
+            },
+            h,
+          ),
+        ],
+      ),
   });
+
+const noticeBarClass = "flex min-w-0 items-center gap-2 border-t py-3 text-xs";
 
 const runNoticeView = (openRun: OpenRun, className: string, h: HtmlBuilder<Message>) =>
   RunNotice.match(openRun.notice, {
@@ -112,7 +266,100 @@ const runNoticeView = (openRun: OpenRun, className: string, h: HtmlBuilder<Messa
       ),
   });
 
-const noticeBarClass = "flex min-w-0 items-center gap-2 border-t py-3 text-xs";
+const runSubjectOptionView = (
+  subject: SubjectOption,
+  isSelected: boolean,
+  h: HtmlBuilder<Message>,
+) =>
+  h.keyed("option")(
+    subject.id,
+    [componentName("run-subject-option"), h.Value(subject.id), h.Selected(isSelected)],
+    [subject.title],
+  );
+
+const runSubjectPickerView = (openRun: OpenRun, h: HtmlBuilder<Message>) =>
+  SubjectChoices.match(openRun.subjectChoices, {
+    NotNeeded: () => h.empty,
+    Loading: ({ entityType }) =>
+      h.span(
+        [componentName("run-subject-picker"), h.Class("text-xs text-muted-foreground")],
+        [`Loading ${entityType.replaceAll("_", " ")} records…`],
+      ),
+    Unavailable: ({ entityType, error }) =>
+      h.span(
+        [componentName("run-subject-picker"), h.Class("text-xs text-destructive"), h.Title(error)],
+        [`Couldn't load ${entityType.replaceAll("_", " ")} records`],
+      ),
+    Ready: ({ entityType, label, subjects }) =>
+      h.div(
+        [componentName("run-subject-picker"), h.Class("flex min-w-0 items-center")],
+        [
+          h.label([h.For("run-subject"), h.Class("sr-only")], [label]),
+          select(
+            {
+              wrapperClass: "w-44 min-w-0 shrink",
+              className: "bg-background md:text-[13px]",
+              attributes: [
+                h.Id("run-subject"),
+                h.Value(Option.getOrElse(openRun.maybeSubjectId, () => "")),
+                h.OnChange((subjectId) => Message.SelectedRunSubject({ subjectId })),
+              ],
+            },
+            [
+              h.option(
+                [h.Value(""), h.Selected(Option.isNone(openRun.maybeSubjectId))],
+                [`Choose ${withArticle(entityType)}…`],
+              ),
+              ...Array.map(subjects, (subject) =>
+                runSubjectOptionView(
+                  subject,
+                  Option.contains(openRun.maybeSubjectId, subject.id),
+                  h,
+                ),
+              ),
+            ],
+            h,
+          ),
+        ],
+      ),
+  });
+
+/** The subject picker and the button that runs the automation's saved version again. */
+const runFooterView = (openRun: OpenRun, className: string, h: HtmlBuilder<Message>) =>
+  Option.match(
+    Option.filter(loadedRun(openRun), ({ run }) => run.workflow.trigger.kind !== "event"),
+    {
+      onNone: () => h.empty,
+      onSome: ({ run }) =>
+        h.div(
+          [
+            componentName("run-footer"),
+            h.Class(cn("flex items-center gap-3 border-t bg-sidebar py-3", className)),
+          ],
+          [
+            Option.isSome(runSubjectType(run)) ? runSubjectPickerView(openRun, h) : h.empty,
+            RunStart.match(openRun.start, {
+              Idle: () => h.empty,
+              Starting: () => h.empty,
+              Failed: ({ error }) =>
+                h.span([h.Role("alert"), h.Class("min-w-0 text-xs text-destructive")], [error]),
+            }),
+            button(
+              {
+                onClick: Message.ClickedRunSavedVersion(),
+                isDisabled: RunStart.guards.Starting(openRun.start),
+                size: "sm",
+                className: "ml-auto h-8 shrink-0 px-3",
+              },
+              RunStart.guards.Starting(openRun.start)
+                ? [icon(h, LoaderCircle, "size-3.5 animate-spin", "inline-start"), "Starting…"]
+                : [icon(h, Play, "size-3.5", "inline-start"), "Run saved version"],
+              h,
+            ),
+          ],
+        ),
+    },
+  );
 
 export const runPageView = (model: Model, openRun: OpenRun, h: HtmlBuilder<Message>) =>
   h.main(
@@ -126,27 +373,34 @@ export const runPageView = (model: Model, openRun: OpenRun, h: HtmlBuilder<Messa
         [h.Class("flex-1 px-6 py-6 lg:overflow-y-auto")],
         [
           h.div(
-            [h.Class("flex max-w-3xl flex-col gap-6")],
+            [h.Class("flex max-w-2xl flex-col gap-5")],
             [
               h.div(
                 [h.Class("flex items-start justify-between gap-4")],
                 [
-                  panelTitleView("Run", runTitle(openRun), h),
-                  h.div(
-                    [h.Class("flex shrink-0 items-center gap-3")],
-                    [
-                      runStatusBadgeView(openRun, false, h),
-                      editAutomationView(openRun.automationId, h),
-                    ],
-                  ),
+                  panelTitleView("Automation", automationName(openRun), h),
+                  editAutomationView(openRun.automationId, h),
                 ],
               ),
-              runBodyView(openRun, model, h),
+              h.section(
+                [
+                  h.AriaLabel("Run progress"),
+                  h.Class("overflow-hidden rounded-xl bg-card shadow-card"),
+                ],
+                [
+                  h.div(
+                    [h.Class("flex items-start justify-between gap-3 border-b px-5 py-4")],
+                    [runHeadingView(openRun, "page", h), savedVersionTagView(false, h)],
+                  ),
+                  h.div([h.Class("px-5 py-2")], [runBodyView(openRun, model, h)]),
+                  runNoticeView(openRun, "px-5", h),
+                  runFooterView(openRun, "px-5", h),
+                ],
+              ),
             ],
           ),
         ],
       ),
-      runNoticeView(openRun, "px-6", h),
     ],
   );
 
@@ -162,17 +416,12 @@ export const runPanelView = (model: Model, openRun: OpenRun, h: HtmlBuilder<Mess
     ],
     [
       h.div(
-        [h.Class("flex items-start justify-between gap-3 border-b px-5 py-3")],
+        [h.Class("flex items-start justify-between gap-3 border-b px-5 py-3.5")],
         [
-          h.div(
-            [h.Class("flex min-w-0 flex-col gap-0.5")],
-            [
-              h.div(
-                [h.Class("flex items-center gap-2")],
-                [h.span([h.Class(eyebrowClass)], ["Run"]), runStatusBadgeView(openRun, true, h)],
-              ),
-              h.h2([h.Class("truncate text-base font-semibold")], [runTitle(openRun)]),
-            ],
+          runHeadingView(
+            openRun,
+            Page.guards.Studio(model.page) ? "panelBesideStudio" : "panel",
+            h,
           ),
           h.div(
             [h.Class("flex shrink-0 items-center gap-0.5")],
@@ -203,95 +452,8 @@ export const runPanelView = (model: Model, openRun: OpenRun, h: HtmlBuilder<Mess
           ),
         ],
       ),
-      h.div([h.Class("flex-1 px-5 py-5 lg:overflow-y-auto")], [runBodyView(openRun, model, h)]),
+      h.div([h.Class("flex-1 px-5 py-2 lg:overflow-y-auto")], [runBodyView(openRun, model, h)]),
       runNoticeView(openRun, "px-5", h),
-    ],
-  );
-
-const runBadgeView = (run: Run, isCompact: boolean, h: HtmlBuilder<Message>) =>
-  h.span(
-    [
-      componentName("run-badge"),
-      h.Class(
-        cn(
-          "inline-flex items-center gap-1.5 text-sm font-semibold whitespace-nowrap",
-          runStatusClass[run.status],
-        ),
-      ),
-    ],
-    [
-      h.span([h.Class(cn("size-1.5 rounded-full", runDotClass[run.status])), h.AriaHidden(true)]),
-      runStatusLabel[run.status],
-      isCompact
-        ? h.empty
-        : h.span([h.Class("font-mono text-xs font-normal text-sand-10")], [run.id]),
-    ],
-  );
-
-const runView = (
-  openRun: OpenRun,
-  run: Run,
-  maybeSubjectTitle: Option.Option<string>,
-  resumesAt: Readonly<Record<string, number>>,
-  model: Model,
-  h: HtmlBuilder<Message>,
-) =>
-  h.div(
-    [componentName("run"), h.Class("flex max-w-2xl flex-col gap-6")],
-    [
-      h.p(
-        [h.Class("text-sm text-muted-foreground")],
-        [
-          ...Option.match(maybeSubjectTitle, {
-            onNone: () => [],
-            onSome: (title) => [
-              "For ",
-              h.span([h.Class(cn(chipClass, "text-foreground"))], [title]),
-              " · ",
-            ],
-          }),
-          `Started ${formatTime(run.startedAt)} · Runs the version saved when it started`,
-        ],
-      ),
-      run.error === undefined
-        ? h.empty
-        : h.p(
-            [
-              h.Role("alert"),
-              h.Class(
-                "flex items-start gap-2 rounded-[10px] bg-destructive/10 px-3 py-2 text-sm text-destructive",
-              ),
-            ],
-            [icon(h, CircleAlert, "mt-0.5 size-3.5"), run.error],
-          ),
-      run.stopReason === undefined
-        ? h.empty
-        : h.p(
-            [
-              h.Role("status"),
-              h.Class(
-                "flex items-start gap-2 rounded-[10px] bg-sidebar px-3 py-2 text-sm text-foreground",
-              ),
-            ],
-            [icon(h, OctagonX, "mt-0.5 size-3.5"), `Stopped: ${run.stopReason}`],
-          ),
-      openTasksView(run, openRun, model.liveConnections, h),
-      workflowView(
-        run.workflow,
-        {
-          scope: "run",
-          expandedStepIds: model.expandedStepIds,
-          maybeRunSteps: Option.some(run.steps),
-          maybeRunWaits: Option.some({
-            resumesAt,
-            canResumeNow: model.isLocalDevelopment,
-            isBusy:
-              RunNotice.guards.Sending(openRun.notice) || RunNotice.guards.Resuming(openRun.notice),
-          }),
-          roles: readyRoles(model.roles),
-          liveConnections: model.liveConnections,
-        },
-        h,
-      ),
+      runFooterView(openRun, "px-5", h),
     ],
   );

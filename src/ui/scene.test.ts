@@ -40,6 +40,7 @@ import {
   SendMessage,
   SetPermission,
   StartRun,
+  StartSavedRun,
 } from "./command.ts";
 import {
   approvalTask,
@@ -93,6 +94,17 @@ const runLoaded = (fields: {
   resumesAt?: Record<string, number>;
 }) =>
   Message.SucceededLoadRun({ resumesAt: {}, ...fields, maybeSubjectTitle: Option.some("Ari Cho") });
+
+const employeesLoaded = Message.SucceededLoadRunSubjects({
+  revision: 0,
+  runId: "run-1",
+  entityType: "employee",
+  label: "Employee",
+  subjects: [
+    { id: "emp-1", title: "Dana Lee" },
+    { id: "emp-2", title: "Ari Cho" },
+  ],
+});
 
 const applied = (start: Model, messages: ReadonlyArray<Message>) =>
   messages.reduce((current, next) => update(current, next).model, start);
@@ -1016,7 +1028,7 @@ test("a permission request shows what the action will send and sends the approva
     expect(role("list", { name: "Send a Slack message details" })).toHaveText(
       "to: Sam Park <sam@example.com>text: Ari Cho starts on 2026-11-02",
     ),
-    expect(role("button", { name: /Tell the manager.*Waiting/ })).toExist(),
+    expect(role("button", { name: /Tell the manager.*Waiting for People Ops/ })).toExist(),
     click(role("button", { name: "Approve" })),
     Command.expectExact(
       AnswerTask({ ...requestArgs, runId: "run-1", step: "notify", answer: { approved: true } }),
@@ -1026,7 +1038,7 @@ test("a permission request shows what the action will send and sends the approva
       Message.SucceededAnswerTask({ revision: 0, runId: "run-1", step: "notify" }),
     ),
     Command.resolve(LoadRun, runLoaded({ revision: 0, poll: 2, run: sent })),
-    expect(role("list", { name: "Open tasks" })).not.toExist(),
+    expect(role("region", { name: /Open task/ })).not.toExist(),
     expect(text("Answer sent.")).toExist(),
   );
 });
@@ -1258,13 +1270,13 @@ test("a run page shows each step's outcome without the planner, and links to the
     { update, view },
     given(withOpenRun(completed)),
     expect(text("Completed")).toExist(),
-    expect(text("Ari Cho")).toExist(),
-    expect(role("button", { name: /Tell the manager.*Done/ })).toExist(),
+    expect(role("heading", { name: "Run · Ari Cho" })).toExist(),
+    expect(role("button", { name: /Tell the manager.*Done.*Simulated.*Sent/ })).toExist(),
     expect(label("Tell the manager result")).toContainText("ChannelD-sam"),
     expect(label("Tell the manager result")).not.toContainText("simulated"),
     expect(label("Approve the plan result")).toHaveText("ApprovedYes"),
     expect(text("Simulated: nothing was sent. This is what it would have sent.")).toExist(),
-    expect(text("Runs the version saved when it started", { exact: false })).toExist(),
+    expect(text("Saved version")).toHaveAttr("title", "Runs the version saved when it started"),
     expect(role("link", { name: "Edit automation" })).toHaveAttr(
       "href",
       "/?automation=my-automation",
@@ -1272,7 +1284,145 @@ test("a run page shows each step's outcome without the planner, and links to the
     expect(label("Your message")).not.toExist(),
     expect(role("region", { name: "Conversation" })).not.toExist(),
     expect(role("button", { name: "Save draft" })).not.toExist(),
-    expect(role("button", { name: "Run saved version" })).not.toExist(),
+  );
+});
+
+test("a run reads as a checklist of the saved plan, with details a click away", () => {
+  const welcome: Workflow = {
+    name: "Welcome a new engineer",
+    trigger: { kind: "manual", subject: "employee" },
+    permissions: {
+      "calendar.findTimes": "auto",
+      "email.send": { ask: "people_ops" },
+      "slack.sendMessage": "auto",
+      "calendar.createEvent": "auto",
+    },
+    steps: [
+      {
+        id: "times",
+        kind: "action",
+        title: "Find time for a manager welcome",
+        use: "calendar.findTimes",
+        with: {
+          attendees: ["{{employee.manager}}"],
+          after: "{{employee.start_date}}",
+          duration: "30 minutes",
+        },
+      },
+      {
+        id: "heads_up",
+        kind: "action",
+        title: "Give the manager a heads-up",
+        use: "email.send",
+        with: { to: "{{employee.manager}}", subject: "New hire", body: "Say hi" },
+      },
+      {
+        id: "welcome",
+        kind: "action",
+        title: "Welcome them in #eng-team",
+        use: "slack.sendMessage",
+        with: { to: "#eng-team", text: "Welcome!" },
+      },
+      {
+        id: "email",
+        kind: "action",
+        title: "Send the right welcome email",
+        use: "email.send",
+        with: { to: "{{employee.email}}", subject: "Welcome", body: "Hello" },
+      },
+      {
+        id: "book",
+        kind: "action",
+        title: "Book their first conversation",
+        use: "calendar.createEvent",
+        with: {
+          title: "Welcome",
+          attendees: ["{{employee.email}}"],
+          start: "{{steps.times.times}}",
+          duration: "30 minutes",
+        },
+      },
+      {
+        id: "settle",
+        kind: "wait",
+        title: "Give them three days to settle in",
+        duration: "3 days",
+      },
+    ],
+  };
+  const waiting = runOf({
+    workflow: welcome,
+    steps: {
+      times: {
+        status: "done",
+        record: {
+          simulated: true,
+          times: [
+            "2026-11-03T10:00:00Z",
+            "2026-11-03T14:00:00Z",
+            "2026-11-04T10:00:00Z",
+            "2026-11-04T14:00:00Z",
+          ],
+        },
+      },
+      heads_up: {
+        status: "done",
+        record: { simulated: true, messageId: "m-1", to: "grace@example.com" },
+      },
+      welcome: { status: "done", record: { channel: "#eng-team", ts: "1", text: "Welcome!" } },
+      email: { status: "waiting" },
+    },
+    tasks: [
+      {
+        ...permissionTask,
+        step: "email",
+        title: "Send the right welcome email",
+        action: {
+          use: "email.send",
+          inputs: { to: "ari@example.com", subject: "Welcome", body: "Hello" },
+        },
+      },
+    ],
+  });
+  scene(
+    { update, view },
+    given(applied(withOpenRun(waiting), [employeesLoaded])),
+    expect(role("heading", { name: "Run · Ari Cho" })).toExist(),
+    expect(
+      role("button", { name: /Find time for a manager welcome, Done.*4 open times/ }),
+    ).toExist(),
+    expect(role("button", { name: /Give the manager a heads-up, Done.*Sent to Grace/ })).toExist(),
+    expect(role("button", { name: /Welcome them in #eng-team, Done, Posted$/ })).toExist(),
+    expect(
+      role("button", { name: /Send the right welcome email, Waiting, Waiting for People Ops/ }),
+    ).toExist(),
+    expect(role("button", { name: /Book their first conversation, Not started$/ })).toExist(),
+    expect(role("button", { name: /Give them three days to settle in, Not started$/ })).toExist(),
+    expect(role("region", { name: "Open task: Send the right welcome email" })).toExist(),
+    expect(role("button", { name: /Give the manager a heads-up/ })).toHaveAttr(
+      "aria-expanded",
+      "false",
+    ),
+    click(role("button", { name: /Give the manager a heads-up/ })),
+    expect(role("button", { name: /Give the manager a heads-up/ })).toHaveAttr(
+      "aria-expanded",
+      "true",
+    ),
+    expect(role("list", { name: "Give the manager a heads-up inputs" })).toExist(),
+    expect(label("Give the manager a heads-up result")).toContainText("Tograce@example.com"),
+    expect(text("Simulated: nothing was sent. This is what it would have sent.")).toExist(),
+    expect(label("Employee")).toHaveValue("emp-2"),
+    click(role("button", { name: "Run saved version" })),
+    Command.expectExact(
+      StartSavedRun({ ...requestArgs, fromRunId: "run-1", maybeSubjectId: Option.some("emp-2") }),
+    ),
+    expect(role("button", { name: "Starting…" })).toBeDisabled(),
+    Command.resolve(
+      StartSavedRun,
+      Message.SucceededStartSavedRun({ revision: 0, fromRunId: "run-1", runId: "run-2" }),
+    ),
+    Command.expectExact(NavigateInternal({ url: "/?automation=my-automation&run=run-2" })),
+    Command.resolve(NavigateInternal, Message.CompletedNavigateInternal()),
   );
 });
 
@@ -1289,13 +1439,13 @@ test("an approval task shows who it's for and sends the answer", () => {
   scene(
     { update, view },
     given(withOpenRun(waiting)),
-    expect(role("list", { name: "Open tasks" })).toExist(),
+    expect(role("region", { name: "Open task: Approve the plan" })).toExist(),
     expect(text("Approve onboarding for Ari Cho?")).toExist(),
     expect(text("Assigned to Sam Park")).toExist(),
     // Without a live Slack connection, nothing was sent.
     expect(text("Would notify via Slack")).toExist(),
     expect(text("Simulated")).toExist(),
-    expect(role("button", { name: /Approve the plan.*Waiting/ })).toExist(),
+    expect(role("button", { name: /Approve the plan.*Waiting.*Waiting for Sam/ })).toExist(),
     click(role("button", { name: "Approve" })),
     Command.expectExact(
       AnswerTask({ ...requestArgs, runId: "run-1", step: "approve", answer: { approved: true } }),
@@ -1306,7 +1456,7 @@ test("an approval task shows who it's for and sends the answer", () => {
     ),
     Command.resolve(LoadRun, runLoaded({ revision: 0, poll: 2, run: approved })),
 
-    expect(role("list", { name: "Open tasks" })).not.toExist(),
+    expect(role("region", { name: /Open task/ })).not.toExist(),
     expect(text("Answer sent.")).toExist(),
   );
 });
@@ -1402,7 +1552,12 @@ test("a run opens in a panel beside the editor, which can expand to its page or 
     given(editing),
     expect(role("region", { name: "Conversation" })).toExist(),
     expect(role("region", { name: "Workflow" })).toExist(),
-    expect(role("complementary", { name: "Run preview" })).toContainText("Manager onboarding"),
+    expect(
+      within(
+        role("complementary", { name: "Run preview" }),
+        role("heading", { name: "Run · Ari Cho" }),
+      ),
+    ).toExist(),
     expect(role("complementary", { name: "Run preview" })).toContainText(
       "Approve onboarding for Ari Cho?",
     ),

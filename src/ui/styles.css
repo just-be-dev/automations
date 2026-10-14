@@ -48,6 +48,7 @@
   --color-success: var(--success);
   --color-dev: var(--dev);
   --color-dev-foreground: var(--dev-foreground);
+  --color-attention: var(--attention);
   --color-sand-2: var(--sand-2);
   --color-sand-3: var(--sand-3);
   --color-sand-4: var(--sand-4);
@@ -113,6 +114,7 @@
   /* Local-development-only controls, such as resuming a wait now. */
   --dev: #d13d00;
   --dev-foreground: #fff;
+  --attention: #ef5f00;
   --ref-blue-bg: #eaf1fc;
   --ref-blue-text: #294b78;
   --ref-violet-bg: #f0edfa;
@@ -155,6 +157,7 @@
     --chip: #ffffff11;
     --rail: #393939;
     --success: #3dd68c;
+    --attention: #ff801f;
     --ref-blue-bg: #26364b;
     --ref-blue-text: #b8d3f5;
     --ref-violet-bg: #383047;

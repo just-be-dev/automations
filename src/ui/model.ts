@@ -5,7 +5,14 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { defineTaggedUnion } from "foldkit/schema";
 import * as Dialog from "@/components/ui/dialog";
-import { AskedQuestions, PendingChat, Run, RunSummary, Workflow } from "../workflow.ts";
+import {
+  AskedQuestions,
+  PendingChat,
+  Run,
+  RunSummary,
+  subjectType,
+  Workflow,
+} from "../workflow.ts";
 import { Role } from "../entities.ts";
 import { SubjectOption } from "./api.ts";
 import { EventInput, Questionnaire, TaskAnswer } from "./domain/index.ts";
@@ -108,6 +115,23 @@ export const RunNotice = defineTaggedUnion({
 });
 export type RunNotice = typeof RunNotice.Type;
 
+/**
+ * Who another run of the saved version is for: the run's subject type, or nothing for a run that
+ * needs no subject. Event runs start from the studio, which supplies the event.
+ */
+export const runSubjectType = (run: Run) =>
+  run.workflow.trigger.kind === "event"
+    ? Option.none<string>()
+    : Option.fromNullishOr(subjectType(run.workflow.trigger));
+
+/** How starting another run of the saved version from a run's footer went. */
+export const RunStart = defineTaggedUnion({
+  Idle: {},
+  Starting: {},
+  Failed: { error: Schema.String },
+});
+export type RunStart = typeof RunStart.Type;
+
 /** A run being followed, on its own page or in the panel beside the overview or the studio. */
 export const OpenRun = Schema.Struct({
   automationId: Schema.String,
@@ -115,6 +139,10 @@ export const OpenRun = Schema.Struct({
   detail: RunDetail,
   taskEdits: Schema.Array(TaskAnswer.TaskFieldEdit),
   notice: RunNotice,
+  /** Who the footer runs the saved version for, picked from the run's subject type. */
+  subjectChoices: SubjectChoices,
+  maybeSubjectId: Schema.Option(Schema.String),
+  start: RunStart,
 });
 export type OpenRun = typeof OpenRun.Type;
 

@@ -14,6 +14,7 @@ import {
   LoadAutomations,
   LoadRun,
   LoadRuns,
+  LoadRunSubjects,
   LoadSubjects,
   NavigateInternal,
   PollAutomation,
@@ -22,6 +23,7 @@ import {
   SendMessage,
   SaveDraft,
   StartRun,
+  StartSavedRun,
 } from "./command.ts";
 import { init } from "./main.ts";
 import { Message } from "./message.ts";
@@ -68,6 +70,18 @@ const loaded = (search = "automation=my-automation") =>
 const typed = (current: Model, text: string) => modifyMessageInput(current, () => text);
 
 const runUrl = (runId: string) => studioUrl(`automation=my-automation&run=${runId}`);
+
+const employeesLoaded = (revision: number) =>
+  Message.SucceededLoadRunSubjects({
+    revision,
+    runId: "run-1",
+    entityType: "employee",
+    label: "Employee",
+    subjects: [
+      { id: "emp-1", title: "Dana Lee" },
+      { id: "emp-2", title: "Ari Cho" },
+    ],
+  });
 
 const workflow: Workflow = {
   name: "Order summary",
@@ -331,11 +345,16 @@ test("a saved workflow about an employee loads employees, and a run starts for t
           detail: { _tag: "Loading" },
           taskEdits: [],
           notice: { _tag: "Idle" },
+          subjectChoices: { _tag: "NotNeeded" },
+          maybeSubjectId: Option.none(),
+          start: { _tag: "Idle" },
         },
       });
       expect(current.maybeDraft).toEqual(Option.none());
     }),
     Command.resolve(LoadRun, runLoaded({ revision: 1, poll: 1, run: completed })),
+    Command.expectExact(LoadRunSubjects({ revision: 1, runId: "run-1", entityType: "employee" })),
+    Command.resolve(LoadRunSubjects, employeesLoaded(1)),
     Command.expectNone(),
     model((current) => expect(runDetailOf(current)).toEqual(loadedRun(completed))),
   );
@@ -363,7 +382,11 @@ test("the open run polls every 1.5 s while running, every 5 s while waiting, the
     update,
     given(openingRun("run-1")),
     message(runLoaded({ revision: 0, poll: 1, run: running })),
-    Command.expectExact(PollRun({ ...requestArgs, poll: 1, runId: "run-1", delayMillis: 1500 })),
+    Command.expectExact(
+      PollRun({ ...requestArgs, poll: 1, runId: "run-1", delayMillis: 1500 }),
+      LoadRunSubjects({ revision: 0, runId: "run-1", entityType: "employee" }),
+    ),
+    Command.resolve(LoadRunSubjects, employeesLoaded(0)),
     Command.resolve(PollRun, runLoaded({ revision: 0, poll: 1, run: waiting })),
     Command.expectExact(PollRun({ ...requestArgs, poll: 1, runId: "run-1", delayMillis: 5000 })),
     Command.resolve(PollRun, runLoaded({ revision: 0, poll: 1, run: completed })),
@@ -462,7 +485,9 @@ test("a run link in the studio opens the run beside the draft, which follows its
     Command.expectExact(
       PollRun({ ...requestArgs, poll: 1, runId: "run-1", delayMillis: 1500 }),
       LoadRuns(requestArgs),
+      LoadRunSubjects({ revision: 0, runId: "run-1", entityType: "employee" }),
     ),
+    Command.resolve(LoadRunSubjects, employeesLoaded(0)),
     Command.resolve(
       LoadRuns,
       Message.SucceededLoadRuns({ revision: 0, runs: [summaryOf(running)] }),
@@ -497,7 +522,7 @@ test("a run link on the overview opens that automation's run beside it", () => {
     { automationId: "orders", revision: 0, poll: 1, runId: "run-1" },
   ]);
   const opened = update(clicked.model, runLoaded({ revision: 0, poll: 1, run: waiting }));
-  expect(opened.commands?.map((command) => command.name)).toEqual(["PollRun"]);
+  expect(opened.commands?.map((command) => command.name)).toEqual(["PollRun", "LoadRunSubjects"]);
   story(
     update,
     given(opened.model),
@@ -887,6 +912,118 @@ test("the overview drops the studio's late replies, and a run link from it opens
     Command.resolve(
       LoadRun,
       runLoaded({ revision: 2, poll: 1, run: runOf({ status: "completed" }) }),
+    ),
+    Command.resolve(LoadRunSubjects, employeesLoaded(2)),
+  );
+});
+
+const footerOf = (current: Model) =>
+  Option.map(openRunOf(current), ({ subjectChoices, maybeSubjectId, start }) => ({
+    subjectChoices: subjectChoices._tag,
+    maybeSubjectId,
+    start,
+  }));
+
+test("a run page's footer runs the saved version again for the run's subject by default", () => {
+  const completed = runOf({ status: "completed" });
+  story(
+    update,
+    given(openingRun("run-1")),
+    message(runLoaded({ revision: 0, poll: 1, run: completed })),
+    Command.expectExact(LoadRunSubjects({ revision: 0, runId: "run-1", entityType: "employee" })),
+    model((current) =>
+      expect(footerOf(current)).toEqual(
+        Option.some({
+          subjectChoices: "Loading",
+          maybeSubjectId: Option.some("emp-2"),
+          start: { _tag: "Idle" },
+        }),
+      ),
+    ),
+    Command.resolve(LoadRunSubjects, employeesLoaded(0)),
+    message(Message.SelectedRunSubject({ subjectId: "emp-1" })),
+    message(Message.ClickedRunSavedVersion()),
+    Command.expectExact(
+      StartSavedRun({
+        ...requestArgs,
+        fromRunId: "run-1",
+        maybeSubjectId: Option.some("emp-1"),
+      }),
+    ),
+    model((current) =>
+      expect(Option.map(footerOf(current), (footer) => footer.start)).toEqual(
+        Option.some({ _tag: "Starting" }),
+      ),
+    ),
+    Command.resolve(
+      StartSavedRun,
+      Message.SucceededStartSavedRun({ revision: 0, fromRunId: "run-1", runId: "run-2" }),
+    ),
+    Command.expectExact(NavigateInternal({ url: "/?automation=my-automation&run=run-2" })),
+    Command.resolve(NavigateInternal, Message.CompletedNavigateInternal()),
+  );
+});
+
+test("the footer asks for a subject first, and says why a start failed", () => {
+  const completed = runOf({ status: "completed", subject: null });
+  story(
+    update,
+    given(update(openingRun("run-1"), runLoaded({ revision: 0, poll: 1, run: completed })).model),
+    message(Message.ClickedRunSavedVersion()),
+    Command.expectNone(),
+    model((current) =>
+      expect(Option.map(footerOf(current), (footer) => footer.start)).toEqual(
+        Option.some({ _tag: "Failed", error: "Choose an employee to run it for" }),
+      ),
+    ),
+    message(Message.SelectedRunSubject({ subjectId: "emp-2" })),
+    message(Message.ClickedRunSavedVersion()),
+    Command.resolve(
+      StartSavedRun,
+      Message.FailedStartSavedRun({ revision: 0, fromRunId: "run-1", error: "Save it first" }),
+    ),
+    model((current) =>
+      expect(Option.map(footerOf(current), (footer) => footer.start)).toEqual(
+        Option.some({ _tag: "Failed", error: "Save it first" }),
+      ),
+    ),
+  );
+});
+
+test("the panel's footer opens the new run in the panel", () => {
+  const completed = runOf({ status: "completed" });
+  const started = runOf({ id: "run-2", status: "completed" });
+  const editing = update(loaded(), automationLoaded({ maybeDraft: Option.some(onboarding) })).model;
+  const panel = [
+    clickedLink("automation=my-automation&run=run-1"),
+    runLoaded({ revision: 0, poll: 1, run: completed }),
+    employeesLoaded(0),
+  ].reduce((current, next) => update(current, next).model, editing);
+  story(
+    update,
+    given(panel),
+    message(Message.ClickedRunSavedVersion()),
+    Command.expectExact(
+      StartSavedRun({ ...requestArgs, fromRunId: "run-1", maybeSubjectId: Option.some("emp-2") }),
+    ),
+    Command.resolve(
+      StartSavedRun,
+      Message.SucceededStartSavedRun({ revision: 0, fromRunId: "run-1", runId: "run-2" }),
+    ),
+    Command.expectExact(LoadRun({ ...requestArgs, poll: 2, runId: "run-2" })),
+    model((current) => {
+      expect(current.page._tag).toBe("Studio");
+      expect(Option.map(current.maybeRunPanel, (openRun) => openRun.runId)).toEqual(
+        Option.some("run-2"),
+      );
+    }),
+    Command.resolve(LoadRun, runLoaded({ revision: 0, poll: 2, run: started })),
+    Command.resolveAll(
+      [LoadRuns, Message.SucceededLoadRuns({ revision: 0, runs: [summaryOf(started)] })],
+      [
+        LoadRunSubjects,
+        Message.SucceededLoadRunSubjects({ ...employeesLoaded(0), runId: "run-2" }),
+      ],
     ),
   );
 });

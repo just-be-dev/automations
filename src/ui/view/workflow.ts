@@ -1,5 +1,5 @@
 /** Presents workflow triggers and nested steps in readable terms, with references, conditions, and template usage.
- * Adds step outcomes and recorded results when showing an executed snapshot. */
+ * Lends a step's details, lanes, and recorded result to the run checklist. */
 import * as Array from "effect/Array";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
@@ -9,24 +9,18 @@ import type { Html, HtmlBuilder } from "foldkit/html";
 import { Disclosure } from "@foldkit/ui";
 import {
   Bot,
-  Check,
   ChevronDown,
   GitBranch,
   Hourglass,
   LayoutTemplate,
-  LoaderCircle,
   OctagonX,
-  Play,
   Scale,
-  SkipForward,
   Split,
   UserRound,
-  X,
 } from "lucide";
 import { formatText, recordView } from "@/components/record";
 import { componentName } from "@/lib/component";
-import { button } from "@/components/ui/button";
-import { formatWeekdayTime, labelFromName, withArticle } from "@/lib/format";
+import { labelFromName, withArticle } from "@/lib/format";
 import { icon, triggerIcon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { findOperation, type InputType } from "../../connections.ts";
@@ -45,7 +39,6 @@ import {
   patternCondition,
   type Permission,
   type Permissions,
-  type RunStep,
   type Step,
   type TemplateUse,
   templateParts,
@@ -94,7 +87,7 @@ const refView = (ref: string, h: HtmlBuilder<Message>) => {
   );
 };
 
-const templateView = (text: string, h: HtmlBuilder<Message>) =>
+export const templateView = (text: string, h: HtmlBuilder<Message>) =>
   Array.map(templateParts(text), (part) =>
     part.kind === "ref" ? refView(part.ref, h) : part.text,
   );
@@ -209,22 +202,10 @@ const triggerView = (workflow: Workflow, h: HtmlBuilder<Message>) =>
     ],
   );
 
-/** A run's wait steps that wait on a clock, and whether one can be resumed now. */
-export interface RunWaits {
-  /** When each wait step waiting on a clock resumes, by step ID. */
-  readonly resumesAt: Readonly<Record<string, number>>;
-  /** Local development, where a wait can be resumed now. */
-  readonly canResumeNow: boolean;
-  /** A resume or an answer is on its way, so the control waits for it. */
-  readonly isBusy: boolean;
-}
-
-interface StepContext {
+export interface StepContext {
   /** Tells apart the same step shown in the draft and in a run beside it. */
   readonly scope: "draft" | "run";
   readonly expandedStepIds: ReadonlyArray<string>;
-  readonly maybeRunSteps: Option.Option<Readonly<Record<string, RunStep>>>;
-  readonly maybeRunWaits: Option.Option<RunWaits>;
   readonly permissions: Permissions;
   /** The roles permissions can ask, for their labels. */
   readonly roles: ReadonlyArray<Role>;
@@ -250,7 +231,7 @@ export const workflowView = (
     ],
   );
 
-const stepIcon = (step: Step): IconNode =>
+export const stepIcon = (step: Step): IconNode =>
   Match.value(step).pipe(
     Match.discriminatorsExhaustive("kind")({
       agent: () => Bot,
@@ -264,7 +245,7 @@ const stepIcon = (step: Step): IconNode =>
     }),
   );
 
-const stepLabel = (step: Step): string =>
+export const stepLabel = (step: Step): string =>
   Match.value(step).pipe(
     Match.discriminatorsExhaustive("kind")({
       agent: () => "Agent",
@@ -783,7 +764,7 @@ const humanFieldView = (field: HumanField, h: HtmlBuilder<Message>) =>
     ],
   );
 
-const stepDetailView = (
+export const stepDetailView = (
   step: Step,
   context: StepContext,
   isExpanded: boolean,
@@ -898,13 +879,13 @@ const stepDetailView = (
     }),
   );
 
-interface Lane {
+export interface Lane {
   readonly label: string;
   readonly heading: ReadonlyArray<Html | string>;
   readonly steps: ReadonlyArray<Step>;
 }
 
-const stepLanes = (step: Step, h: HtmlBuilder<Message>): ReadonlyArray<Lane> =>
+export const stepLanes = (step: Step, h: HtmlBuilder<Message>): ReadonlyArray<Lane> =>
   Match.value(step).pipe(
     Match.discriminatorsExhaustive("kind")({
       agent: () => [],
@@ -952,43 +933,7 @@ const laneView = (lane: Lane, context: StepContext, h: HtmlBuilder<Message>) =>
     ],
   );
 
-const stepStatusLabel: Record<RunStep["status"], string> = {
-  running: "Running",
-  waiting: "Waiting",
-  done: "Done",
-  declined: "Declined",
-  skipped: "Skipped",
-};
-
-const stepStatusView = (runStep: RunStep, h: HtmlBuilder<Message>) =>
-  h.span(
-    [
-      componentName("step-status"),
-      h.Class(
-        cn(
-          "mt-0.5 inline-flex shrink-0 items-center gap-1 text-[11px] font-medium",
-          runStep.status === "done" && "text-success",
-          runStep.status === "running" && "text-signal",
-          runStep.status === "waiting" && "text-sand-11",
-          runStep.status === "declined" && "text-destructive",
-          runStep.status === "skipped" && "text-muted-foreground",
-        ),
-      ),
-    ],
-    [
-      Match.value(runStep.status).pipe(
-        Match.when("done", () => icon(h, Check, "size-3.5")),
-        Match.when("running", () => icon(h, LoaderCircle, "size-3.5 animate-spin")),
-        Match.when("waiting", () => icon(h, Hourglass, "size-3.5")),
-        Match.when("declined", () => icon(h, X, "size-3.5")),
-        Match.when("skipped", () => icon(h, SkipForward, "size-3.5")),
-        Match.exhaustive,
-      ),
-      stepStatusLabel[runStep.status],
-    ],
-  );
-
-const stepResultView = (
+export const stepResultView = (
   step: Step,
   record: Schema.Json,
   isExpanded: boolean,
@@ -1015,59 +960,14 @@ const stepResultView = (
     ],
   );
 
-/** When a wait step resumes, and, in local development, a control that resumes it now. */
-const waitResumeView = (step: Step, at: number, waits: RunWaits, h: HtmlBuilder<Message>) =>
-  h.div(
-    [
-      componentName("wait-resume"),
-      h.Class("flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 pl-[34px]"),
-    ],
-    [
-      h.span([h.Class("text-xs text-muted-foreground")], [`Resumes ${formatWeekdayTime(at)}`]),
-      waits.canResumeNow
-        ? h.span(
-            [h.Class("flex items-center gap-2")],
-            [
-              h.span([h.Class("text-[11px] text-muted-foreground")], ["Local dev only"]),
-              button(
-                {
-                  onClick: Message.ClickedResumeNow({ step: step.id }),
-                  isDisabled: waits.isBusy,
-                  size: "xs",
-                  className: "bg-dev text-dev-foreground hover:bg-dev/85",
-                  attributes: [h.AriaLabel(`Resume ${step.title} now`)],
-                },
-                [icon(h, Play, "size-3", "inline-start"), "Resume now"],
-                h,
-              ),
-            ],
-          )
-        : h.empty,
-    ],
-  );
-
 const stepView = (step: Step, context: StepContext, h: HtmlBuilder<Message>): Html => {
   const expansionKey = `${context.scope}:${step.id}`;
   const isExpanded = Array.contains(context.expandedStepIds, expansionKey);
-  const maybeRunStep = Option.flatMap(context.maybeRunSteps, (runSteps) =>
-    Option.fromNullishOr(runSteps[step.id]),
-  );
-  const isUnreached =
-    Option.isSome(context.maybeRunSteps) &&
-    !Option.exists(maybeRunStep, (runStep) => runStep.status !== "skipped");
-  const maybeResume = Option.flatMap(context.maybeRunWaits, (waits) =>
-    Option.map(Option.fromNullishOr(waits.resumesAt[step.id]), (at) => ({ at, waits })),
-  );
   return h.keyed("li")(
     step.id,
     [
       componentName("step"),
-      h.Class(
-        cn(
-          "rail-item animate-in fade-in slide-in-from-top-1 duration-300",
-          isUnreached && "opacity-60",
-        ),
-      ),
+      h.Class("rail-item animate-in fade-in slide-in-from-top-1 duration-300"),
     ],
     [
       Disclosure.view(
@@ -1098,10 +998,6 @@ const stepView = (step: Step, context: StepContext, h: HtmlBuilder<Message>): Ht
                         ...templateView(step.title, h),
                       ],
                     ),
-                    Option.match(maybeRunStep, {
-                      onNone: () => h.empty,
-                      onSome: (runStep) => stepStatusView(runStep, h),
-                    }),
                     icon(
                       h,
                       ChevronDown,
@@ -1109,24 +1005,9 @@ const stepView = (step: Step, context: StepContext, h: HtmlBuilder<Message>): Ht
                     ),
                   ],
                 ),
-                Option.match(maybeResume, {
-                  onNone: () => h.empty,
-                  onSome: ({ at, waits }) => waitResumeView(step, at, waits, h),
-                }),
                 h.div(
                   [...panel, h.Class("flex flex-col gap-2 pl-[34px]")],
-                  [
-                    stepDetailView(step, context, isExpanded, h),
-                    Option.match(
-                      Option.flatMap(maybeRunStep, (runStep) =>
-                        Option.fromNullishOr(runStep.record),
-                      ),
-                      {
-                        onNone: () => h.empty,
-                        onSome: (record) => stepResultView(step, record, isExpanded, h),
-                      },
-                    ),
-                  ],
+                  [stepDetailView(step, context, isExpanded, h)],
                 ),
                 Array.match(stepLanes(step, h), {
                   onEmpty: () => h.empty,

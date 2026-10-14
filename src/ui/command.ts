@@ -164,6 +164,24 @@ export const LoadSubjects = Command.define("LoadSubjects", {
     ),
 });
 
+/** Loads who a run's footer can run the saved version for. */
+export const LoadRunSubjects = Command.define("LoadRunSubjects", {
+  args: { revision: Schema.Int, runId: Schema.String, entityType: Schema.String },
+  messages: [Message.SucceededLoadRunSubjects, Message.FailedLoadRunSubjects],
+  execute: ({ revision, runId, entityType }) =>
+    loadSubjectOptions(entityType).pipe(
+      Effect.map(({ label, subjects }) =>
+        Message.SucceededLoadRunSubjects({ revision, runId, entityType, label, subjects }),
+      ),
+      Effect.catch((error) =>
+        Effect.succeed(
+          Message.FailedLoadRunSubjects({ revision, runId, entityType, error: errorText(error) }),
+        ),
+      ),
+      Effect.provide(Http.layer),
+    ),
+});
+
 export const NavigateInternal = Command.define("NavigateInternal", {
   args: { url: Schema.String },
   messages: [Message.CompletedNavigateInternal],
@@ -284,6 +302,31 @@ export const StartRun = Command.define("StartRun", {
     }).pipe(
       Effect.map(({ id }) => Message.SucceededStartRun({ revision, runId: id })),
       recoverRequest(revision),
+      Effect.provide(Http.layer),
+    ),
+});
+
+/** Starts another run of the automation's saved version from an open run's footer. */
+export const StartSavedRun = Command.define("StartSavedRun", {
+  args: {
+    ...requestArgs,
+    fromRunId: Schema.String,
+    maybeSubjectId: Schema.Option(Schema.String),
+  },
+  messages: [Message.SucceededStartSavedRun, Message.FailedStartSavedRun],
+  execute: ({ automationId, revision, fromRunId, maybeSubjectId }) =>
+    request(
+      automationId,
+      "/start",
+      Schema.Struct({ id: Schema.String }),
+      Option.match(maybeSubjectId, { onNone: () => ({}), onSome: (subject) => ({ subject }) }),
+    ).pipe(
+      Effect.map(({ id }) => Message.SucceededStartSavedRun({ revision, fromRunId, runId: id })),
+      Effect.catch((error) =>
+        Effect.succeed(
+          Message.FailedStartSavedRun({ revision, fromRunId, error: errorText(error) }),
+        ),
+      ),
       Effect.provide(Http.layer),
     ),
 });
