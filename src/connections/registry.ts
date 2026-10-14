@@ -47,7 +47,7 @@ export interface Connection {
   /**
    * Simulated connections have no credentials by default. Their operations succeed without
    * contacting the service and record what they would have sent, with `simulated: true`. A
-   * deployment can still connect one (Email, with `RESEND_API_KEY`; Slack, with `SLACK_BOT_TOKEN`);
+   * deployment can still connect one (Email, with `EMAIL_FROM`; Slack, with `SLACK_BOT_TOKEN`);
    * `LiveConnections` says which.
    */
   readonly simulated: boolean;

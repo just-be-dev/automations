@@ -4,6 +4,6 @@ node_modules/
 dist/
 evals/results/
 
-# Local secrets (Slack and Resend credentials for alchemy dev and deploys)
+# Local secrets and settings (Slack credentials and the email sender for alchemy dev and deploys)
 .env
 .env.*

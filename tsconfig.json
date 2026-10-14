@@ -34,8 +34,7 @@
               "src/channels/slack-interactivity.ts",
               "src/channels/slack-interactivity.test.ts",
               "src/channels/slack-workspace.ts",
-              "src/channels/slack-workspace.test.ts",
-              "src/connections/email.ts"
+              "src/channels/slack-workspace.test.ts"
             ],
             "options": { "allowedUnstableApis": ["effect/http"] }
           },

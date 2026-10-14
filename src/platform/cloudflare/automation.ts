@@ -10,7 +10,7 @@ import { PiAgent } from "../../ai/pi.ts";
 import { Classifier } from "../../ai/classifier.ts";
 import { AnswerHub, makeAnswerHub } from "../../ai/ask-question/answer-hub.ts";
 import { makeAutomation } from "../../automation/application.ts";
-import { EmailSender, makeResendSender } from "../../connections/email.ts";
+import { EmailSender } from "../../connections/email.ts";
 import { makeSlackWebSender, SlackSender } from "../../connections/slack.ts";
 import { AutomationHost, AutomationStorageError } from "../../automation/host.ts";
 import { ConfiguredStudioOrigin, studioOrigin } from "../../automation/studio-link.ts";
@@ -18,6 +18,7 @@ import { makePlanning } from "../../automation/planning.ts";
 import { ExecutionId } from "../../workflow/execution.ts";
 import { AutomationIndexD1 } from "./automation-index-d1.ts";
 import { EntityStoreD1 } from "./entity-store-d1.ts";
+import { makeCloudflareEmailSender } from "./email.ts";
 import { EventsQueue } from "./events.ts";
 import { openPiAgent } from "./pi.ts";
 import { openPiStorage } from "./pi-storage.ts";
@@ -49,9 +50,17 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
     if (studio !== undefined && configuredOrigin === undefined) {
       return yield* Effect.die(`STUDIO_URL must be an http or https URL, not ${studio}`);
     }
-    // Like Slack, email sends with a Resend key, from EMAIL_FROM when set. See docs/email.md.
-    const resendKey = yield* Config.option(Config.Redacted("RESEND_API_KEY")).pipe(Effect.orDie);
+    // With EMAIL_FROM, email sends through Cloudflare Email Service from that address, and only
+    // from it; without it, email is simulated. Remote, so `alchemy dev` sends real email too.
     const emailFrom = yield* Config.option(Config.String("EMAIL_FROM")).pipe(Effect.orDie);
+    const emailFromName = yield* Config.option(Config.String("EMAIL_FROM_NAME")).pipe(Effect.orDie);
+    const emailBinding = Option.isSome(emailFrom)
+      ? yield* Cloudflare.Email.Send(
+          yield* Cloudflare.Email.SendEmail("Email", {
+            allowedSenderAddresses: [emailFrom.value],
+          }).pipe(Alchemy.remote()),
+        )
+      : undefined;
 
     // @effect-diagnostics-next-line returnEffectInGen:off
     return Effect.gen(function* () {
@@ -124,9 +133,14 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         Effect.provideService(ConfiguredStudioOrigin, configuredOrigin ?? null),
         Effect.provideService(
           EmailSender,
-          Option.isSome(resendKey)
-            ? makeResendSender(resendKey.value, Option.getOrUndefined(emailFrom))
-            : null,
+          emailBinding === undefined || Option.isNone(emailFrom)
+            ? null
+            : makeCloudflareEmailSender(
+                yield* emailBinding.raw.pipe(
+                  Effect.provideService(Alchemy.RuntimeContext, runtime),
+                ),
+                { email: emailFrom.value, name: Option.getOrUndefined(emailFromName) },
+              ),
         ),
       );
       const planReply = yield* Alchemy.makeCallback("planReply", (payload: unknown) =>
@@ -161,6 +175,7 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         Cloudflare.Workers.AIBinding,
         Cloudflare.D1.QueryDatabaseBinding,
         Cloudflare.Queues.WriteQueueBinding,
+        Cloudflare.Email.SendBinding,
         Cloudflare.Telemetry({ headSamplingRate: 1, persist: true }),
       ),
     ),

@@ -41,7 +41,7 @@ The [example workflow](docs/examples/first-week.json) uses the employee type, te
 
 This is a **single-tenant prototype**, not a production-ready service. It runs on Cloudflare and supports long-lived workflows that pause for days or for a person’s response.
 
-Calendar currently **simulates its operations**: it records what would happen but contacts nobody. Email is simulated too until you [add a Resend API key](docs/email.md), and Slack until you [connect a workspace](docs/slack.md), which lets automations post messages and start from mentions. Human tasks reach people only as Slack DMs, once Slack is connected; otherwise their notifications are recorded rather than sent. HTTP webhooks make real requests. Do not put secrets in workflow definitions. Production use needs further security review; see the [operational caveats](docs/development.md#caveats).
+Calendar currently **simulates its operations**: it records what would happen but contacts nobody. Email is simulated too until you [set a sender on a domain onboarded to Cloudflare Email Service](docs/email.md), and Slack until you [connect a workspace](docs/slack.md), which lets automations post messages and start from mentions. Human tasks reach people only as Slack DMs, once Slack is connected; otherwise their notifications are recorded rather than sent. HTTP webhooks make real requests. Do not put secrets in workflow definitions. Production use needs further security review; see the [operational caveats](docs/development.md#caveats).
 
 ## Development
 

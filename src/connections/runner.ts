@@ -21,10 +21,10 @@ import type { ExecutionValues } from "../workflow/execution.ts";
 
 /**
  * Executes connection operations for action steps. `http.post` really sends and `events.emit`
- * really publishes. Email sends for real when the deployment provides an `EmailSender` (a Resend
- * API key), passing the step's idempotency key so a retried step sends once. Slack posts for real
- * when the deployment provides a `SlackSender` (a bot token); delivery is at least once, because
- * Slack takes no idempotency key. Calendar, and Email and Slack without credentials, are
+ * really publishes. Email sends for real when the deployment provides an `EmailSender` (Cloudflare
+ * Email Service, with `EMAIL_FROM`), and Slack posts for real when it provides a `SlackSender` (a
+ * bot token). Both are delivered at least once, because neither takes an idempotency key.
+ * Calendar, and Email and Slack without their configuration, are
  * simulated: they succeed, contact nothing, and record what they would have sent with
  * `simulated: true`. Their IDs derive from the step's idempotency key, so a retried step records
  * the same thing.
@@ -171,7 +171,7 @@ export const runAction = Effect.fn("Connections.runAction")(function* (
       const email = yield* EmailSender;
       if (email !== null) {
         const sent = yield* email
-          .send(message, idempotencyKey)
+          .send(message)
           .pipe(Effect.mapError((error) => fail(step, error.message)));
         return recorded({ messageId: sent.messageId, ...message });
       }

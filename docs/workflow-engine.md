@@ -247,7 +247,7 @@ Answering stores the answer and schedules `planReply` in one transaction, then w
 │ Outer Effect, at plan time and cold start                        │
 │   DurableObjectState · Workers AI · EntityStoreD1 ·              │
 │   AutomationIndexD1 · EventsQueue · SLACK_BOT_TOKEN ·            │
-│   RESEND_API_KEY · EMAIL_FROM                                    │
+│   EMAIL_FROM → send_email binding (remote)                       │
 │                                                                  │
 │ Instance                                                         │
 │   AutomationHost.storage → the object's storage, transactions    │
@@ -369,7 +369,7 @@ Answering stores the answer and schedules `planReply` in one transaction, then w
 
 [The durable engine](../src/workflow/durable-engine.ts) keeps nothing in memory between events. [The interpreter](../src/workflow/interpreter.ts) reruns everything outside an Activity on each replay, so that code must be deterministic; the current time (`<id>/now`) and refs (`<id>/refs`) are Activities for that reason. Effect runs a clock of 60 seconds or less as an in-memory sleep inside an Activity instead of scheduling it. Activity and deferred names are journal keys: renaming one makes a waiting run redo that step. [The DSL reference](workflow-dsl.md#run-state-and-execution) maps every step kind to its primitive.
 
-`StepRunner` is the interpreter's only way out; [`runs.ts`](../src/automation/runs.ts) implements it. Agent steps prompt the run's conversation with [`agentPrompt`](../src/workflow/agent-step.ts) under the request ID `agent:<key>`. The key includes the attempt, so a retry asks again and a replay reuses the journal. `agentOutput` checks requested fields against their types. Decide steps skip pi: [`decideRequest`](../src/workflow/agent-step.ts) asks the `Classifier` the step's `model` names, with the question, each option's description, and the subject, event, and step values as state. `decision` decodes its choice, confidence, and probabilities, and the interpreter fails the step on a choice that isn't an option. The decide Activity journals the decision, so a replay reuses it; the classifier keeps no conversation, so a retry repeats nothing. An action's key stays the same across retries: `http.post` sends it as `Idempotency-Key`, and a live `email.send` passes it to Resend as its `Idempotency-Key`, so a retry sends once.
+`StepRunner` is the interpreter's only way out; [`runs.ts`](../src/automation/runs.ts) implements it. Agent steps prompt the run's conversation with [`agentPrompt`](../src/workflow/agent-step.ts) under the request ID `agent:<key>`. The key includes the attempt, so a retry asks again and a replay reuses the journal. `agentOutput` checks requested fields against their types. Decide steps skip pi: [`decideRequest`](../src/workflow/agent-step.ts) asks the `Classifier` the step's `model` names, with the question, each option's description, and the subject, event, and step values as state. `decision` decodes its choice, confidence, and probabilities, and the interpreter fails the step on a choice that isn't an option. The decide Activity journals the decision, so a replay reuses it; the classifier keeps no conversation, so a retry repeats nothing. An action's key stays the same across retries, and `http.post` sends it as `Idempotency-Key`. Email Service and Slack take no key, so their steps are delivered at least once.
 
 ### Waits and people resume through the journal
 
