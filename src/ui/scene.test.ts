@@ -35,6 +35,7 @@ import {
   LoadRun,
   NavigateInternal,
   PollAutomation,
+  ResumeNow,
   SendAnswers,
   SendMessage,
   SetPermission,
@@ -46,6 +47,8 @@ import {
   onboarding,
   permissionTask,
   runOf,
+  settleIn,
+  settleResumesAt,
   studioUrl,
   summaryOf,
 } from "./fixtures.ts";
@@ -83,8 +86,13 @@ const withDraft = (draft: Workflow) =>
 
 const requestArgs = { automationId: "my-automation", revision: 0 };
 
-const runLoaded = (fields: { revision: number; poll: number; run: ReturnType<typeof runOf> }) =>
-  Message.SucceededLoadRun({ ...fields, maybeSubjectTitle: Option.some("Ari Cho") });
+const runLoaded = (fields: {
+  revision: number;
+  poll: number;
+  run: ReturnType<typeof runOf>;
+  resumesAt?: Record<string, number>;
+}) =>
+  Message.SucceededLoadRun({ resumesAt: {}, ...fields, maybeSubjectTitle: Option.some("Ari Cho") });
 
 const applied = (start: Model, messages: ReadonlyArray<Message>) =>
   messages.reduce((current, next) => update(current, next).model, start);
@@ -1606,5 +1614,45 @@ test("the studio runs an event workflow with supplied data and retains it on err
     click(role("button", { name: "Cancel" })),
     expect(label("Total")).not.toExist(),
     expect(role("button", { name: "Run saved version" })).toExist(),
+  );
+});
+
+test("a waiting wait says when it resumes, and only local development offers to resume it now", () => {
+  const settling = runOf({ workflow: settleIn, steps: { settle: { status: "waiting" } } });
+  const resumed = runOf({
+    workflow: settleIn,
+    status: "completed",
+    steps: {
+      settle: { status: "done", record: null },
+      check_in: { status: "done", record: { approved: true } },
+    },
+  });
+  const opened = applied(
+    init({ theme: "System", shortcutModifier: "Meta" }, runUrl("run-1")).model,
+    [runLoaded({ revision: 0, poll: 1, run: settling, resumesAt: { settle: settleResumesAt } })],
+  );
+  const resumeButton = role("button", { name: "Resume Give them three days to settle in now" });
+  scene(
+    { update, view },
+    given(opened),
+    expect(text("Resumes Thu, Nov 5", { exact: false })).toExist(),
+    expect(resumeButton).not.toExist(),
+    expect(text("Local dev only")).not.toExist(),
+  );
+  scene(
+    { update, view },
+    given(modifyFields(opened, { isLocalDevelopment: () => true })),
+    expect(text("Local dev only")).toExist(),
+    click(resumeButton),
+    Command.expectExact(ResumeNow({ ...requestArgs, runId: "run-1", step: "settle" })),
+    expect(resumeButton).toHaveAttr("aria-disabled", "true"),
+    Command.resolve(
+      ResumeNow,
+      Message.SucceededResumeNow({ revision: 0, runId: "run-1", step: "settle" }),
+    ),
+    Command.resolve(LoadRun, runLoaded({ revision: 0, poll: 2, run: resumed })),
+    expect(text("Resumed now instead of at the scheduled time.")).toExist(),
+    expect(text("Resumes Thu, Nov 5", { exact: false })).not.toExist(),
+    expect(role("button", { name: /^Resume .* now$/ })).not.toExist(),
   );
 });

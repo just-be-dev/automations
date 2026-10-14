@@ -58,7 +58,8 @@ const runBodyView = (openRun: OpenRun, model: Model, h: HtmlBuilder<Message>) =>
         ],
         [icon(h, CircleAlert, "mt-0.5 size-3.5"), `Couldn't load this run: ${error}`],
       ),
-    Loaded: ({ run, maybeSubjectTitle }) => runView(openRun, run, maybeSubjectTitle, model, h),
+    Loaded: ({ run, maybeSubjectTitle, resumesAt }) =>
+      runView(openRun, run, maybeSubjectTitle, resumesAt, model, h),
   });
 
 const runNoticeView = (openRun: OpenRun, className: string, h: HtmlBuilder<Message>) =>
@@ -81,6 +82,24 @@ const runNoticeView = (openRun: OpenRun, className: string, h: HtmlBuilder<Messa
           h.Class(cn(noticeBarClass, "text-muted-foreground", className)),
         ],
         ["Answer sent."],
+      ),
+    Resuming: () =>
+      h.div(
+        [
+          componentName("run-notice"),
+          h.Role("status"),
+          h.Class(cn(noticeBarClass, "text-muted-foreground", className)),
+        ],
+        [icon(h, LoaderCircle, "size-3.5 animate-spin text-dev"), "Resuming the wait now…"],
+      ),
+    Resumed: () =>
+      h.div(
+        [
+          componentName("run-notice"),
+          h.Role("status"),
+          h.Class(cn(noticeBarClass, "text-muted-foreground", className)),
+        ],
+        ["Resumed now instead of at the scheduled time."],
       ),
     Failed: ({ error }) =>
       h.div(
@@ -213,6 +232,7 @@ const runView = (
   openRun: OpenRun,
   run: Run,
   maybeSubjectTitle: Option.Option<string>,
+  resumesAt: Readonly<Record<string, number>>,
   model: Model,
   h: HtmlBuilder<Message>,
 ) =>
@@ -262,6 +282,12 @@ const runView = (
           scope: "run",
           expandedStepIds: model.expandedStepIds,
           maybeRunSteps: Option.some(run.steps),
+          maybeRunWaits: Option.some({
+            resumesAt,
+            canResumeNow: model.isLocalDevelopment,
+            isBusy:
+              RunNotice.guards.Sending(openRun.notice) || RunNotice.guards.Resuming(openRun.notice),
+          }),
           roles: readyRoles(model.roles),
           liveConnections: model.liveConnections,
         },

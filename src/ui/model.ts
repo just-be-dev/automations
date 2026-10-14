@@ -84,15 +84,26 @@ export type SubjectChoices = typeof SubjectChoices.Type;
 
 export const RunDetail = defineTaggedUnion({
   Loading: {},
-  Loaded: { run: Run, maybeSubjectTitle: Schema.Option(Schema.String) },
+  /** `resumesAt` says when each wait step waiting on a clock resumes, by step ID. */
+  Loaded: {
+    run: Run,
+    maybeSubjectTitle: Schema.Option(Schema.String),
+    resumesAt: Schema.Record(Schema.String, Schema.Number),
+  },
   Unavailable: { error: Schema.String },
 });
 
-/** How the last answer to one of the run's tasks, or the last reload of the run, went. */
+/**
+ * How the last answer to one of the run's tasks, the last early resume of one of its waits, or the
+ * last reload of the run, went.
+ */
 export const RunNotice = defineTaggedUnion({
   Idle: {},
   Sending: {},
   Sent: {},
+  Resuming: {},
+  /** The step whose wait was resumed; the run polls quickly until the step moves on. */
+  Resumed: { step: Schema.String },
   Failed: { error: Schema.String },
 });
 export type RunNotice = typeof RunNotice.Type;
@@ -136,6 +147,8 @@ export const Model = Schema.Struct({
   roles: RoleChoices,
   /** Connections the registry simulates but this deployment really connects, such as `"email"` or `"slack"`. */
   liveConnections: Schema.Array(Schema.String),
+  /** Local development (`GET /api/dev`), where waits can be resumed early. False until it says so. */
+  isLocalDevelopment: Schema.Boolean,
   revision: Schema.Int,
   /** Each automation's unsent message, so the composer never carries one into another automation. */
   messageInputs: Schema.Record(Schema.String, Schema.String),

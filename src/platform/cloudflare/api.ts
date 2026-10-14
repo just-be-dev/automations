@@ -17,10 +17,12 @@ import {
 import { makeSlackWebWorkspace } from "../../channels/slack-workspace.ts";
 import { AutomationNamer } from "../../agents/namer/namer.ts";
 import { LiveConnections } from "../../connections/live.ts";
+import { LocalDevelopment } from "../../automation/local-development.ts";
 import { Automations } from "../../automation/service.ts";
 import { EntitySubscribers } from "../../entities/subscribers.ts";
 import { apiRoutes } from "../../http/api.ts";
 import { accessIdentity } from "./access.ts";
+import { localDevelopment } from "./local-development.ts";
 import Automation from "./automation.ts";
 import { automationsLayer } from "./automations.ts";
 import { AutomationIndexD1 } from "./automation-index-d1.ts";
@@ -60,6 +62,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
       ...(Option.isSome(emailFrom) ? ["email"] : []),
       ...(Option.isSome(slackToken) ? ["slack"] : []),
     ];
+    // Development-only routes refuse unless this is `alchemy dev` on a dev_ stage.
+    const local = yield* localDevelopment;
     const automations = automationsLayer(namespace);
     const subscribers = Layer.unwrap(
       Automations.use((service) =>
@@ -81,6 +85,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
       changesLayer(changeNamespace),
       Layer.effect(Transcription, Effect.map(ai.raw, workersAiTranscription)),
       Layer.succeed(LiveConnections, live),
+      Layer.succeed(LocalDevelopment, local),
     );
     // Consumer settings are plan-time only; Stage is not a service in the Worker runtime.
     const deadLetterQueue = globalThis.__ALCHEMY_RUNTIME__

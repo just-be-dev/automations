@@ -46,6 +46,8 @@
   --color-signal: var(--signal);
   --color-signal-foreground: var(--signal-foreground);
   --color-success: var(--success);
+  --color-dev: var(--dev);
+  --color-dev-foreground: var(--dev-foreground);
   --color-sand-2: var(--sand-2);
   --color-sand-3: var(--sand-3);
   --color-sand-4: var(--sand-4);
@@ -108,6 +110,9 @@
   --signal: #0090ff;
   --signal-foreground: #fff;
   --success: #30a46c;
+  /* Local-development-only controls, such as resuming a wait now. */
+  --dev: #d13d00;
+  --dev-foreground: #fff;
   --ref-blue-bg: #eaf1fc;
   --ref-blue-text: #294b78;
   --ref-violet-bg: #f0edfa;

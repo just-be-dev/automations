@@ -23,7 +23,7 @@ import { limitedBody, NotFound, pathParams, respond } from "./response.ts";
 const AutomationParams = Schema.Struct({
   id: Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]{1,80}$/)),
 });
-const RunParams = Schema.Struct({ ...AutomationParams.fields, runId: RunId });
+export const RunParams = Schema.Struct({ ...AutomationParams.fields, runId: RunId });
 const TaskParams = Schema.Struct({ ...RunParams.fields, stepId: Schema.String });
 const CreateBody = Schema.Struct({ description: Schema.String });
 const ChatBody = Schema.Struct({ message: Schema.optionalKey(Schema.String) });

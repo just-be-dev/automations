@@ -37,6 +37,7 @@ test("Access identity is request-scoped and reaches the automation's approval op
         run: unused,
         plannerTrace: unused,
         runTrace: unused,
+        resumeNow: unused,
         respond: (runId, stepId, answer, email) =>
           Effect.sync(() => {
             calls.push([id, runId, stepId, answer, email]);

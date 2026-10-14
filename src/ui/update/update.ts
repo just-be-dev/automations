@@ -64,6 +64,7 @@ import {
   openRunWithId,
   pollDelayMillis,
   reloadOpenRun,
+  resumeNow,
 } from "./open-run.ts";
 import {
   chooseOption,
@@ -399,6 +400,7 @@ export const update = (model: Model, message: Message) =>
         ),
       })),
     }),
+    ClickedResumeNow: ({ step }) => resumeNow(model, step),
     SubmittedTaskForm: ({ step }) =>
       answerTask(model, step, (task, edits) =>
         task.response === "approval"
@@ -499,6 +501,10 @@ export const update = (model: Model, message: Message) =>
       model: modifyFields(model, { liveConnections: () => live }),
     }),
     FailedLoadConnections: () => ({ model }),
+    SucceededLoadDevelopment: ({ isLocal }) => ({
+      model: modifyFields(model, { isLocalDevelopment: () => isLocal }),
+    }),
+    FailedLoadDevelopment: () => ({ model }),
     SucceededLoadSubjects: ({ revision, entityType, label, subjects }) =>
       revision !== model.revision || !SubjectChoices.guards.Loading(model.subjectChoices)
         ? { model }
@@ -531,7 +537,7 @@ export const update = (model: Model, message: Message) =>
             }),
             commands: [NavigateInternal({ url: runHref(model.automationId.trim(), runId) })],
           },
-    SucceededLoadRun: ({ revision, poll, run, maybeSubjectTitle }) => {
+    SucceededLoadRun: ({ revision, poll, run, maybeSubjectTitle, resumesAt }) => {
       if (revision !== model.revision || poll !== model.runPoll) {
         return { model };
       }
@@ -544,10 +550,10 @@ export const update = (model: Model, message: Message) =>
           return {
             model: modifyOpenRun(model, (current) => ({
               ...current,
-              detail: RunDetail.Loaded({ run, maybeSubjectTitle }),
+              detail: RunDetail.Loaded({ run, maybeSubjectTitle, resumesAt }),
             })),
             commands: [
-              ...Array.map(pollDelayMillis(run.status), (delayMillis) =>
+              ...Array.map(pollDelayMillis(run, openRun.notice), (delayMillis) =>
                 PollRun({ automationId, revision, poll, runId: run.id, delayMillis }),
               ),
               ...(isRecentRun && !isListedAsIs(model.runs, run)
@@ -583,6 +589,14 @@ export const update = (model: Model, message: Message) =>
             })),
           ),
     FailedAnswerTask: ({ revision, runId, error }) =>
+      revision !== model.revision || Option.isNone(openRunWithId(model, runId))
+        ? { model }
+        : { model: noticeRun(model, RunNotice.Failed({ error })) },
+    SucceededResumeNow: ({ revision, runId, step }) =>
+      revision !== model.revision || Option.isNone(openRunWithId(model, runId))
+        ? { model }
+        : reloadOpenRun(noticeRun(model, RunNotice.Resumed({ step }))),
+    FailedResumeNow: ({ revision, runId, error }) =>
       revision !== model.revision || Option.isNone(openRunWithId(model, runId))
         ? { model }
         : { model: noticeRun(model, RunNotice.Failed({ error })) },

@@ -7,7 +7,7 @@ import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import { Workflow, WorkflowEngine } from "effect/workflow";
+import { DurableClock, Workflow, WorkflowEngine } from "effect/workflow";
 import { ExecutionId } from "./execution.ts";
 
 /**
@@ -51,7 +51,19 @@ export interface DurableEngine {
     executionId: ExecutionId,
     deferredName: string,
   ) => Effect.Effect<void>;
+  /**
+   * When the named clock wakes its execution, in epoch milliseconds, and the deferred `fireClock`
+   * completes for it. `undefined` unless the clock is scheduled and hasn't fired yet.
+   */
+  readonly pendingClock: (
+    executionId: ExecutionId,
+    clockName: string,
+  ) => Effect.Effect<{ readonly at: number; readonly deferredName: string } | undefined>;
 }
+
+/** The deferred a durable clock completes when it fires, as `DurableClock` names it. */
+const clockDeferredName = (clockName: string) =>
+  DurableClock.make({ name: clockName, duration: 0 }).deferred.name;
 
 /** Activity results and deferred completions, with their values already JSON-encoded. */
 const StoredExit = Schema.toCodecJson(Schema.Exit(Schema.Json, Schema.Json, Schema.Defect()));
@@ -61,6 +73,8 @@ const encodeExit = (exit: Exit.Exit<unknown, unknown>) =>
   );
 const decodeExit = (value: unknown) =>
   Schema.decodeUnknownEffect(StoredExit)(value).pipe(Effect.orDie);
+
+const decodeWakeTime = Schema.decodeUnknownEffect(Schema.UndefinedOr(Schema.Finite));
 
 const payloadCodec = (workflow: Workflow.Any) => Schema.toCodecJson(workflow.payloadSchema);
 const resultCodec = (workflow: Workflow.Any) =>
@@ -262,5 +276,20 @@ export const makeDurableEngine = (store: EngineStore): DurableEngine => {
   const fireClock = (_workflow: Workflow.Any, executionId: ExecutionId, deferredName: string) =>
     deferredDone({ executionId, deferredName, exit: Exit.void });
 
-  return { engine, replay, fireClock };
+  const pendingClock = (executionId: ExecutionId, clockName: string) =>
+    Effect.gen(function* () {
+      const at = yield* store
+        .get(keys.clock(executionId, clockName))
+        .pipe(Effect.flatMap(decodeWakeTime), Effect.orDie);
+      const deferredName = clockDeferredName(clockName);
+      if (at === undefined) {
+        return undefined;
+      }
+      if ((yield* store.get(keys.deferred(executionId, deferredName))) !== undefined) {
+        return undefined;
+      }
+      return { at, deferredName };
+    });
+
+  return { engine, replay, fireClock, pendingClock };
 };

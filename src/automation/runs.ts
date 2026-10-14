@@ -40,6 +40,7 @@ import {
 import { expandTemplates } from "../entities/templates.ts";
 import {
   conditionRefs,
+  flattenSteps,
   holds,
   subjectType,
   isTimed,
@@ -52,6 +53,7 @@ import { makeSubjects } from "./subjects.ts";
 import { isApprover, RunId, type Run, type HumanTask, type RunSummary } from "../workflow/run.ts";
 import { ExecutionId } from "../workflow/execution.ts";
 import { AutomationError } from "./model.ts";
+import { LocalDevelopment } from "./local-development.ts";
 import type { WorkflowStore } from "./workflow-store.ts";
 import { makeRunStore, type StoredRun } from "./run-store.ts";
 import { ConfiguredStudioOrigin } from "./studio-link.ts";
@@ -110,6 +112,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
   const records = yield* makeRunStore();
   const { loadEntity, resolve, due } = yield* makeSubjects();
   const { read: readRun, write: writeRun, update: updateRun } = records;
+  const localDevelopment = yield* LocalDevelopment;
 
   /** A role's members as approvers: their names and email addresses, as stored now. */
   const approversOf = Effect.fn("Automation.approversOf")(function* (roleName: string) {
@@ -584,14 +587,73 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     (effect) => answerLock.withPermit(effect),
   );
 
-  /** A run, with its subject's title as the run list shows it. */
+  /**
+   * The run's wait steps that are waiting on a clock, with when each resumes and the clock that
+   * resumes it. A wait step's clock is named after the step; a human step's timeout is not one.
+   */
+  const waitingClocks = Effect.fn("Automation.waitingClocks")(function* (found: StoredRun) {
+    const waits = flattenSteps(found.workflow.steps).filter(
+      (step) => step.kind === "wait" && found.steps[step.id]?.status === "waiting",
+    );
+    if (waits.length === 0) {
+      return [];
+    }
+    const executionId = ExecutionId.make(
+      yield* RunAutomation.executionId({
+        runId: found.id,
+        workflow: found.workflow,
+        subject: found.subject,
+        ...(found.event === undefined ? {} : { event: found.event }),
+      }),
+    );
+    const pending = yield* Effect.forEach(waits, (step) =>
+      durable
+        .pendingClock(executionId, step.id)
+        .pipe(
+          Effect.map((clock) =>
+            clock === undefined ? [] : [{ step: step.id, executionId, ...clock }],
+          ),
+        ),
+    );
+    return pending.flat();
+  });
+
+  /** A run, with its subject's title as the run list shows it and when its waits resume. */
   const run = Effect.fn("Automation.run")(function* (id: RunId) {
     const found = yield* readRun(id);
     if (found === undefined) {
       return undefined;
     }
     const types = yield* entityTypesForTitles;
-    return { ...found, subjectTitle: summary(types, found).subject };
+    const clocks = yield* waitingClocks(found);
+    return {
+      ...found,
+      subjectTitle: summary(types, found).subject,
+      resumesAt: Object.fromEntries(clocks.map((clock) => [clock.step, clock.at])),
+    };
+  });
+
+  /**
+   * Local development only: fires the clock a waiting wait step sleeps on now, through the same
+   * operation as the scheduled `clock` callback. The deferred it completes is first-write-wins, so
+   * the scheduled delivery later finds it done and changes nothing.
+   */
+  const resumeNow = Effect.fn("Automation.resumeNow")(function* (runId: RunId, stepId: string) {
+    if (!localDevelopment) {
+      return yield* new AutomationError({
+        message: "Resuming a wait early only works in local development",
+      });
+    }
+    const found = yield* readRun(runId);
+    const waiting =
+      found === undefined
+        ? undefined
+        : (yield* waitingClocks(found)).find((clock) => clock.step === stepId);
+    if (waiting === undefined) {
+      return yield* new AutomationError({ message: "That step isn't waiting on a clock" });
+    }
+    yield* clock({ executionId: waiting.executionId, deferredName: waiting.deferredName });
+    return { ok: true };
   });
 
   /** What the run's agent steps asked and answered; empty before the first one. */
@@ -610,6 +672,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     entityChanged,
     eventReceived,
     respond,
+    resumeNow,
     run,
     runTrace,
   };

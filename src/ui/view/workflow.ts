@@ -16,6 +16,7 @@ import {
   LayoutTemplate,
   LoaderCircle,
   OctagonX,
+  Play,
   Scale,
   SkipForward,
   Split,
@@ -24,7 +25,8 @@ import {
 } from "lucide";
 import { formatText, recordView } from "@/components/record";
 import { componentName } from "@/lib/component";
-import { labelFromName, withArticle } from "@/lib/format";
+import { button } from "@/components/ui/button";
+import { formatWeekdayTime, labelFromName, withArticle } from "@/lib/format";
 import { icon, triggerIcon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { findOperation, type InputType } from "../../connections.ts";
@@ -207,11 +209,22 @@ const triggerView = (workflow: Workflow, h: HtmlBuilder<Message>) =>
     ],
   );
 
+/** A run's wait steps that wait on a clock, and whether one can be resumed now. */
+export interface RunWaits {
+  /** When each wait step waiting on a clock resumes, by step ID. */
+  readonly resumesAt: Readonly<Record<string, number>>;
+  /** Local development, where a wait can be resumed now. */
+  readonly canResumeNow: boolean;
+  /** A resume or an answer is on its way, so the control waits for it. */
+  readonly isBusy: boolean;
+}
+
 interface StepContext {
   /** Tells apart the same step shown in the draft and in a run beside it. */
   readonly scope: "draft" | "run";
   readonly expandedStepIds: ReadonlyArray<string>;
   readonly maybeRunSteps: Option.Option<Readonly<Record<string, RunStep>>>;
+  readonly maybeRunWaits: Option.Option<RunWaits>;
   readonly permissions: Permissions;
   /** The roles permissions can ask, for their labels. */
   readonly roles: ReadonlyArray<Role>;
@@ -1002,6 +1015,37 @@ const stepResultView = (
     ],
   );
 
+/** When a wait step resumes, and, in local development, a control that resumes it now. */
+const waitResumeView = (step: Step, at: number, waits: RunWaits, h: HtmlBuilder<Message>) =>
+  h.div(
+    [
+      componentName("wait-resume"),
+      h.Class("flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 pl-[34px]"),
+    ],
+    [
+      h.span([h.Class("text-xs text-muted-foreground")], [`Resumes ${formatWeekdayTime(at)}`]),
+      waits.canResumeNow
+        ? h.span(
+            [h.Class("flex items-center gap-2")],
+            [
+              h.span([h.Class("text-[11px] text-muted-foreground")], ["Local dev only"]),
+              button(
+                {
+                  onClick: Message.ClickedResumeNow({ step: step.id }),
+                  isDisabled: waits.isBusy,
+                  size: "xs",
+                  className: "bg-dev text-dev-foreground hover:bg-dev/85",
+                  attributes: [h.AriaLabel(`Resume ${step.title} now`)],
+                },
+                [icon(h, Play, "size-3", "inline-start"), "Resume now"],
+                h,
+              ),
+            ],
+          )
+        : h.empty,
+    ],
+  );
+
 const stepView = (step: Step, context: StepContext, h: HtmlBuilder<Message>): Html => {
   const expansionKey = `${context.scope}:${step.id}`;
   const isExpanded = Array.contains(context.expandedStepIds, expansionKey);
@@ -1011,6 +1055,9 @@ const stepView = (step: Step, context: StepContext, h: HtmlBuilder<Message>): Ht
   const isUnreached =
     Option.isSome(context.maybeRunSteps) &&
     !Option.exists(maybeRunStep, (runStep) => runStep.status !== "skipped");
+  const maybeResume = Option.flatMap(context.maybeRunWaits, (waits) =>
+    Option.map(Option.fromNullishOr(waits.resumesAt[step.id]), (at) => ({ at, waits })),
+  );
   return h.keyed("li")(
     step.id,
     [
@@ -1062,6 +1109,10 @@ const stepView = (step: Step, context: StepContext, h: HtmlBuilder<Message>): Ht
                     ),
                   ],
                 ),
+                Option.match(maybeResume, {
+                  onNone: () => h.empty,
+                  onSome: ({ at, waits }) => waitResumeView(step, at, waits, h),
+                }),
                 h.div(
                   [...panel, h.Class("flex flex-col gap-2 pl-[34px]")],
                   [

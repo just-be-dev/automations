@@ -112,10 +112,14 @@ export const Run = Schema.Struct({
 });
 export interface Run extends Schema.Schema.Type<typeof Run> {}
 
-/** A run as `GET /api/automations/:id/runs/:runId` returns it, labelled with its subject's title. */
+/**
+ * A run as `GET /api/automations/:id/runs/:runId` returns it, labelled with its subject's title.
+ * `resumesAt` says when each wait step waiting on a clock resumes, by step ID, in epoch milliseconds.
+ */
 export const TitledRun = Schema.Struct({
   ...Run.fields,
   subjectTitle: Schema.NullOr(Schema.String),
+  resumesAt: Schema.Record(Schema.String, Schema.Finite),
 });
 export interface TitledRun extends Schema.Schema.Type<typeof TitledRun> {}
 

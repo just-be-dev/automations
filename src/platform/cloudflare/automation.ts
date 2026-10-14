@@ -14,12 +14,14 @@ import { EmailSender } from "../../connections/email.ts";
 import { makeSlackWebSender, SlackSender } from "../../connections/slack.ts";
 import { AutomationHost, AutomationStorageError } from "../../automation/host.ts";
 import { ConfiguredStudioOrigin, studioOrigin } from "../../automation/studio-link.ts";
+import { LocalDevelopment } from "../../automation/local-development.ts";
 import { makePlanning } from "../../automation/planning.ts";
 import { ExecutionId } from "../../workflow/execution.ts";
 import { AutomationIndexD1 } from "./automation-index-d1.ts";
 import { EntityStoreD1 } from "./entity-store-d1.ts";
 import { makeCloudflareEmailSender } from "./email.ts";
 import { EventsQueue } from "./events.ts";
+import { localDevelopment } from "./local-development.ts";
 import { openPiAgent } from "./pi.ts";
 import { openPiStorage } from "./pi-storage.ts";
 import { PLANNER_MODEL, workersAiClassifier } from "./workers-ai.ts";
@@ -61,6 +63,8 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
           }).pipe(Alchemy.remote()),
         )
       : undefined;
+    // Development-only operations refuse unless this is `alchemy dev` on a dev_ stage.
+    const local = yield* localDevelopment;
 
     // @effect-diagnostics-next-line returnEffectInGen:off
     return Effect.gen(function* () {
@@ -126,6 +130,7 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         Effect.provideService(AnswerHub, answers),
         Effect.provideService(PiAgent, pi),
         Effect.provideService(Classifier, classifier),
+        Effect.provideService(LocalDevelopment, local),
         Effect.provideService(
           SlackSender,
           Option.isSome(slackToken) ? makeSlackWebSender(slackToken.value) : null,

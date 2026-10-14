@@ -60,6 +60,7 @@ const automationsLayer = Layer.merge(
       runTrace: unused,
       run: unused,
       respond: unused,
+      resumeNow: unused,
     }),
   }),
 );

@@ -32,6 +32,7 @@ import { makeAutomation } from "./application.ts";
 import { AutomationError } from "./model.ts";
 import { AutomationHost } from "./host.ts";
 import { AutomationIndex, AutomationIndexError } from "./index.ts";
+import { LocalDevelopment } from "./local-development.ts";
 import { Automations } from "./service.ts";
 import { makePlanning } from "./planning.ts";
 import { makeRunStore, StoredRun } from "./run-store.ts";
@@ -696,6 +697,133 @@ describe("Automation application without a platform", () => {
     expect(result.finished?.status).toBe("completed");
     expect(result.finished?.steps.pause).toEqual({ status: "done", record: null });
     expect(h.advances).toHaveLength(2);
+  });
+
+  test("in local development, resuming a wait fires its clock now and the scheduled delivery later changes nothing", async () => {
+    const h = harness();
+    const saved: Workflow = {
+      name: "Settle in",
+      trigger: { kind: "manual" },
+      permissions: { "slack.sendMessage": "auto" },
+      steps: [
+        { id: "settle", title: "Give them three days", kind: "wait", duration: "3 days" },
+        {
+          id: "check_in",
+          title: "Check in",
+          kind: "action",
+          use: "slack.sendMessage",
+          with: { to: "#managers", text: "How is it going?" },
+        },
+      ],
+    };
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* h.host.storage.put("saved", saved);
+        const app = yield* makeAutomation().pipe(Effect.provideService(LocalDevelopment, true));
+        const started = yield* app.start(undefined);
+        const executionId = yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances[0]);
+        yield* app.callbacks.advance({ executionId });
+        const waiting = yield* app.run(started.id);
+        const notAWait = yield* Effect.flip(app.resumeNow(started.id, "check_in"));
+        const resumed = yield* app.resumeNow(started.id, "settle");
+        // The host replays on the advance the early clock scheduled.
+        yield* app.callbacks.advance({ executionId });
+        const finished = yield* app.run(started.id);
+        const journal = yield* h.host.storage.list({ prefix: `wf:${executionId}:` });
+        // Three days later, the clock's own delivery arrives anyway.
+        yield* TestClock.setTime(3 * 86_400_000);
+        const deferredName = yield* Schema.decodeUnknownEffect(Schema.String)(
+          h.clocks[0]?.deferredName,
+        );
+        yield* app.callbacks.clock({ executionId, deferredName });
+        const again = yield* Effect.flip(app.resumeNow(started.id, "settle"));
+        return {
+          waiting,
+          notAWait,
+          resumed,
+          finished,
+          journal,
+          journalAfter: yield* h.host.storage.list({ prefix: `wf:${executionId}:` }),
+          after: yield* app.run(started.id),
+          again,
+        };
+      }).pipe(Effect.provide(Layer.merge(h.layer, TestClock.layer()))),
+    );
+    expect(result.waiting?.status).toBe("waiting");
+    expect(result.waiting?.resumesAt).toEqual({ settle: 3 * 86_400_000 });
+    expect(result.notAWait.message).toBe("That step isn't waiting on a clock");
+    expect(result.resumed).toEqual({ ok: true });
+    expect(result.finished?.status).toBe("completed");
+    expect(result.finished?.steps.settle).toEqual({ status: "done", record: null });
+    expect(result.finished?.steps.check_in?.record).toMatchObject({ simulated: true });
+    expect(result.finished?.resumesAt).toEqual({});
+    // The late delivery wrote nothing and scheduled no replay.
+    expect(h.advances).toHaveLength(2);
+    expect(result.journalAfter).toEqual(result.journal);
+    expect(result.after).toEqual(result.finished);
+    expect(result.again.message).toBe("That step isn't waiting on a clock");
+  });
+
+  test("resuming a wait early refuses outside local development, and a human step's timeout is not a wait", async () => {
+    /** Starts a run of `steps` and replays it until it waits. */
+    const waitingRun = (h: ReturnType<typeof harness>, steps: Workflow["steps"]) =>
+      Effect.gen(function* () {
+        yield* h.host.storage.put("saved", { name: "Waits", trigger: { kind: "manual" }, steps });
+        const started = yield* (yield* makeAutomation()).start(undefined);
+        const executionId = yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances[0]);
+        yield* (yield* makeAutomation()).callbacks.advance({ executionId });
+        return started.id;
+      });
+    const deployed = harness();
+    const asking = harness();
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const settling = yield* waitingRun(deployed, [
+          { id: "settle", title: "Settle in", kind: "wait", duration: "3 days" },
+        ]).pipe(Effect.provide(deployed.layer));
+        const app = yield* makeAutomation().pipe(Effect.provide(deployed.layer));
+        const refused = yield* Effect.flip(app.resumeNow(settling, "settle")).pipe(
+          Effect.provide(deployed.layer),
+        );
+        const asked = yield* waitingRun(asking, [
+          {
+            id: "ask",
+            title: "Ask",
+            kind: "human",
+            prompt: "How is it going?",
+            response: "approval",
+            timeout: "2 days",
+          },
+        ]).pipe(Effect.provide(asking.layer));
+        const local = yield* makeAutomation().pipe(
+          Effect.provideService(LocalDevelopment, true),
+          Effect.provide(asking.layer),
+        );
+        const timeout = yield* Effect.flip(local.resumeNow(asked, "ask")).pipe(
+          Effect.provide(asking.layer),
+        );
+        const missing = yield* Effect.flip(local.resumeNow(RunId.make("no-such-run"), "ask")).pipe(
+          Effect.provide(asking.layer),
+        );
+        return {
+          refused,
+          timeout,
+          missing,
+          settling: yield* app.run(settling).pipe(Effect.provide(deployed.layer)),
+          asked: yield* local.run(asked).pipe(Effect.provide(asking.layer)),
+        };
+      }).pipe(Effect.provide(TestClock.layer())),
+    );
+    expect(result.refused.message).toBe("Resuming a wait early only works in local development");
+    expect(result.settling?.status).toBe("waiting");
+    expect(result.settling?.resumesAt).toEqual({ settle: 3 * 86_400_000 });
+    expect(deployed.advances).toHaveLength(1);
+    expect(result.timeout.message).toBe("That step isn't waiting on a clock");
+    expect(result.missing.message).toBe("That step isn't waiting on a clock");
+    expect(asking.clocks.map((clock) => clock.deferredName)).toEqual(["DurableClock/ask/timeout"]);
+    expect(result.asked?.status).toBe("waiting");
+    expect(result.asked?.resumesAt).toEqual({});
+    expect(asking.advances).toHaveLength(1);
   });
 
   test("replay takes execution values from the journal, not the displayed run records", async () => {

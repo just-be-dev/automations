@@ -18,6 +18,7 @@ import {
   NavigateInternal,
   PollAutomation,
   PollRun,
+  ResumeNow,
   SendMessage,
   SaveDraft,
   StartRun,
@@ -33,7 +34,16 @@ import {
 } from "./model.ts";
 import { Overview } from "./page/index.ts";
 import { update } from "./update/index.ts";
-import { approvalTask, laptopTask, onboarding, runOf, studioUrl, summaryOf } from "./fixtures.ts";
+import {
+  approvalTask,
+  laptopTask,
+  onboarding,
+  runOf,
+  settleIn,
+  settleResumesAt,
+  studioUrl,
+  summaryOf,
+} from "./fixtures.ts";
 
 const automationLoaded = (
   fields: Partial<Parameters<typeof Message.SucceededLoadAutomation>[0]> = {},
@@ -83,8 +93,13 @@ const working = { id: "chat-1", prompt: "Summarize orders", status: "working" } 
 
 const requestArgs = { automationId: "my-automation", revision: 0 };
 
-const runLoaded = (fields: { revision: number; poll: number; run: ReturnType<typeof runOf> }) =>
-  Message.SucceededLoadRun({ ...fields, maybeSubjectTitle: Option.some("Ari Cho") });
+const runLoaded = (fields: {
+  revision: number;
+  poll: number;
+  run: ReturnType<typeof runOf>;
+  resumesAt?: Record<string, number>;
+}) =>
+  Message.SucceededLoadRun({ resumesAt: {}, ...fields, maybeSubjectTitle: Option.some("Ari Cho") });
 
 /** The run page as a link opens it: at revision 0, with its first load in flight as poll 1. */
 const openingRun = (runId: string) =>
@@ -109,6 +124,7 @@ const loadedRun = (run: ReturnType<typeof runOf>) => ({
   _tag: "Loaded" as const,
   run,
   maybeSubjectTitle: Option.some("Ari Cho"),
+  resumesAt: {},
 });
 
 test("chat waits for the agent's reply, shows the draft, and saves that automation", () => {
@@ -353,6 +369,76 @@ test("the open run polls every 1.5 s while running, every 5 s while waiting, the
     Command.resolve(PollRun, runLoaded({ revision: 0, poll: 1, run: completed })),
     Command.expectNone(),
   );
+});
+
+test("resuming a wait in local development asks the server, then polls quickly until the step moves on", () => {
+  const settling = runOf({ workflow: settleIn, steps: { settle: { status: "waiting" } } });
+  const resumed = runOf({
+    workflow: settleIn,
+    steps: { settle: { status: "done", record: null }, check_in: { status: "waiting" } },
+  });
+  const opened = modifyFields(
+    update(
+      openingRun("run-1"),
+      runLoaded({ revision: 0, poll: 1, run: settling, resumesAt: { settle: settleResumesAt } }),
+    ).model,
+    { isLocalDevelopment: () => true },
+  );
+  story(
+    update,
+    given(opened),
+    message(Message.ClickedResumeNow({ step: "settle" })),
+    Command.expectExact(ResumeNow({ ...requestArgs, runId: "run-1", step: "settle" })),
+    model((current) => expect(noticeOf(current)).toEqual({ _tag: "Resuming" })),
+    Command.resolve(
+      ResumeNow,
+      Message.SucceededResumeNow({ revision: 0, runId: "run-1", step: "settle" }),
+    ),
+    model((current) => expect(noticeOf(current)).toEqual({ _tag: "Resumed", step: "settle" })),
+    Command.expectExact(LoadRun({ ...requestArgs, poll: 2, runId: "run-1" })),
+    // The replay hasn't reached the step yet, so the run polls at the running pace.
+    Command.resolve(LoadRun, runLoaded({ revision: 0, poll: 2, run: settling })),
+    Command.expectExact(PollRun({ ...requestArgs, poll: 2, runId: "run-1", delayMillis: 1500 })),
+    Command.resolve(PollRun, runLoaded({ revision: 0, poll: 2, run: resumed })),
+    // Now the run waits on the manager, so it polls at the waiting pace.
+    Command.expectExact(PollRun({ ...requestArgs, poll: 2, runId: "run-1", delayMillis: 5000 })),
+    Command.resolve(
+      PollRun,
+      runLoaded({ revision: 0, poll: 2, run: { ...resumed, status: "completed" } }),
+    ),
+    Command.expectNone(),
+  );
+});
+
+test("outside local development, or on a step not waiting on a clock, resuming does nothing but say so", () => {
+  const settling = runOf({ workflow: settleIn, steps: { settle: { status: "waiting" } } });
+  const deployed = update(
+    openingRun("run-1"),
+    runLoaded({ revision: 0, poll: 1, run: settling, resumesAt: { settle: settleResumesAt } }),
+  ).model;
+  const refused = update(deployed, Message.ClickedResumeNow({ step: "settle" }));
+  expect(refused.commands).toBeUndefined();
+  expect(noticeOf(refused.model)).toEqual({
+    _tag: "Failed",
+    error: "That step isn't waiting on a clock",
+  });
+  const local = modifyFields(deployed, { isLocalDevelopment: () => true });
+  const notWaiting = update(local, Message.ClickedResumeNow({ step: "check_in" }));
+  expect(notWaiting.commands).toBeUndefined();
+  const failed = update(
+    update(local, Message.ClickedResumeNow({ step: "settle" })).model,
+    Message.FailedResumeNow({ revision: 0, runId: "run-1", error: "Not found" }),
+  );
+  expect(noticeOf(failed.model)).toEqual({ _tag: "Failed", error: "Not found" });
+});
+
+test("the studio learns whether it runs in local development, and assumes not until told", () => {
+  const opened = openingRun("run-1");
+  expect(opened.isLocalDevelopment).toBe(false);
+  expect(
+    update(opened, Message.SucceededLoadDevelopment({ isLocal: true })).model.isLocalDevelopment,
+  ).toBe(true);
+  expect(update(opened, Message.FailedLoadDevelopment({ error: "Offline" })).model).toBe(opened);
 });
 
 const clickedLink = (search: string) =>
@@ -614,6 +700,7 @@ test("the URL picks which automation opens and loads it with the automation list
     "LoadAutomations",
     "LoadRoles",
     "LoadConnections",
+    "LoadDevelopment",
     "RestoreAssistant",
   ]);
 
@@ -624,6 +711,7 @@ test("the URL picks which automation opens and loads it with the automation list
     "LoadAutomations",
     "LoadRoles",
     "LoadConnections",
+    "LoadDevelopment",
     "RestoreAssistant",
   ]);
   expect(

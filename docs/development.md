@@ -16,6 +16,8 @@ mise run dev    # alchemy dev: local Workers, Durable Object, and Vite with hot 
 
 `mise run dev` runs everything locally on stage `dev_$USER` and prints the Studio URL. Dev mode skips Cloudflare Access, but it needs Cloudflare credentials for Workers AI. Run `bun alchemy profile edit --add Cloudflare` once, or set `ALCHEMY_PROFILE` to a profile that already has them.
 
+Local development also offers **Resume now** on a run's step that waits on a clock, so a three-day wait takes seconds in a demo. It fires the clock through the same operation as the scheduled `clock` callback, and that delivery later changes nothing. Only `alchemy dev` on a `dev_` stage enables it: each Worker's Init reads `ALCHEMY_DEV` on such a stage, which binds it into the Worker. A deploy binds nothing, so `GET /api/dev` answers `{ "local": false }` and the resume route answers 404 like an unknown route. The Automation object refuses too.
+
 If an existing OAuth profile has expired, run `bun alchemy profile refresh --profile default --provider Cloudflare` and follow the sign-in flow.
 
 `package.json` overrides Effect to `4.0.1` so the app and tooling share one copy despite Foldkit's exact `4.0.0` peer pins and the Effect lint plugin's `4.0.0` dependency. Recheck this override when upgrading those packages; remove it once their constraints allow the app's Effect version.
@@ -158,34 +160,36 @@ Manage templates on the studio's **Templates** page (`/templates`), which also l
 
 ### HTTP API
 
-| Endpoint                                                 | Purpose                                                                                                               |
-| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `GET /api/overview`                                      | Each automation's trigger, its next scheduled run, and runs in flight                                                 |
-| `POST /api/events`                                       | Publish `{ "id", "name", "data", "subject"? }`; returns 202 on durable acceptance                                     |
-| `GET /api/automations`                                   | List automations                                                                                                      |
-| `POST /api/automations`                                  | Create an automation from a description, which becomes its first chat message (`{ "description": "…" }`)              |
-| `GET /api/automations/:id`                               | Inspect an automation and its recent runs                                                                             |
-| `POST /api/automations/:id/chat`                         | Send a design message                                                                                                 |
-| `GET /api/transcription?sample_rate=16000`               | Same-origin WebSocket for mono little-endian PCM16 dictation; also accepts 24000, 44100, and 48000 Hz                 |
-| `POST /api/automations/:id/save`                         | Save the draft, subscribe to its trigger, and book its schedule                                                       |
-| `POST /api/automations/:id/permissions`                  | Set which operations ask which role first (`{ "permissions": { "email.send": { "ask": "people_ops" } } }`)            |
-| `GET /api/roles`, `PUT /api/roles/:name`                 | List or define roles (`{ "name", "label", "members": [{ "type", "id" }] }`)                                           |
-| `POST /api/automations/:id/start`                        | Start a run by hand (`{ "subject": "<id>" }`)                                                                         |
-| `GET /api/automations/:id/runs/:runId`                   | Inspect a run, its steps, and its tasks                                                                               |
-| `GET /api/automations/:id/trace`                         | The planner's conversation: instructions, prompts, reasoning, tool calls and results, token use                       |
-| `GET /api/automations/:id/runs/:runId/trace`             | The conversation a run's agent steps share, in the same shape                                                         |
-| `POST /api/automations/:id/runs/:runId/tasks/:stepId`    | Answer a human step                                                                                                   |
-| `GET /api/entities/types`                                | List entity types                                                                                                     |
-| `GET /api/entities/:type`, `GET /api/entities/:type/:id` | Read entities                                                                                                         |
-| `POST /api/changes`                                      | Prepare `{ "action": ... }`: `putEntity`, `deleteEntity`, `putType`, `deleteType`, `putTemplate`, or `deleteTemplate` |
-| `POST /api/changes/:id/decision`                         | Confirm or cancel the stored proposal with `{ "approved": true }` or `false`                                          |
-| `POST /api/mcp`                                          | The entity store as an MCP server                                                                                     |
-| `GET /api/templates`, `GET /api/templates/:name`         | List or read templates                                                                                                |
-| `GET /api/templates/:name/automations`                   | The automations whose saved workflow or draft use a template                                                          |
-| `GET /api/assistant/:sessionId`                          | Read a UUID-named assistant session and its pending work                                                              |
-| `POST /api/assistant/:sessionId/chat`                    | Submit `{ "message": "…", "context": { "pathname": "/templates", "template": "welcome_email" } }`                     |
-| `POST /api/assistant/:sessionId/confirmation`            | Answer the inline proposal with `{ "proposalId": "…", "approved": true }`                                             |
-| `POST /api/assistant/:sessionId/answers`                 | Answer pending questions with `{ "callId": "…", "answer": { "kind": "answers", "answers": ["…", null] } }`            |
+| Endpoint                                                     | Purpose                                                                                                               |
+| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------- |
+| `GET /api/overview`                                          | Each automation's trigger, its next scheduled run, and runs in flight                                                 |
+| `POST /api/events`                                           | Publish `{ "id", "name", "data", "subject"? }`; returns 202 on durable acceptance                                     |
+| `GET /api/automations`                                       | List automations                                                                                                      |
+| `POST /api/automations`                                      | Create an automation from a description, which becomes its first chat message (`{ "description": "…" }`)              |
+| `GET /api/automations/:id`                                   | Inspect an automation and its recent runs                                                                             |
+| `POST /api/automations/:id/chat`                             | Send a design message                                                                                                 |
+| `GET /api/transcription?sample_rate=16000`                   | Same-origin WebSocket for mono little-endian PCM16 dictation; also accepts 24000, 44100, and 48000 Hz                 |
+| `POST /api/automations/:id/save`                             | Save the draft, subscribe to its trigger, and book its schedule                                                       |
+| `POST /api/automations/:id/permissions`                      | Set which operations ask which role first (`{ "permissions": { "email.send": { "ask": "people_ops" } } }`)            |
+| `GET /api/roles`, `PUT /api/roles/:name`                     | List or define roles (`{ "name", "label", "members": [{ "type", "id" }] }`)                                           |
+| `POST /api/automations/:id/start`                            | Start a run by hand (`{ "subject": "<id>" }`)                                                                         |
+| `GET /api/automations/:id/runs/:runId`                       | Inspect a run, its steps, its tasks, and when each waiting wait step resumes (`resumesAt`)                            |
+| `GET /api/automations/:id/trace`                             | The planner's conversation: instructions, prompts, reasoning, tool calls and results, token use                       |
+| `GET /api/automations/:id/runs/:runId/trace`                 | The conversation a run's agent steps share, in the same shape                                                         |
+| `POST /api/automations/:id/runs/:runId/tasks/:stepId`        | Answer a human step                                                                                                   |
+| `GET /api/dev`                                               | Whether this is local development (`{ "local": true }`), which enables the route below                                |
+| `POST /api/automations/:id/runs/:runId/waits/:stepId/resume` | Local development only: fire the clock a waiting wait step sleeps on now; 404 elsewhere                               |
+| `GET /api/entities/types`                                    | List entity types                                                                                                     |
+| `GET /api/entities/:type`, `GET /api/entities/:type/:id`     | Read entities                                                                                                         |
+| `POST /api/changes`                                          | Prepare `{ "action": ... }`: `putEntity`, `deleteEntity`, `putType`, `deleteType`, `putTemplate`, or `deleteTemplate` |
+| `POST /api/changes/:id/decision`                             | Confirm or cancel the stored proposal with `{ "approved": true }` or `false`                                          |
+| `POST /api/mcp`                                              | The entity store as an MCP server                                                                                     |
+| `GET /api/templates`, `GET /api/templates/:name`             | List or read templates                                                                                                |
+| `GET /api/templates/:name/automations`                       | The automations whose saved workflow or draft use a template                                                          |
+| `GET /api/assistant/:sessionId`                              | Read a UUID-named assistant session and its pending work                                                              |
+| `POST /api/assistant/:sessionId/chat`                        | Submit `{ "message": "…", "context": { "pathname": "/templates", "template": "welcome_email" } }`                     |
+| `POST /api/assistant/:sessionId/confirmation`                | Answer the inline proposal with `{ "proposalId": "…", "approved": true }`                                             |
+| `POST /api/assistant/:sessionId/answers`                     | Answer pending questions with `{ "callId": "…", "answer": { "kind": "answers", "answers": ["…", null] } }`            |
 
 Chat is asynchronous: `POST /chat` returns `202` with a `pendingChat`, and the reply and new draft appear on `GET /api/automations/:id` once `pendingChat` is gone. Until then the response includes `progress`, a plain phrase such as "Planning the steps…". If the agent fails, `pendingChat` stays with `status: "failed"` and an `error` until the next message. Each exchange in `conversation` has the `prompt`, the Markdown `reply`, and the questions the agent asked on the way with their answers (`asked`). While the agent waits for answers, `pendingChat` has `status: "asking"` and its `questions`; until the reply is written, it also lists the questions already answered in `asked`. `POST /api/automations/:id/answers` with `{ "chatId", "answer": { "kind": "answers", "answers": ["…", null] } }` (one answer per question, `null` to skip) resumes it; a `POST /chat` meanwhile answers with `{ "kind": "message" }` instead.
 

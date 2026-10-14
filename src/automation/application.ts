@@ -65,6 +65,7 @@ export const makeAutomation = Effect.fn("Automation.make")(function* () {
     entityChanged: runs.entityChanged,
     eventReceived: runs.eventReceived,
     respond: runs.respond,
+    resumeNow: runs.resumeNow,
     run: runs.run,
     plannerTrace: design.plannerTrace,
     runTrace: runs.runTrace,

@@ -5,8 +5,8 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import type { Update } from "foldkit";
 import { modifyFields } from "foldkit/struct";
-import type { HumanTask, Run, RunStatus, RunSummary } from "../../workflow.ts";
-import { AnswerTask, LoadRun } from "../command.ts";
+import type { HumanTask, Run, RunSummary } from "../../workflow.ts";
+import { AnswerTask, LoadRun, ResumeNow } from "../command.ts";
 import type { TaskAnswer } from "../domain/index.ts";
 import type { Message } from "../message.ts";
 import { type Model, type OpenRun, Page, RunDetail, RunNotice } from "../model.ts";
@@ -55,10 +55,15 @@ export const reloadOpenRun = (model: Model): Update.Return<Model, Message> =>
 export const noticeRun = (model: Model, notice: RunNotice) =>
   modifyOpenRun(model, (openRun) => ({ ...openRun, notice }));
 
-export const pollDelayMillis = (status: RunStatus): ReadonlyArray<number> =>
-  Match.value(status).pipe(
+/** Polls quickly while the run runs, or while a wait resumed early hasn't moved on yet. */
+export const pollDelayMillis = (run: Run, notice: RunNotice): ReadonlyArray<number> =>
+  Match.value(run.status).pipe(
     Match.when("running", () => [1500]),
-    Match.when("waiting", () => [5000]),
+    Match.when("waiting", () =>
+      RunNotice.guards.Resumed(notice) && run.steps[notice.step]?.status === "waiting"
+        ? [1500]
+        : [5000],
+    ),
     Match.orElse(() => []),
   );
 
@@ -82,6 +87,47 @@ const openTask = (openRun: OpenRun, step: string) =>
       Array.findFirst(run.tasks, (task) => task.step === step && task.status === "open"),
   });
 
+/** Sending an answer or resuming a wait; the run takes one of them at a time. */
+const isBusy = (openRun: OpenRun) =>
+  RunNotice.guards.Sending(openRun.notice) || RunNotice.guards.Resuming(openRun.notice);
+
+const isWaitingOnClock = (openRun: OpenRun, step: string) =>
+  RunDetail.match(openRun.detail, {
+    Loading: () => false,
+    Unavailable: () => false,
+    Loaded: ({ resumesAt }) => resumesAt[step] !== undefined,
+  });
+
+/** Local development only: resumes the open run's wait step now instead of when it's due. */
+export const resumeNow = (model: Model, step: string): Update.Return<Model, Message> =>
+  Option.match(maybeOpenRun(model), {
+    onNone: () => ({ model }),
+    onSome: (openRun) => {
+      if (isBusy(openRun)) {
+        return { model };
+      }
+      if (!model.isLocalDevelopment || !isWaitingOnClock(openRun, step)) {
+        return {
+          model: noticeRun(
+            model,
+            RunNotice.Failed({ error: "That step isn't waiting on a clock" }),
+          ),
+        };
+      }
+      return {
+        model: noticeRun(model, RunNotice.Resuming()),
+        commands: [
+          ResumeNow({
+            automationId: openRun.automationId,
+            revision: model.revision,
+            runId: openRun.runId,
+            step,
+          }),
+        ],
+      };
+    },
+  });
+
 export const answerTask = (
   model: Model,
   step: string,
@@ -93,7 +139,7 @@ export const answerTask = (
   Option.match(maybeOpenRun(model), {
     onNone: () => ({ model }),
     onSome: (openRun) => {
-      if (RunNotice.guards.Sending(openRun.notice)) {
+      if (isBusy(openRun)) {
         return { model };
       }
       return Option.match(openTask(openRun, step), {

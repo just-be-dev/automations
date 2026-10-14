@@ -102,6 +102,7 @@ const harness = () => {
         runTrace: unused,
         run: unused,
         respond: unused,
+        resumeNow: unused,
       }),
     }),
     Layer.succeed(EntitySubscribers, {

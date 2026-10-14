@@ -31,6 +31,16 @@ export const formatTime = (millis: number) =>
     minute: "2-digit",
   });
 
+/** A time a few days off, with its weekday: "Thu, Nov 5, 10:00 AM". */
+export const formatWeekdayTime = (millis: number) =>
+  new Date(millis).toLocaleString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
 export const plural = (count: number, one: string, many: string) =>
   `${count} ${count === 1 ? one : many}`;
 

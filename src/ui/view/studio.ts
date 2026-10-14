@@ -142,6 +142,7 @@ const draftView = (model: Model, h: HtmlBuilder<Message>) =>
                   scope: "draft",
                   expandedStepIds: model.expandedStepIds,
                   maybeRunSteps: Option.none(),
+                  maybeRunWaits: Option.none(),
                   roles: readyRoles(model.roles),
                   liveConnections: model.liveConnections,
                 },

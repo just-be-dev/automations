@@ -2,7 +2,7 @@
 import * as Option from "effect/Option";
 import type { Runtime } from "foldkit";
 import * as Dialog from "@/components/ui/dialog";
-import { LoadAutomations, LoadConnections, LoadRoles } from "./command.ts";
+import { LoadAutomations, LoadConnections, LoadDevelopment, LoadRoles } from "./command.ts";
 import { AutomationId } from "./domain/index.ts";
 import type { Message } from "./message.ts";
 import { newAutomationDialogId, newAutomationDescriptionId } from "./constant.ts";
@@ -49,6 +49,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
     newAutomation: blankNewAutomation,
     roles: RoleChoices.Loading(),
     liveConnections: [],
+    isLocalDevelopment: false,
     revision: 0,
     messageInputs: {},
     conversation: [],
@@ -79,6 +80,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
       LoadAutomations(),
       LoadRoles(),
       LoadConnections(),
+      LoadDevelopment(),
       ...Command.mapMessages([Assistant.RestoreAssistant()], toAssistantMessage),
     ],
   };

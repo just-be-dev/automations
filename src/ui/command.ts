@@ -124,6 +124,18 @@ export const LoadConnections = Command.define("LoadConnections", {
   ),
 });
 
+/** Whether this is local development; on failure the studio hides development-only controls. */
+export const LoadDevelopment = Command.define("LoadDevelopment", {
+  messages: [Message.SucceededLoadDevelopment, Message.FailedLoadDevelopment],
+  execute: requestJson("/api/dev", Schema.Struct({ local: Schema.Boolean })).pipe(
+    Effect.map(({ local }) => Message.SucceededLoadDevelopment({ isLocal: local })),
+    Effect.catch((error) =>
+      Effect.succeed(Message.FailedLoadDevelopment({ error: errorText(error) })),
+    ),
+    Effect.provide(Http.layer),
+  ),
+});
+
 export const LoadRuns = Command.define("LoadRuns", {
   args: requestArgs,
   messages: [Message.SucceededLoadRuns, Message.FailedRequest],
@@ -293,12 +305,13 @@ const runArgs = { ...requestArgs, poll: Schema.Int, runId: Schema.String };
 
 const fetchRun = (automationId: string, revision: number, poll: number, runId: string) =>
   request(automationId, `/runs/${runId}`, TitledRun).pipe(
-    Effect.map(({ subjectTitle, ...run }) =>
+    Effect.map(({ subjectTitle, resumesAt, ...run }) =>
       Message.SucceededLoadRun({
         revision,
         poll,
         run,
         maybeSubjectTitle: Option.fromNullishOr(subjectTitle),
+        resumesAt,
       }),
     ),
     Effect.catch((error) =>
@@ -335,6 +348,20 @@ export const AnswerTask = Command.define("AnswerTask", {
       Effect.map(() => Message.SucceededAnswerTask({ revision, runId, step })),
       Effect.catch((error) =>
         Effect.succeed(Message.FailedAnswerTask({ revision, runId, error: errorText(error) })),
+      ),
+      Effect.provide(Http.layer),
+    ),
+});
+
+/** Local development only: fires the clock a run's wait step sleeps on now. */
+export const ResumeNow = Command.define("ResumeNow", {
+  args: { ...requestArgs, runId: Schema.String, step: Schema.String },
+  messages: [Message.SucceededResumeNow, Message.FailedResumeNow],
+  execute: ({ automationId, revision, runId, step }) =>
+    request(automationId, `/runs/${runId}/waits/${step}/resume`, Schema.Unknown, {}).pipe(
+      Effect.map(() => Message.SucceededResumeNow({ revision, runId, step })),
+      Effect.catch((error) =>
+        Effect.succeed(Message.FailedResumeNow({ revision, runId, error: errorText(error) })),
       ),
       Effect.provide(Http.layer),
     ),

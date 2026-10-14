@@ -29,6 +29,7 @@ test("fan-out attempts every automation before retrying; entity commands decode 
         start: unused,
         entityChanged: unused,
         respond: unused,
+        resumeNow: unused,
         run: unused,
         plannerTrace: unused,
         runTrace: unused,

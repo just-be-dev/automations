@@ -85,6 +85,31 @@ export const laptopTask: HumanTask = {
   status: "open",
 };
 
+/** Waits three days after the start date, then asks the manager; its run waits on a clock. */
+export const settleIn: Workflow = {
+  name: "Settle in",
+  trigger: { kind: "manual", subject: "employee" },
+  steps: [
+    {
+      id: "settle",
+      kind: "wait",
+      title: "Give them three days to settle in",
+      until: "employee.start_date",
+      offset: "3 days",
+    },
+    {
+      id: "check_in",
+      kind: "human",
+      title: "Ask the manager how it's going",
+      prompt: "How is Ari settling in?",
+      response: "approval",
+    },
+  ],
+};
+
+/** When the settling-in wait resumes: midday on Thursday, Nov 5, so any nearby time zone agrees. */
+export const settleResumesAt = Date.UTC(2026, 10, 5, 12);
+
 export const runOf = (overrides: Partial<Run>): Run => ({
   id: "run-1",
   workflow: onboarding,
