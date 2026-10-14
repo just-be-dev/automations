@@ -34,6 +34,9 @@ const Tick = Schema.Struct({ at: Schema.Finite });
 /** The saved schedule has one pending occurrence at a time, under this job ID. */
 const TICK_JOB = "schedule";
 
+/** Why an erased automation resets its instance. The RPC client recognizes the reset by it. */
+export const ERASED = "Automation erased";
+
 /** Cloudflare hosts the application; business operations don't know about bindings or callbacks. */
 export default class Automation extends Cloudflare.DurableObject<Automation>()(
   "AutomationAgent",
@@ -110,6 +113,17 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
             withRuntime(tick.schedule(TICK_JOB, { at, payload: { at } })).pipe(Effect.orDie),
           cancelTick: withRuntime(Effect.suspend(() => tick.cancel(TICK_JOB))).pipe(Effect.orDie),
         },
+        // deleteAll drops pi's tables and the scheduler's job tables with the keys. pi keeps
+        // handles to its tables open, so the instance resets once the deletion is durable, and
+        // the next call opens everything fresh. Resetting fails the call that erased.
+        erase: withRuntime(
+          Effect.gen(function* () {
+            yield* state.storage.deleteAll();
+            yield* state.storage.deleteAlarm();
+            yield* state.storage.sync();
+            yield* state.abort(ERASED);
+          }),
+        ),
       });
       // One hub per instance, shared by the planner's tools and the operations that answer them.
       const answers = yield* makeAnswerHub;

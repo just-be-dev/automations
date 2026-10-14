@@ -44,5 +44,11 @@ export class AutomationHost extends Context.Service<
       /** Cancels the pending occurrence, if there is one. */
       readonly cancelTick: Effect.Effect<void>;
     };
+    /**
+     * Deletes everything the automation stored, pi's conversations and every pending job
+     * included. A host may reset the instance to drop what it holds in memory, so nothing
+     * after this runs, and the caller may see the call fail even though the erase succeeded.
+     */
+    readonly erase: Effect.Effect<void>;
   }
 >()("automations/AutomationHost") {}

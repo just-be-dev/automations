@@ -16,6 +16,7 @@ import type { QuestionsAnswer } from "../ai/ask-question/question.ts";
 import { PiAgent } from "../ai/pi.ts";
 import { findOperation } from "../connections/registry.ts";
 import { EntityStore } from "../entities/store.ts";
+import { checkWorkflow } from "../workflow/catalog.ts";
 import { diffWorkflows, isUnchanged } from "../workflow/changes.ts";
 import type { Permissions, Workflow } from "../workflow/model.ts";
 import { AutomationHost } from "./host.ts";
@@ -365,10 +366,38 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
       .pipe(Effect.catchTag("AutomationStorageError", Effect.die));
   });
 
+  /**
+   * Replaces the draft with a workflow written elsewhere, such as a saved copy, once it checks
+   * against the catalog. The conversation stays as it is, and the planner edits the new draft on
+   * the next message. It waits for the planner, so a reply in progress can't overwrite it.
+   */
+  const setDraft = Effect.fn("Automation.setDraft")(function* (
+    automationId: string,
+    workflow: Workflow,
+  ) {
+    const checked = yield* checkWorkflow(yield* catalog, workflow);
+    yield* storage
+      .transaction(
+        Effect.gen(function* () {
+          if ((yield* readPendingChat)?.status === "working") {
+            return yield* new AutomationError({
+              message: "The agent is still answering the previous message",
+            });
+          }
+          yield* storage.put("draft", checked);
+        }),
+      )
+      .pipe(Effect.catchTag("AutomationStorageError", Effect.die));
+    yield* index
+      .record(automationId, checked.name)
+      .pipe(Effect.ignore({ log: "Warn", message: "Couldn't update the automation directory" }));
+    return { draft: checked };
+  });
+
   /** The planner's conversation as pi recorded it: instructions, reasoning, and tool calls. */
   const plannerTrace = Effect.fn("Automation.plannerTrace")(function* () {
     return yield* pi.transcript();
   });
 
-  return { inspect, chat, answer, setPermissions, planReply, plannerTrace };
+  return { inspect, chat, answer, setPermissions, setDraft, planReply, plannerTrace };
 });

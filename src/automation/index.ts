@@ -22,6 +22,8 @@ export class AutomationIndex extends Context.Service<
       name: string,
     ) => Effect.Effect<void, AutomationIndexError>;
     readonly list: Effect.Effect<ReadonlyArray<AutomationSummary>, AutomationIndexError>;
+    /** Takes an automation off the list. Removing one that isn't listed does nothing. */
+    readonly remove: (id: string) => Effect.Effect<void, AutomationIndexError>;
   }
 >()("automations/AutomationIndex") {}
 

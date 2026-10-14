@@ -27,7 +27,7 @@ Then refine it:
 
 It finds a welcome slot and gives the manager a heads-up **in parallel**. It chooses approved email wording based on the hire’s role, pauses for **People Ops to review the exact email**, and books a manager welcome. Three days after the start date, it asks the manager to record the onboarding buddy, first project, and any help the hire needs.
 
-The [example workflow](docs/examples/first-week.json) uses the employee type, templates, and People Ops role included with local setup. Choose an employee with a start date and manager to try it. The screenshot pairs a scripted local conversation with the validated draft; see the [demo details](docs/development.md#readme-demo).
+The [example workflow](docs/examples/first-week.json) uses the employee type, templates, and People Ops role included with local setup. Choose an employee with a start date and manager to try it. The screenshot pairs a scripted local conversation with the validated draft; see the [demo details](docs/development.md#readme-demo). `mise run demo:reset` prepares a local studio for the live demo; see [Live demo](docs/development.md#live-demo).
 
 ## Workflows with people in the loop
 

@@ -89,6 +89,11 @@ export class EntityStore extends Context.Service<
     readonly listRoles: Effect.Effect<ReadonlyArray<Role>, EntityStoreError>;
     /** Creates or replaces a role, once every member is a stored entity with an email field. */
     readonly putRole: (role: Role) => Effect.Effect<Role, EntityStoreError | InvalidEntity>;
+    /**
+     * Deletes a role. Saved workflows that ask it fail their check when they next start, and
+     * approval tasks already open keep the members they recorded.
+     */
+    readonly deleteRole: (name: string) => Effect.Effect<void, EntityStoreError>;
   }
 >()("automations/EntityStore") {}
 
@@ -116,6 +121,7 @@ export interface EntityStorage {
   readonly deleteTemplate: (name: string) => Effect.Effect<void, EntityStoreError>;
   readonly listRoles: Effect.Effect<ReadonlyArray<Role>, EntityStoreError>;
   readonly putRole: (role: Role) => Effect.Effect<void, EntityStoreError>;
+  readonly deleteRole: (name: string) => Effect.Effect<void, EntityStoreError>;
 }
 
 /** Builds the service over an implementation's storage, so every one merges and checks alike. */
@@ -269,6 +275,7 @@ export const makeEntityStore = (storage: EntityStorage) => {
       yield* storage.putRole(role);
       return role;
     }),
+    deleteRole: storage.deleteRole,
   });
 };
 
@@ -315,5 +322,6 @@ export const layerMemory = (seed: {
       deleteTemplate: (name) => Effect.sync(() => void templates.delete(name)),
       listRoles: Effect.sync(() => [...roles.values()]),
       putRole: (role) => Effect.sync(() => void roles.set(role.name, role)),
+      deleteRole: (name) => Effect.sync(() => void roles.delete(name)),
     });
   });

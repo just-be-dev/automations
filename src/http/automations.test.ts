@@ -11,8 +11,9 @@ import { RunId } from "../workflow/run.ts";
 import { automationRoutes } from "./automations.ts";
 import { RequestIdentity } from "./identity.ts";
 
-test("HTTP delegates save and supplied manual event data without an entity store or directory writes", async () => {
+test("HTTP delegates save, drafts, removal and supplied manual event data without an entity store or directory writes", async () => {
   const calls: Array<ReadonlyArray<string | undefined>> = [];
+  const drafts: Array<unknown> = [];
   const starts: Array<unknown> = [];
   const saved: Workflow = {
     name: "Watch people",
@@ -28,6 +29,7 @@ test("HTTP delegates save and supplied manual event data without an entity store
       create: unused,
       record: unused,
       recordIfMissing: unused,
+      remove: unused,
     }),
     Layer.succeed(Automations, {
       get: (id) => ({
@@ -42,6 +44,16 @@ test("HTTP delegates save and supplied manual event data without an entity store
             return { saved };
           }),
         setPermissions: unused,
+        setDraft: (automationId, workflow) =>
+          Effect.sync(() => {
+            drafts.push({ id, automationId, workflow });
+            return { draft: workflow };
+          }),
+        remove: (automationId) =>
+          Effect.sync(() => {
+            calls.push(["remove", id, automationId]);
+            return { removed: automationId };
+          }),
         start: (subject, event) =>
           Effect.sync(() => {
             starts.push({ id, subject, event });
@@ -69,6 +81,26 @@ test("HTTP delegates save and supplied manual event data without an entity store
     expect(await response.text()).toBe(JSON.stringify({ saved }));
     // Save records the studio the request came through, so run messages can link back to it.
     expect(calls).toEqual([["a1", "a1", "https://studio.example.com"]]);
+    const putDraft = (body: unknown) =>
+      handler(
+        new Request("http://studio/api/automations/a1/draft", {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        }),
+      );
+    expect((await putDraft(saved)).status).toBe(200);
+    expect((await putDraft({ name: "No steps" })).status).toBe(400);
+    expect(drafts).toEqual([{ id: "a1", automationId: "a1", workflow: saved }]);
+    const removal = await handler(
+      new Request("http://studio/api/automations/a1", { method: "DELETE" }),
+    );
+    expect(removal.status).toBe(200);
+    expect(await removal.text()).toBe(JSON.stringify({ removed: "a1" }));
+    expect(calls).toEqual([
+      ["a1", "a1", "https://studio.example.com"],
+      ["remove", "a1", "a1"],
+    ]);
     const start = (body: unknown) =>
       handler(
         new Request("http://studio/api/automations/a1/start", {
@@ -118,6 +150,7 @@ test("creating an automation names it, lists it, and sends its description as th
         }),
       record: unused,
       recordIfMissing: unused,
+      remove: unused,
     }),
     Layer.succeed(Automations, {
       get: (id) => ({
@@ -136,6 +169,8 @@ test("creating an automation names it, lists it, and sends its description as th
               }),
         save: unused,
         setPermissions: unused,
+        setDraft: unused,
+        remove: unused,
         start: unused,
         entityChanged: unused,
         eventReceived: unused,
@@ -208,6 +243,7 @@ test("traces come from the planner, or from a run's agent steps, and an unknown 
       create: unused,
       record: unused,
       recordIfMissing: unused,
+      remove: unused,
     }),
     Layer.succeed(Automations, {
       get: () => ({
@@ -218,6 +254,8 @@ test("traces come from the planner, or from a run's agent steps, and an unknown 
         chat: unused,
         save: unused,
         setPermissions: unused,
+        setDraft: unused,
+        remove: unused,
         start: unused,
         entityChanged: unused,
         eventReceived: unused,

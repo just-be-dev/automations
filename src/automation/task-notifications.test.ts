@@ -489,6 +489,7 @@ describe("task notifications in a run", () => {
         tick: () => Effect.void,
         cancelTick: Effect.void,
       },
+      erase: Effect.die("No removal in these tests"),
     });
     const unused = () => Effect.die("Not used by runs without agent steps");
     const layer = Layer.mergeAll(
@@ -512,6 +513,7 @@ describe("task notifications in a run", () => {
           create: () => Effect.succeed(true),
           record: () => Effect.void,
           recordIfMissing: () => Effect.void,
+          remove: () => Effect.void,
         }),
       ),
       layerMemory({

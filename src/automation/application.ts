@@ -1,14 +1,20 @@
 /** Joins independent design and execution lifecycles into one automation's public operations and reads. */
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import { EntityStore } from "../entities/store.ts";
 import { usedTemplates } from "../entities/templates.ts";
 import { nextOccurrence } from "../workflow/schedule.ts";
 import { makeDesignSession } from "./design-session.ts";
+import { AutomationHost } from "./host.ts";
+import { AutomationIndex } from "./index.ts";
 import { makeRuns } from "./runs.ts";
 import { makeWorkflowStore } from "./workflow-store.ts";
 
 /** One automation's facade. Design and execution have independent instance-bound lifecycles. */
 export const makeAutomation = Effect.fn("Automation.make")(function* () {
+  const host = yield* AutomationHost;
+  const entities = yield* EntityStore;
+  const index = yield* AutomationIndex;
   const workflows = yield* makeWorkflowStore();
   const design = yield* makeDesignSession(workflows);
   const runs = yield* makeRuns(workflows);
@@ -52,6 +58,19 @@ export const makeAutomation = Effect.fn("Automation.make")(function* () {
     };
   });
 
+  /**
+   * Deletes the automation: its drafts, conversation and runs, with the jobs that would move its
+   * runs and schedule on. Runs in flight stop where they are. The subscription and the directory
+   * entry go first, because erasing may end this instance; a retry finishes a removal that
+   * failed partway, and removing an automation that doesn't exist succeeds.
+   */
+  const remove = Effect.fn("Automation.remove")(function* (automationId: string) {
+    yield* entities.subscribe(automationId, undefined);
+    yield* index.remove(automationId);
+    yield* host.erase;
+    return { removed: automationId };
+  });
+
   return {
     callbacks: { ...runs.callbacks, planReply: design.planReply },
     inspectWorkflow,
@@ -61,6 +80,8 @@ export const makeAutomation = Effect.fn("Automation.make")(function* () {
     answer: design.answer,
     save: workflows.save,
     setPermissions: design.setPermissions,
+    setDraft: design.setDraft,
+    remove,
     start: runs.start,
     entityChanged: runs.entityChanged,
     eventReceived: runs.eventReceived,

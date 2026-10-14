@@ -23,6 +23,7 @@ Most modules open with a comment saying what they own.
 - `src/ui/`: the Foldkit browser app.
 - `src/workflow.ts`, `src/entities.ts`, `src/connections.ts`: re-exports that keep the UI's imports. Backend code imports the owning modules.
 - `evals/`: evals of every LLM call against the real models. See `docs/development.md#evals`.
+- `demo/`: `mise run demo:reset`, which brings a local studio to the live demo's state through the HTTP API, with its seed (`seed.ts`) and fallback workflow (`onboarding.json`). See `docs/development.md#live-demo`. Keep the seed's type and templates in step with the migrations; `demo/seed.test.ts` checks them.
 - `migrations/`: D1 migrations, applied in numeric order on deploy and under `alchemy dev`.
 
 ## Boundaries

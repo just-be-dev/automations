@@ -57,6 +57,7 @@ const services = Layer.mergeAll(
     create: () => Effect.succeed(true),
     record: () => Effect.void,
     recordIfMissing: () => Effect.void,
+    remove: () => Effect.void,
   }),
   Layer.succeed(Automations, {
     get: () => {

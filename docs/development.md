@@ -64,6 +64,46 @@ Models vary between runs, so use `--trials` before trusting a change. The report
 
 Each eval has a `minimum`: the share of its checks that must pass across every case and trial. Below it, the run fails, so a prompt or model change that makes things worse fails `mise run eval` and `mise run check`. Keep each minimum a little under what the models reach, and raise it as they improve. The evals stay out of `mise run test`, which has to be fast and give the same answer every time; `evals/fixtures.test.ts` and `evals/framework/eval.test.ts` check the fixtures and the framework there without a model. Run `mise run check` before merging, and the affected evals whenever you change a prompt, the planner's tools, or a model.
 
+## Live demo
+
+`mise run demo:reset` brings the studio that `mise run dev` serves to the demo's known state: the onboarding story of the new hire Ada Lovelace, managed by Grace Hopper, with People Ops approving her welcome email. Run it while dev is running, before each rehearsal and again before going on stage.
+
+```sh
+mise run dev          # in one terminal
+mise run demo:reset   # in another
+```
+
+It works through the studio's own HTTP API, in this order:
+
+1. It deletes every automation with its draft, conversation, and runs. Runs in flight stop, and their pending jobs are cancelled.
+2. It restores the `employee` type, four people, the People Ops role, and the two welcome templates.
+3. It deletes every other entity, entity type, role, and template.
+4. It saves the fallback onboarding workflow as `first-week`.
+
+Entity, type, and template writes are prepared and approved through `/api/changes`, so the studio validates them as it does a person's edit. Role writes are direct, as they are for everyone. Deleting automations first means none of these writes starts a run. A write that would change nothing is skipped, so running the reset twice leaves the same state. Ada starts on the first Monday at least two weeks after today, so the story never goes stale.
+
+The people, role, and templates are in [`demo/seed.ts`](../demo/seed.ts). The type and templates match what the migrations seed, which a test checks. The fallback, [`demo/onboarding.json`](../demo/onboarding.json), is the storyboard's plan after its edit: it welcomes engineers in `#eng-team` instead of `#general`. If the live planner misbehaves on stage, open `/?automation=first-week` and run it on Ada. The reset prints that link.
+
+### Demo addresses
+
+Each person's address comes from `.env`, which is gitignored. The reset reads these keys itself, so changing them needs no restart. A key left unset keeps an `example.com` placeholder that reaches no one, and the reset lists which ones are unset.
+
+| Key                    | Person                                         | What reaches them                                                             |
+| ---------------------- | ---------------------------------------------- | ----------------------------------------------------------------------------- |
+| `DEMO_ADA_EMAIL`       | Ada Lovelace, the new hire                     | The welcome email and the calendar invite                                     |
+| `DEMO_GRACE_EMAIL`     | Grace Hopper, Ada's manager and in People Ops  | The Slack heads-up, the calendar invite, and the check-in. Can approve email  |
+| `DEMO_MARY_EMAIL`      | Mary Jackson, People Ops                       | Can approve the welcome email                                                 |
+| `DEMO_KATHERINE_EMAIL` | Katherine Johnson, an engineer on Grace's team | Nothing in the fallback workflow                                              |
+| `STUDIO_URL`           | Optional                                       | The studio to reset. By default it's read from this checkout's `mise run dev` |
+
+`slack.sendMessage` finds a person to message by email, so with [Slack connected](slack.md), use the addresses of the Slack sandbox's members. The fallback also posts to `#eng-team`, so create that public channel in the sandbox. With `SLACK_BOT_TOKEN` set, running the fallback posts for real. Email and Calendar are still simulated, whatever the addresses.
+
+The reset refuses any studio that isn't on this machine. It doesn't reach:
+
+- **The assistant panel.** Each browser keeps its own assistant session, so open the studio in a private window for a fresh one.
+- **Slack.** Messages a rehearsal posted stay in the workspace.
+- **Change proposals.** Old ones stay stored. One still pending is refused as stale once the data it was prepared against has changed.
+
 ## Deploy
 
 Requires Cloudflare Zero Trust, Workers AI, and an Alchemy profile that can manage Workers and Access.
@@ -170,8 +210,11 @@ Manage templates on the studio's **Templates** page (`/templates`), which also l
 | `POST /api/automations/:id/chat`                             | Send a design message                                                                                                 |
 | `GET /api/transcription?sample_rate=16000`                   | Same-origin WebSocket for mono little-endian PCM16 dictation; also accepts 24000, 44100, and 48000 Hz                 |
 | `POST /api/automations/:id/save`                             | Save the draft, subscribe to its trigger, and book its schedule                                                       |
+| `PUT /api/automations/:id/draft`                             | Replace the draft with a workflow that checks against the catalog, such as a saved copy                               |
+| `DELETE /api/automations/:id`                                | Delete an automation with its draft, conversation, and runs; runs in flight stop                                      |
 | `POST /api/automations/:id/permissions`                      | Set which operations ask which role first (`{ "permissions": { "email.send": { "ask": "people_ops" } } }`)            |
 | `GET /api/roles`, `PUT /api/roles/:name`                     | List or define roles (`{ "name", "label", "members": [{ "type", "id" }] }`)                                           |
+| `DELETE /api/roles/:name`                                    | Delete a role. Saved workflows that ask it fail their check when they next start                                      |
 | `POST /api/automations/:id/start`                            | Start a run by hand (`{ "subject": "<id>" }`)                                                                         |
 | `GET /api/automations/:id/runs/:runId`                       | Inspect a run, its steps, its tasks, and when each waiting wait step resumes (`resumesAt`)                            |
 | `GET /api/automations/:id/trace`                             | The planner's conversation: instructions, prompts, reasoning, tool calls and results, token use                       |
@@ -219,7 +262,7 @@ The screenshot was captured from the real studio at a 1440 × 1680 viewport in l
 
 Cloudflare OAuth had expired while preparing the demo, so its planner used scripted calls to the production editing tools. Separately from the screenshot, the application saved and executed the workflow through an in-memory `AutomationHost`, completed both parallel branches using simulated connections, and paused at the email approval.
 
-The screenshot demonstrates the conversation and workflow UI, not a live model response, native Durable Object recovery, or delivery to an external service. To draft a similar workflow with a live model, use the description in the [README](../README.md#a-first-week-that-does-not-fall-through-the-cracks) after configuring Workers AI credentials. The JSON example is a reference, not a file-import feature.
+The screenshot demonstrates the conversation and workflow UI, not a live model response, native Durable Object recovery, or delivery to an external service. To draft a similar workflow with a live model, use the description in the [README](../README.md#a-first-week-that-does-not-fall-through-the-cracks) after configuring Workers AI credentials. To load it as a draft, send it to `PUT /api/automations/:id/draft`.
 
 ## Caveats
 

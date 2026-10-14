@@ -85,6 +85,18 @@ export const catalogRoutes = Layer.mergeAll(
           }),
         ),
       ),
+      HttpRouter.route(
+        "DELETE",
+        "/:role",
+        respond(
+          Effect.gen(function* () {
+            const { role } = yield* pathParams(RoleParams);
+            const entities = yield* EntityStore;
+            yield* entities.deleteRole(role);
+            return { deleted: role };
+          }),
+        ),
+      ),
     ],
     { prefix: "/api/roles" },
   ),

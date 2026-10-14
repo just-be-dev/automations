@@ -58,6 +58,7 @@
   "include": [
     "src/**/*.ts",
     "evals/**/*.ts",
+    "demo/**/*.ts",
     "alchemy.run.ts",
     "oxlint.config.ts",
     "vite.config.ts"

@@ -85,6 +85,7 @@ const harness = () => {
       create: () => Effect.succeed(true),
       record: () => Effect.void,
       recordIfMissing: () => Effect.void,
+      remove: () => Effect.void,
     }),
     Layer.succeed(Automations, {
       get: (id) => ({
@@ -95,6 +96,8 @@ const harness = () => {
         chat: unused,
         save: unused,
         setPermissions: unused,
+        setDraft: unused,
+        remove: unused,
         start: unused,
         entityChanged: unused,
         eventReceived: unused,

@@ -14,7 +14,7 @@ import type { AutomationOverview } from "../automation/model.ts";
 import { EntityId } from "../entities/model.ts";
 import { SuppliedEvent } from "../events/model.ts";
 import { HumanResponse } from "../workflow/interpreter.ts";
-import { Permissions } from "../workflow/model.ts";
+import { Permissions, Workflow } from "../workflow/model.ts";
 import { RunId } from "../workflow/run.ts";
 import { RequestIdentity } from "./identity.ts";
 import { messageOf } from "../error.ts";
@@ -70,6 +70,29 @@ export const automationRoutes = Layer.merge(
               );
             }
             return automation;
+          }),
+        ),
+      ),
+      HttpRouter.route(
+        "DELETE",
+        "/:id",
+        respond(
+          Effect.gen(function* () {
+            const { id } = yield* automationParams;
+            const automations = yield* Automations;
+            return yield* automations.get(id).remove(id);
+          }),
+        ),
+      ),
+      HttpRouter.route(
+        "PUT",
+        "/:id/draft",
+        respond(
+          Effect.gen(function* () {
+            const { id } = yield* automationParams;
+            const workflow = yield* limitedBody(Workflow);
+            const automations = yield* Automations;
+            return yield* automations.get(id).setDraft(id, workflow);
           }),
         ),
       ),

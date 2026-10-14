@@ -21,6 +21,8 @@ const studio = (local: boolean | undefined) => {
       chat: unused,
       save: unused,
       setPermissions: unused,
+      setDraft: unused,
+      remove: unused,
       start: unused,
       entityChanged: unused,
       eventReceived: unused,

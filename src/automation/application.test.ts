@@ -54,6 +54,7 @@ const harness = () => {
   const prompts: Array<PromptOptions> = [];
   const transcripts: Array<number | undefined> = [];
   const recorded: Array<{ id: string; name: string }> = [];
+  const removed: Array<string> = [];
   const emitted: Array<Event> = [];
   const classified: Array<ClassifyRequest> = [];
   const lock = Semaphore.makeUnsafe(1);
@@ -103,6 +104,13 @@ const harness = () => {
       tick: (at) => Effect.sync(() => void (ticks.pending = at)),
       cancelTick: Effect.sync(() => void (ticks.pending = undefined)),
     },
+    erase: Effect.sync(() => {
+      data = new Map();
+      replies.length = 0;
+      advances.length = 0;
+      clocks.length = 0;
+      ticks.pending = undefined;
+    }),
   });
   type Call = (name: string, args?: unknown) => Effect.Effect<string>;
   // By default the planner renames the workflow through its tools.
@@ -180,6 +188,7 @@ const harness = () => {
         create: () => Effect.succeed(true),
         record: (id, name) => Effect.sync(() => void recorded.push({ id, name })),
         recordIfMissing: () => Effect.void,
+        remove: (id) => Effect.sync(() => void removed.push(id)),
       }),
     ),
     layerMemory({
@@ -216,6 +225,7 @@ const harness = () => {
     prompts,
     transcripts,
     recorded,
+    removed,
     emitted,
     classified,
     failSchedule: () => {
@@ -228,6 +238,67 @@ const harness = () => {
 };
 
 describe("Automation application without a platform", () => {
+  test("a draft set from a saved copy is checked, listed, and kept apart from the conversation", async () => {
+    const h = harness();
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const app = yield* makeAutomation();
+        const unchecked = yield* app
+          .setDraft("a1", { ...workflow, trigger: { kind: "manual", subject: "robot" } })
+          .pipe(Effect.flip);
+        const { draft } = yield* app.setDraft("a1", workflow);
+        const { pendingChat } = yield* app.chat("a1", "Change it");
+        const busy = yield* app.setDraft("a1", workflow).pipe(Effect.flip);
+        return { unchecked, draft, pendingChat, busy, after: yield* app.inspectWorkflow() };
+      }).pipe(Effect.provide(h.layer)),
+    );
+    expect(result.unchecked.message).toContain("robot");
+    expect(result.draft).toEqual(workflow);
+    expect(result.busy.message).toBe("The agent is still answering the previous message");
+    expect(result.after.draft).toEqual(workflow);
+    expect(result.after.conversation).toEqual([]);
+    expect(result.after.pendingChat?.id).toBe(result.pendingChat.id);
+    expect(h.recorded).toEqual([{ id: "a1", name: "Saved workflow" }]);
+  });
+
+  test("removing an automation forgets its drafts, runs and jobs, and its subscription and listing", async () => {
+    const h = harness();
+    const about: Workflow = { ...workflow, trigger: { kind: "manual", subject: "person" } };
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const entities = yield* EntityStore;
+        const app = yield* makeAutomation();
+        yield* app.setDraft("a1", about);
+        yield* app.save("a1");
+        yield* app.start("sam");
+        yield* app.chat("a1", "Change it");
+        const before = yield* app.inspectWorkflow();
+        const watching = yield* entities.subscribers("person");
+        const removed = yield* app.remove("a1");
+        const again = yield* app.remove("a1");
+        return {
+          before,
+          watching,
+          removed,
+          again,
+          after: yield* app.inspectWorkflow(),
+          watchers: yield* entities.subscribers("person"),
+        };
+      }).pipe(Effect.provide(h.layer)),
+    );
+    expect(result.before.saved).toEqual(about);
+    expect(result.before.runs).toHaveLength(1);
+    expect(result.watching).toEqual(["a1"]);
+    expect(result.removed).toEqual({ removed: "a1" });
+    expect(result.again).toEqual({ removed: "a1" });
+    expect(result.after).toMatchObject({ draft: undefined, saved: undefined, runs: [] });
+    expect(result.after.conversation).toEqual([]);
+    expect(result.after.pendingChat).toBeUndefined();
+    expect(result.watchers).toEqual([]);
+    expect(h.replies).toEqual([]);
+    expect(h.removed).toEqual(["a1", "a1"]);
+  });
+
   test("accepts one chat, persists the original message, and ignores duplicate delivery after completion", async () => {
     const h = harness();
     const result = await Effect.runPromise(

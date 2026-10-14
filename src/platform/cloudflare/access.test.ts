@@ -21,6 +21,7 @@ test("Access identity is request-scoped and reaches the automation's approval op
       create: unused,
       record: unused,
       recordIfMissing: unused,
+      remove: unused,
     }),
     Layer.succeed(Automations, {
       get: (id) => ({
@@ -31,6 +32,8 @@ test("Access identity is request-scoped and reaches the automation's approval op
         chat: unused,
         save: unused,
         setPermissions: unused,
+        setDraft: unused,
+        remove: unused,
         start: unused,
         entityChanged: unused,
         eventReceived: unused,

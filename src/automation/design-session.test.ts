@@ -27,6 +27,7 @@ test("stable chat IDs survive completion and never answer an unrelated planner q
           tick: () => Effect.void,
           cancelTick: Effect.void,
         },
+        erase: Effect.void,
       });
       const layer = Layer.mergeAll(
         answerHubLayer,
@@ -37,6 +38,7 @@ test("stable chat IDs survive completion and never answer an unrelated planner q
           create: () => Effect.succeed(true),
           record: () => Effect.void,
           recordIfMissing: () => Effect.void,
+          remove: () => Effect.void,
         }),
         Layer.succeed(Classifier, { classify: () => Effect.die("No reasoning") }),
         Layer.succeed(PiAgent, {

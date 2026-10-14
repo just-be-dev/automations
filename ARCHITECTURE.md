@@ -217,6 +217,10 @@ Progress phrases come from two sources. Tool and request state map to fixed phra
 
 Saving validates the draft and refuses a timed trigger that already matches more than 50 subjects. It commits the snapshot and its timed-trigger job together, updates its entity subscription, then best-effort updates the directory. The subscription is in D1 and cannot share the snapshot transaction. If it fails, the snapshot remains saved and the caller gets an error; retrying save repairs it. A directory failure does not fail the save.
 
+A draft can also come from outside the planner: `PUT /api/automations/:id/draft` replaces it with a workflow that checks against the catalog, as long as no reply is in progress. The conversation stays as it was, and the planner edits the new draft on the next message.
+
+Removing an automation (`DELETE /api/automations/:id`) drops its subscription and its directory entry, then [erases](src/automation/host.ts) its Durable Object. Erasing deletes every key, pi's tables, and the scheduler's jobs with the native alarm, so runs in flight stop and nothing fires later. pi keeps handles to its tables, so the object then resets itself. That reset fails the RPC, and [the client](src/platform/cloudflare/automations.ts) recognizes it by its reason. The next call to that ID opens an empty automation. The D1 writes come first because the reset ends the call; a retry finishes a removal that failed partway.
+
 ## The workflow engine replays a run from its journal
 
 ```diagram

@@ -15,6 +15,7 @@ import { Changes } from "../changes/service.ts";
 import { makeChanges } from "../changes/application.ts";
 import { changeRoutes } from "./changes.ts";
 import { RequestIdentity } from "./identity.ts";
+import { LiveConnections } from "../connections/live.ts";
 
 const unused = () => Effect.die("Unexpected operation");
 
@@ -37,6 +38,7 @@ const automationsLayer = Layer.merge(
     create: unused,
     record: unused,
     recordIfMissing: unused,
+    remove: unused,
   }),
   Layer.succeed(Automations, {
     get: (id) => ({
@@ -53,6 +55,8 @@ const automationsLayer = Layer.merge(
       chat: unused,
       save: unused,
       setPermissions: unused,
+      setDraft: unused,
+      remove: unused,
       start: unused,
       entityChanged: unused,
       eventReceived: unused,
@@ -311,6 +315,67 @@ test("changes reject malformed and oversized bodies", async () => {
       );
       expect(response.status).toBe(413);
     }
+  } finally {
+    await dispose();
+  }
+});
+
+test("roles are defined and deleted directly", async () => {
+  const { handler, dispose } = HttpRouter.toWebHandler(
+    catalogRoutes.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(
+          automationsLayer,
+          Layer.succeed(LiveConnections, []),
+          layerMemory({
+            types: [
+              {
+                name: "employee",
+                label: "Employee",
+                title: "name",
+                fields: [
+                  { name: "name", label: "Name", type: "text" },
+                  { name: "email", label: "Email", type: "text" },
+                ],
+              },
+            ],
+            entities: [
+              {
+                type: "employee",
+                id: "mary",
+                data: { name: "Mary", email: "mary@example.com" },
+                updatedAt: 0,
+              },
+            ],
+          }),
+        ),
+      ),
+    ),
+    { disableLogger: true },
+  );
+  const roles = async () =>
+    (await handler(new Request("http://studio/api/roles"))).json() as Promise<unknown>;
+  try {
+    const role = {
+      name: "people_ops",
+      label: "People Ops",
+      members: [{ type: "employee", id: "mary" }],
+    };
+    const defined = await handler(
+      new Request("http://studio/api/roles/people_ops", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(role),
+      }),
+    );
+    expect(defined.status).toBe(200);
+    expect(await roles()).toEqual([role]);
+    const deleted = await handler(
+      new Request("http://studio/api/roles/people_ops", { method: "DELETE" }),
+    );
+    expect(deleted.status).toBe(200);
+    expect(await deleted.text()).toBe(JSON.stringify({ deleted: "people_ops" }));
+    expect(await roles()).toEqual([]);
   } finally {
     await dispose();
   }

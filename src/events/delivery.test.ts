@@ -16,6 +16,7 @@ test("fan-out attempts every automation before retrying; entity commands decode 
       create: unused,
       record: unused,
       recordIfMissing: unused,
+      remove: unused,
     }),
     Layer.succeed(Automations, {
       get: (id) => ({
@@ -26,6 +27,8 @@ test("fan-out attempts every automation before retrying; entity commands decode 
         answer: unused,
         save: unused,
         setPermissions: unused,
+        setDraft: unused,
+        remove: unused,
         start: unused,
         entityChanged: unused,
         respond: unused,

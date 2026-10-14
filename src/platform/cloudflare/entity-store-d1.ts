@@ -196,6 +196,10 @@ export const EntityStoreD1 = Effect.gen(function* () {
                 .run();
             }),
           ),
+        deleteRole: (name) =>
+          query("deleteRole", db.prepare("DELETE FROM roles WHERE name = ?").bind(name).run()).pipe(
+            Effect.asVoid,
+          ),
       });
     }),
   );

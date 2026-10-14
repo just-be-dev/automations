@@ -163,6 +163,8 @@ export const assistantFixture = Effect.gen(function* () {
     save: forbidden,
     start: forbidden,
     setPermissions: forbidden,
+    setDraft: forbidden,
+    remove: forbidden,
     entityChanged: forbidden,
     eventReceived: forbidden,
     respond: forbidden,
@@ -188,6 +190,7 @@ export const assistantFixture = Effect.gen(function* () {
         Effect.sync(() => {
           if (!directory.has(id)) directory.set(id, name);
         }),
+      remove: (id) => Effect.sync(() => void directory.delete(id)),
     }),
   );
   const sessionId = "11111111-1111-1111-1111-111111111111";

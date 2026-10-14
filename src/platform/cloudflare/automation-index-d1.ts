@@ -72,7 +72,14 @@ export const AutomationIndexD1 = Effect.gen(function* () {
         }));
       });
 
-      return AutomationIndex.of({ create, record, recordIfMissing, list: list() });
+      const remove = Effect.fn("AutomationIndex.remove")(function* (id: string) {
+        yield* indexOperation(
+          "remove",
+          db.prepare("DELETE FROM automations WHERE id = ?").bind(id).run(),
+        );
+      });
+
+      return AutomationIndex.of({ create, record, recordIfMissing, list: list(), remove });
     }),
   );
 });
