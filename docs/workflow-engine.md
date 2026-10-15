@@ -249,6 +249,7 @@ Answering stores the answer and schedules `planReply` in one transaction, then w
 │ Outer Effect, at plan time and cold start                        │
 │   DurableObjectState · Workers AI · EntityStoreD1 ·              │
 │   AutomationIndexD1 · EventsQueue · SLACK_BOT_TOKEN ·            │
+│   STUDIO_URL · ALCHEMY_DEV, read only on a dev_ stage ·          │
 │   EMAIL_FROM → send_email binding (remote)                       │
 │                                                                  │
 │ Instance                                                         │
@@ -258,9 +259,11 @@ Answering stores the answer and schedules `planReply` in one transaction, then w
 │     advance     job <executionId>             at once            │
 │     clock       job <executionId>/<deferred>  at a time          │
 │     tick        job schedule                  at a time          │
+│   AutomationHost.erase   → delete storage, jobs, alarm; reset    │
 │   planner tools + AnswerHub → openPiAgent(PLANNER_MODEL)         │
 │   Classifier (clef models)                                       │
 │   SlackSender · EmailSender, null without credentials            │
+│   LocalDevelopment, false unless ALCHEMY_DEV was read            │
 │   makeAutomation() → operations, called over RPC                 │
 └──────────────────────────────────────────────────────────────────┘
 ```
