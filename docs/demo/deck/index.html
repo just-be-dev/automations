@@ -1,0 +1,3386 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Show people the plan before the agent acts</title>
+    <style>
+      :root {
+        --g1: #fcfcfc;
+        --g2: #f9f9f9;
+        --g3: #efefef;
+        --g4: #e8e8e8;
+        --g5: #e0e0e0;
+        --g6: #d9d9d9;
+        --g10: #838383;
+        --g11: #646464;
+        --g12: #202020;
+        --accent: #ff3e02;
+        --accent-soft: #fff5f1;
+        --accent-line: #ffc9b8;
+        --link: #1f7ae0;
+        --link-bg: #eaf3ff;
+        --green: #2b9a66;
+        --green-bg: #e9f7ef;
+        --stage: #f3f3f3;
+        --win-shadow:
+          0 0 0 0.5px rgba(0, 0, 0, 0.16), 0 1px 2px rgba(0, 0, 0, 0.04),
+          0 16px 36px -12px rgba(0, 0, 0, 0.1);
+        --sans:
+          "Inter Variable", "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui,
+          sans-serif;
+        --mono: "Berkeley Mono", ui-monospace, "SF Mono", Menlo, monospace;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        -webkit-font-smoothing: antialiased;
+      }
+      body {
+        margin: 0;
+        background: var(--g2);
+        color: var(--g12);
+        font-family: var(--sans);
+        font-size: 15px;
+        line-height: 1.5;
+      }
+      .page {
+        max-width: 1216px;
+        margin: 0 auto;
+        padding: 0 32px 120px;
+      }
+
+      /* Top bar */
+      .announce {
+        background: #202020;
+        color: #eee;
+        text-align: center;
+        font-size: 13px;
+        font-weight: 500;
+        padding: 11px 16px;
+      }
+      .announce .new {
+        color: var(--accent);
+        margin-right: 10px;
+      }
+      .announce .sep {
+        color: #555;
+        margin-right: 10px;
+      }
+
+      /* Hero */
+      .hero {
+        padding: 88px 0 56px;
+      }
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        color: var(--accent);
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .eyebrow svg {
+        width: 14px;
+        height: 14px;
+      }
+      h1 {
+        font-size: 52px;
+        line-height: 1.08;
+        letter-spacing: -0.025em;
+        font-weight: 500;
+        margin: 14px 0 20px;
+        max-width: 900px;
+      }
+      h1 .hl {
+        color: var(--accent);
+      }
+      .lede {
+        font-size: 19px;
+        color: var(--g11);
+        max-width: 760px;
+        margin: 0;
+      }
+      .lede b {
+        color: var(--g12);
+        font-weight: 500;
+      }
+      .hero-meta {
+        display: flex;
+        gap: 10px;
+        margin-top: 28px;
+        flex-wrap: wrap;
+      }
+
+      /* Buttons */
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font: 500 13px/1 var(--sans);
+        border-radius: 6px;
+        padding: 8px 12px;
+        border: 0;
+        white-space: nowrap;
+      }
+      .btn-dark {
+        background: #202020;
+        color: #fff;
+      }
+      .btn-light {
+        background: #fff;
+        color: var(--g12);
+        box-shadow:
+          0 0 0 0.5px rgba(0, 0, 0, 0.2),
+          0 1px 1px rgba(0, 0, 0, 0.04);
+      }
+      .btn-accent {
+        background: var(--accent);
+        color: #fff;
+      }
+      .btn-sm {
+        font-size: 11.5px;
+        padding: 5px 9px;
+        border-radius: 5px;
+      }
+      .btn svg {
+        width: 12px;
+        height: 12px;
+      }
+
+      /* Section headers, Warp style: orange rule, dark sentence then gray sentence */
+      .section-head {
+        border-left: 1px solid var(--accent);
+        padding-left: 26px;
+        margin: 96px 0 44px;
+      }
+      .section-head h2 {
+        font-size: 36px;
+        line-height: 1.15;
+        letter-spacing: -0.02em;
+        font-weight: 500;
+        margin: 8px 0 0;
+        max-width: 960px;
+      }
+      .section-head h2 span {
+        color: var(--g10);
+      }
+
+      /* Storyboard grid */
+      .board {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 56px 32px;
+      }
+      .frame-num {
+        font: 400 13px/1 var(--mono);
+        color: var(--g10);
+        margin-bottom: 12px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .stage {
+        background: var(--stage);
+        border-radius: 16px;
+        padding: 28px;
+        min-height: 380px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        position: relative;
+        overflow: hidden;
+      }
+      .stage.tall {
+        min-height: 520px;
+      }
+      .caption h3 {
+        font-size: 18px;
+        font-weight: 500;
+        margin: 22px 0 6px;
+        letter-spacing: -0.01em;
+      }
+      .caption p {
+        margin: 0;
+        color: var(--g11);
+        font-size: 15.5px;
+        line-height: 1.55;
+      }
+      .caption p + p {
+        margin-top: 8px;
+      }
+
+      .doubts {
+        margin-top: 14px;
+        border-left: 1px dashed var(--accent);
+        padding: 2px 0 2px 14px;
+        font-size: 13.5px;
+        color: var(--g11);
+      }
+      .doubts .label {
+        color: var(--accent);
+        font-weight: 500;
+        font-size: 12px;
+        margin-bottom: 3px;
+      }
+      .doubts ul {
+        margin: 0;
+        padding-left: 16px;
+      }
+      .doubts li {
+        margin: 2px 0;
+      }
+
+      .status {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font: 500 11.5px/1 var(--sans);
+        padding: 5px 8px;
+        border-radius: 999px;
+        background: #fff;
+        box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.15);
+        color: var(--g11);
+      }
+      .status::before {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--green);
+      }
+      .status.todo::before {
+        background: var(--accent);
+      }
+      .status.mixed::before {
+        background: linear-gradient(90deg, var(--green) 50%, var(--accent) 50%);
+      }
+      .build-note {
+        margin-top: 12px;
+        font-size: 13.5px;
+        color: var(--g11);
+        border-left: 1px dashed var(--g6);
+        padding-left: 14px;
+      }
+      .build-note b {
+        color: var(--g12);
+        font-weight: 500;
+      }
+
+      /* App windows */
+      .win {
+        width: 100%;
+        background: #fff;
+        border-radius: 10px;
+        box-shadow: var(--win-shadow);
+        font-size: 12.5px;
+        line-height: 1.5;
+        overflow: hidden;
+      }
+      .win.narrow {
+        max-width: 440px;
+      }
+      .win-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border-bottom: 1px solid var(--g3);
+        color: var(--g11);
+        font-size: 12px;
+      }
+      .win-head b {
+        color: var(--g12);
+        font-weight: 500;
+      }
+      .win-head .spacer {
+        flex: 1;
+      }
+      .win-head svg {
+        width: 12px;
+        height: 12px;
+        color: var(--g10);
+      }
+      .win-body {
+        padding: 14px 16px;
+      }
+      .win-foot {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border-top: 1px solid var(--g3);
+        background: var(--g2);
+      }
+      .win-foot .spacer {
+        flex: 1;
+      }
+
+      .chat {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .me {
+        align-self: flex-end;
+        max-width: 84%;
+        background: var(--g3);
+        border-radius: 8px;
+        padding: 8px 11px;
+      }
+      .bot {
+        color: var(--g12);
+      }
+      .quiet {
+        color: var(--g10);
+      }
+      .quiet a,
+      .link {
+        color: var(--link);
+        text-decoration: none;
+      }
+      .composer {
+        margin-top: 4px;
+        border-radius: 8px;
+        box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.2);
+        padding: 9px 11px;
+        color: var(--g10);
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .composer .send {
+        width: 20px;
+        height: 20px;
+        border-radius: 50%;
+        background: var(--g5);
+        display: grid;
+        place-items: center;
+      }
+      .composer .send svg {
+        width: 10px;
+        height: 10px;
+        color: #fff;
+      }
+
+      .ref {
+        background: var(--link-bg);
+        color: var(--link);
+        border-radius: 4px;
+        padding: 0 4px;
+        font-size: 12px;
+        white-space: nowrap;
+      }
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        font-size: 10.5px;
+        font-weight: 500;
+        padding: 1px 6px;
+        border-radius: 4px;
+        background: var(--g3);
+        color: var(--g12);
+        white-space: nowrap;
+      }
+      .tag.ask {
+        background: var(--accent-soft);
+        color: #c2350c;
+        box-shadow: inset 0 0 0 0.5px var(--accent-line);
+      }
+      .tag.live {
+        background: var(--green-bg);
+        color: var(--green);
+      }
+      .tag.added {
+        background: var(--accent);
+        color: #fff;
+      }
+      .mention {
+        color: var(--link);
+      }
+
+      /* Permission rows */
+      .perm {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 9px 0;
+        border-bottom: 1px solid var(--g3);
+      }
+      .perm:last-child {
+        border-bottom: 0;
+      }
+      .perm .ico {
+        width: 26px;
+        height: 26px;
+        border-radius: 6px;
+        background: var(--g3);
+        display: grid;
+        place-items: center;
+        flex: none;
+      }
+      .perm .ico svg {
+        width: 13px;
+        height: 13px;
+      }
+      .perm .what {
+        flex: 1;
+        min-width: 0;
+      }
+      .perm .what div:last-child {
+        color: var(--g10);
+        font-size: 11.5px;
+      }
+      .seg {
+        display: inline-flex;
+        gap: 2px;
+        padding: 3px;
+        border-radius: 9px;
+        background: var(--g3);
+        box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.08);
+        flex: none;
+      }
+      .seg span {
+        width: 28px;
+        height: 24px;
+        border-radius: 6px;
+        display: grid;
+        place-items: center;
+        color: var(--g10);
+      }
+      .seg span.on {
+        background: #fff;
+        color: var(--g12);
+        box-shadow:
+          0 0 0 0.5px rgba(0, 0, 0, 0.16),
+          0 1px 2px rgba(0, 0, 0, 0.08);
+      }
+      .seg svg {
+        width: 15px;
+        height: 15px;
+      }
+      .toggle {
+        width: 28px;
+        height: 16px;
+        border-radius: 999px;
+        background: #202020;
+        position: relative;
+        flex: none;
+      }
+      .toggle::after {
+        content: "";
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: #fff;
+      }
+      .toggle.off {
+        background: var(--g5);
+      }
+      .toggle.off::after {
+        right: auto;
+        left: 2px;
+      }
+      .select {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 11.5px;
+        padding: 4px 8px;
+        border-radius: 5px;
+        box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.2);
+        background: #fff;
+        white-space: nowrap;
+      }
+      .select svg {
+        width: 10px;
+        height: 10px;
+        color: var(--g10);
+      }
+
+      /* Routine card (Warp-style) */
+      .pillbar {
+        display: flex;
+        align-items: center;
+        gap: 0;
+        padding: 4px;
+        border-radius: 8px;
+        background: var(--g2);
+        box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.08);
+      }
+      .pillbar .p {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 5px 10px;
+        background: #fff;
+        border-radius: 6px;
+        box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.12);
+        font-size: 12px;
+      }
+      .pillbar .bolt {
+        padding: 0 8px;
+        color: var(--g10);
+        display: grid;
+        place-items: center;
+      }
+      .pillbar svg {
+        width: 12px;
+        height: 12px;
+      }
+      .then {
+        color: var(--g10);
+        font-size: 11.5px;
+        margin: 14px 0 4px;
+      }
+      .rstep {
+        display: flex;
+        gap: 10px;
+        padding: 9px 0;
+        border-bottom: 1px solid var(--g3);
+        align-items: flex-start;
+      }
+      .rstep:last-child {
+        border-bottom: 0;
+      }
+      .rstep .badge {
+        width: 24px;
+        height: 24px;
+        border-radius: 6px;
+        background: #202020;
+        display: grid;
+        place-items: center;
+        flex: none;
+      }
+      .rstep .badge svg {
+        width: 12px;
+        height: 12px;
+        color: #fff;
+      }
+      .rstep .badge.slack {
+        background: #fff;
+        box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.15);
+      }
+      .rstep div div:last-child {
+        color: var(--g10);
+        font-size: 11.5px;
+      }
+      .opaque {
+        position: relative;
+      }
+      .opaque::after {
+        content: "?";
+        position: absolute;
+        right: 0;
+        top: 10px;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--accent);
+        box-shadow: inset 0 0 0 1px var(--accent-line);
+        background: var(--accent-soft);
+      }
+
+      .spinner {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        border: 1.5px dashed var(--g10);
+        animation: spin 2.4s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      /* Confirm action card */
+      .confirm .kicker {
+        color: var(--g11);
+        font-size: 11.5px;
+      }
+      .confirm h4 {
+        margin: 2px 0 12px;
+        font-size: 14px;
+        font-weight: 500;
+      }
+      .kv {
+        display: grid;
+        grid-template-columns: 76px 1fr;
+        gap: 7px 12px;
+        font-size: 12.5px;
+      }
+      .kv dt {
+        color: var(--g10);
+      }
+      .kv dd {
+        margin: 0;
+      }
+      .ghost-card {
+        position: absolute;
+        left: 50%;
+        transform: translateX(-50%);
+        width: calc(100% - 96px);
+        max-width: 420px;
+        background: #fff;
+        border-radius: 10px;
+        box-shadow: var(--win-shadow);
+        opacity: 0.35;
+        padding: 12px 16px;
+        font-size: 12px;
+        color: var(--g10);
+      }
+
+      /* Slack */
+      .slack-head {
+        font-weight: 700;
+        font-size: 13.5px;
+        padding: 11px 16px;
+        border-bottom: 1px solid var(--g3);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .slack-head .sub {
+        font-weight: 400;
+        color: var(--g10);
+        font-size: 12px;
+      }
+      .msg {
+        display: flex;
+        gap: 10px;
+        padding: 8px 16px;
+      }
+      .av {
+        width: 32px;
+        height: 32px;
+        border-radius: 6px;
+        flex: none;
+        display: grid;
+        place-items: center;
+        color: #fff;
+        font-weight: 600;
+        font-size: 12px;
+      }
+      .av.round {
+        border-radius: 50%;
+        width: 22px;
+        height: 22px;
+        font-size: 9.5px;
+      }
+      .msg .who {
+        font-weight: 700;
+        font-size: 13px;
+      }
+      .msg .who .app {
+        font-size: 9px;
+        font-weight: 600;
+        color: var(--g11);
+        background: var(--g3);
+        border-radius: 3px;
+        padding: 1px 4px;
+        margin-left: 4px;
+        vertical-align: 1px;
+      }
+      .msg .who time {
+        font-weight: 400;
+        color: var(--g10);
+        font-size: 11.5px;
+        margin-left: 6px;
+      }
+      .msg .txt {
+        font-size: 13px;
+        line-height: 1.45;
+      }
+      .attach {
+        border-left: 3px solid var(--g5);
+        padding: 2px 0 2px 10px;
+        margin-top: 6px;
+        font-size: 12.5px;
+      }
+      .attach .row {
+        margin: 2px 0;
+      }
+      .attach .row span {
+        color: var(--g11);
+      }
+      .sbtn {
+        display: inline-block;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 4px 10px;
+        border-radius: 4px;
+        margin-right: 6px;
+        margin-top: 8px;
+        box-shadow: inset 0 0 0 1px var(--g6);
+        background: #fff;
+      }
+      .sbtn.go {
+        background: #007a5a;
+        color: #fff;
+        box-shadow: none;
+      }
+      .sbtn.no {
+        background: #e01e5a;
+        color: #fff;
+        box-shadow: none;
+      }
+      .sbtn.dim {
+        opacity: 0.4;
+      }
+
+      /* Audit log */
+      table.log {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      table.log th {
+        text-align: left;
+        font-weight: 500;
+        color: var(--g10);
+        font-size: 11px;
+        padding: 8px 14px;
+        border-bottom: 1px solid var(--g3);
+      }
+      table.log td {
+        padding: 8px 14px;
+        border-bottom: 1px solid var(--g3);
+        vertical-align: top;
+      }
+      table.log tr:last-child td {
+        border-bottom: 0;
+      }
+      table.log td.t {
+        font-family: var(--mono);
+        color: var(--g10);
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      table.log td.d {
+        color: var(--g11);
+      }
+
+      /* Studio workflow */
+      .wf {
+        position: relative;
+        padding-left: 16px;
+      }
+      .wf::before {
+        content: "";
+        position: absolute;
+        left: 11px;
+        top: 26px;
+        bottom: 14px;
+        border-left: 1px solid var(--g5);
+      }
+      .trig {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--g11);
+        margin-bottom: 8px;
+        margin-left: -16px;
+      }
+      .trig .ico {
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        background: #fff;
+        box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.18);
+        display: grid;
+        place-items: center;
+      }
+      .trig svg {
+        width: 11px;
+        height: 11px;
+      }
+      .step {
+        position: relative;
+        padding: 7px 0 7px 22px;
+      }
+      .step > .ico {
+        position: absolute;
+        left: -13px;
+        top: 7px;
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        background: var(--g3);
+        display: grid;
+        place-items: center;
+      }
+      .step > .ico svg {
+        width: 11px;
+        height: 11px;
+        color: var(--g12);
+      }
+      .step .title {
+        font-weight: 500;
+        font-size: 13px;
+      }
+      .step .sub {
+        color: var(--g10);
+        font-size: 11.5px;
+        display: flex;
+        gap: 6px;
+        align-items: center;
+        flex-wrap: wrap;
+        margin-top: 1px;
+      }
+      .card {
+        margin-top: 7px;
+        border-radius: 8px;
+        box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.16);
+        overflow: hidden;
+      }
+      .card .row {
+        padding: 7px 10px;
+        border-bottom: 1px solid var(--g3);
+        display: grid;
+        grid-template-columns: 62px 1fr;
+        gap: 8px;
+        font-size: 12px;
+      }
+      .card .row:last-child {
+        border-bottom: 0;
+      }
+      .card .row > span:first-child {
+        color: var(--g10);
+      }
+      .card.tint {
+        background: var(--g2);
+      }
+      .branch {
+        margin-left: 4px;
+        padding-left: 12px;
+        border-left: 1px dashed var(--g5);
+        margin-top: 6px;
+      }
+      .branch .lbl {
+        color: var(--g10);
+        font-size: 11px;
+        margin: 4px 0 2px;
+      }
+      .step.new {
+        margin: 6px 0 6px 14px;
+        padding: 10px 12px 12px 12px;
+        border-radius: 8px;
+        background: var(--accent-soft);
+        box-shadow: inset 0 0 0 1px var(--accent-line);
+      }
+      .step.new > .ico {
+        left: -27px;
+        top: 16px;
+      }
+      .step.faded {
+        opacity: 0.45;
+      }
+
+      /* Run panel */
+      .runrow {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--g3);
+        font-size: 12.5px;
+      }
+      .runrow:last-child {
+        border-bottom: 0;
+      }
+      .runrow .st {
+        width: 16px;
+        height: 16px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        flex: none;
+      }
+      .runrow .st.done {
+        background: var(--green);
+      }
+      .runrow .st.done svg {
+        width: 9px;
+        height: 9px;
+        color: #fff;
+      }
+      .runrow .st.wait {
+        box-shadow: inset 0 0 0 1.5px var(--accent);
+      }
+      .runrow .st.wait::after {
+        content: "";
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--accent);
+      }
+      .runrow .st.todo {
+        box-shadow: inset 0 0 0 1.5px var(--g6);
+      }
+      .runrow .name {
+        flex: 1;
+      }
+      .runrow .meta {
+        color: var(--g10);
+        font-size: 11.5px;
+      }
+      .runrow.dim {
+        color: var(--g10);
+      }
+
+      /* Question card */
+      .q {
+        border-radius: 8px;
+        box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.16);
+        overflow: hidden;
+      }
+      .q .qh {
+        padding: 9px 11px;
+        font-weight: 500;
+        border-bottom: 1px solid var(--g3);
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .q .qh span {
+        color: var(--g10);
+        font-weight: 400;
+        font-size: 11px;
+        white-space: nowrap;
+      }
+      .q .opt {
+        padding: 8px 11px;
+        border-bottom: 1px solid var(--g3);
+        display: flex;
+        gap: 9px;
+        align-items: flex-start;
+      }
+      .q .opt:last-child {
+        border-bottom: 0;
+      }
+      .q .opt .k {
+        font: 11px/18px var(--mono);
+        color: var(--g10);
+      }
+      .q .opt div div:last-child {
+        color: var(--g10);
+        font-size: 11.5px;
+      }
+      .q .opt.sel {
+        background: var(--g2);
+      }
+
+      /* Inbox */
+      .mail-head {
+        padding: 14px 16px 10px;
+        border-bottom: 1px solid var(--g3);
+      }
+      .mail-head .subj {
+        font-size: 15px;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+      .mail-head .from {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        font-size: 12px;
+        color: var(--g11);
+      }
+      .mail-body {
+        padding: 12px 16px 16px;
+        font-size: 12.5px;
+        white-space: normal;
+        color: var(--g12);
+      }
+
+      .split {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 14px;
+        width: 100%;
+      }
+
+      /* Dark takeaway card */
+      .dark {
+        background: #2b2b2b;
+        color: #eee;
+        border-radius: 16px;
+        padding: 44px 48px;
+        margin-top: 64px;
+        display: grid;
+        grid-template-columns: 1.2fr 1fr 1fr;
+        gap: 40px;
+        box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.4);
+      }
+      .dark .col + .col {
+        border-left: 1px dashed #4a4a4a;
+        padding-left: 40px;
+      }
+      .dark h3 {
+        font-size: 26px;
+        font-weight: 500;
+        margin: 10px 0 10px;
+        letter-spacing: -0.015em;
+        line-height: 1.2;
+      }
+      .dark h4 {
+        font-size: 16px;
+        font-weight: 500;
+        margin: 14px 0 6px;
+      }
+      .dark p {
+        color: #a3a3a3;
+        margin: 0;
+        font-size: 15px;
+      }
+      .dark .boxico {
+        width: 44px;
+        height: 44px;
+        border-radius: 10px;
+        background: #333;
+        box-shadow: 0 0 0 0.5px #4a4a4a;
+        display: grid;
+        place-items: center;
+      }
+      .dark .boxico svg {
+        width: 18px;
+        height: 18px;
+        color: #ddd;
+      }
+
+      /* Comparison */
+      .compare {
+        background: #fff;
+        border-radius: 16px;
+        box-shadow: var(--win-shadow);
+        overflow: hidden;
+      }
+      .compare table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 15px;
+      }
+      .compare th {
+        text-align: left;
+        font-weight: 500;
+        font-size: 13px;
+        color: var(--g11);
+        padding: 18px 24px;
+        border-bottom: 1px solid var(--g3);
+        background: var(--g2);
+      }
+      .compare th:last-child {
+        color: var(--accent);
+      }
+      .compare td {
+        padding: 16px 24px;
+        border-bottom: 1px solid var(--g3);
+        vertical-align: top;
+      }
+      .compare tr:last-child td {
+        border-bottom: 0;
+      }
+      .compare td:first-child {
+        color: var(--g11);
+        width: 26%;
+      }
+      .compare td:nth-child(2) {
+        color: var(--g11);
+      }
+      .compare td:last-child {
+        color: var(--g12);
+      }
+
+      /* Needs list */
+      .needs {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0;
+        border-top: 1px solid var(--g4);
+      }
+      .need {
+        padding: 24px 24px 24px 0;
+        border-bottom: 1px solid var(--g4);
+      }
+      .need + .need {
+      }
+      .need .n {
+        font: 13px/1 var(--mono);
+        color: var(--g10);
+      }
+      .need h4 {
+        font-size: 16px;
+        font-weight: 500;
+        margin: 12px 0 6px;
+      }
+      .need p {
+        margin: 0;
+        color: var(--g11);
+        font-size: 14.5px;
+      }
+      .need .frames {
+        margin-top: 10px;
+        font-size: 12px;
+        color: var(--accent);
+      }
+
+      .footnote {
+        margin-top: 72px;
+        font-size: 13px;
+        color: var(--g10);
+        max-width: 820px;
+      }
+
+      @media (max-width: 900px) {
+        .board,
+        .needs {
+          grid-template-columns: 1fr;
+        }
+        .dark {
+          grid-template-columns: 1fr;
+        }
+        .dark .col + .col {
+          border-left: 0;
+          padding-left: 0;
+          border-top: 1px dashed #4a4a4a;
+          padding-top: 24px;
+        }
+        h1 {
+          font-size: 38px;
+        }
+        .page {
+          padding: 0 18px 80px;
+        }
+        .stage {
+          padding: 16px;
+        }
+      }
+
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #e6e6e6;
+      }
+      body {
+        font-family: var(--sans);
+        color: var(--g12);
+      }
+      .deck-canvas {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 1600px;
+        height: 900px;
+        transform-origin: center;
+      }
+      .slide {
+        position: absolute;
+        inset: 0;
+        background: var(--g2);
+        overflow: hidden;
+        visibility: hidden;
+        box-shadow:
+          0 0 0 0.5px rgba(0, 0, 0, 0.12),
+          0 20px 60px -20px rgba(0, 0, 0, 0.25);
+      }
+      .slide.active {
+        visibility: visible;
+      }
+      .slide.d-dark {
+        background: #2b2b2b;
+        color: #fff;
+      }
+      .d-ico {
+        width: 30px;
+        height: 30px;
+      }
+      .d-accent {
+        color: var(--accent);
+      }
+
+      /* Mock boxes: the live storyboard mock, zoomed to fit (see fitMocks). */
+      .d-mockbox {
+        position: absolute;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+      .d-mockbox > .stage {
+        flex: none;
+        width: 580px;
+        min-height: 0;
+        padding: 28px;
+        border-radius: 18px;
+      }
+      .d-mockbox > .stage:has(.ghost-card) {
+        min-height: 560px;
+      }
+      .d-mockbox .win.narrow {
+        max-width: 524px;
+      }
+      .d-mockbox .ghost-card {
+        max-width: 480px;
+      }
+
+      /* Frame slides */
+      .d-frame .d-mockbox {
+        left: 582px;
+        top: 66px;
+        width: 948px;
+        height: 762px;
+      }
+      .d-meta {
+        position: absolute;
+        left: 72px;
+        top: 150px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .d-num {
+        font: 22px/1 var(--mono);
+        color: var(--g10);
+      }
+      .d-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 9px;
+        font-size: 18px;
+        color: var(--g11);
+        background: #fff;
+        border-radius: 999px;
+        padding: 7px 16px 7px 14px;
+        box-shadow: 0 0 0 1px var(--g6);
+        white-space: nowrap;
+      }
+      .d-pill::before {
+        content: "";
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: var(--green);
+      }
+      .d-pill.todo::before {
+        background: var(--accent);
+      }
+      .d-title {
+        position: absolute;
+        left: 72px;
+        top: 205px;
+        width: 468px;
+        margin: 0;
+        font-size: 40px;
+        line-height: 1.15;
+        font-weight: 500;
+        letter-spacing: -0.015em;
+      }
+      .d-caption {
+        position: absolute;
+        left: 72px;
+        top: 330px;
+        width: 468px;
+        margin: 0;
+        font-size: 26px;
+        line-height: 1.4;
+        color: var(--g11);
+      }
+      .d-questions {
+        position: absolute;
+        left: 72px;
+        top: 534px;
+        width: 468px;
+        box-sizing: border-box;
+        padding: 20px 24px;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 0 0 1px #e8e8e8;
+        font-size: 22px;
+        line-height: 1.35;
+      }
+      .d-questions-label {
+        color: var(--accent);
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+      .d-questions ul {
+        margin: 0;
+        padding-left: 24px;
+      }
+      .d-questions li {
+        margin: 4px 0;
+      }
+
+      /* Cover */
+      .d-cover-title {
+        position: absolute;
+        left: 72px;
+        top: 228px;
+        width: 760px;
+        margin: 0;
+        font-size: 76px;
+        line-height: 1.08;
+        font-weight: 500;
+        letter-spacing: -0.025em;
+      }
+      .d-cover-body {
+        position: absolute;
+        left: 72px;
+        top: 520px;
+        width: 700px;
+        margin: 0;
+        font-size: 30px;
+        line-height: 1.4;
+        color: var(--g11);
+      }
+      .d-legend {
+        position: absolute;
+        left: 72px;
+        top: 690px;
+        display: flex;
+        gap: 16px;
+      }
+      .d-cover-mock {
+        left: 870px;
+        top: 72px;
+        width: 660px;
+        height: 756px;
+      }
+
+      /* Section */
+      .d-section-title {
+        position: absolute;
+        left: 120px;
+        top: 168px;
+        margin: 0;
+        padding-left: 36px;
+        border-left: 2px solid var(--accent);
+        font-size: 68px;
+        line-height: 1.2;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+      }
+      .d-thumbs .d-mockbox {
+        top: 272px;
+        width: 464px;
+        height: 596px;
+      }
+      .d-thumbs .d-mockbox > .stage {
+        width: 480px;
+        padding: 18px;
+        min-height: 0;
+      }
+      .d-thumbs .d-mockbox > .stage:not(.tall) {
+        width: 390px;
+        padding: 14px;
+      }
+      .d-thumbs .d-mockbox:nth-child(1) {
+        left: 72px;
+      }
+      .d-thumbs .d-mockbox:nth-child(2) {
+        left: 568px;
+      }
+      .d-thumbs .d-mockbox:nth-child(3) {
+        left: 1064px;
+      }
+
+      /* Title-only pages */
+      .d-page-title {
+        position: absolute;
+        left: 72px;
+        top: 72px;
+        margin: 0;
+        font-size: 50px;
+        font-weight: 500;
+        letter-spacing: -0.02em;
+      }
+      .d-bubble {
+        position: absolute;
+        left: 72px;
+        top: 222px;
+        width: 1458px;
+        box-sizing: border-box;
+        padding: 40px 44px;
+        background: #efefef;
+        border-radius: 18px;
+        font-size: 36px;
+        line-height: 1.35;
+      }
+      .d-acts {
+        position: absolute;
+        left: 72px;
+        top: 462px;
+        width: 1458px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 36px;
+      }
+      .d-act,
+      .d-card {
+        background: #fff;
+        border-radius: 18px;
+        box-shadow:
+          0 0 0 1px #e8e8e8,
+          0 4px 16px rgba(0, 0, 0, 0.04);
+        padding: 44px 48px;
+      }
+      .d-act h3 {
+        margin: 26px 0 10px;
+        font-size: 36px;
+        font-weight: 500;
+      }
+      .d-act p {
+        margin: 0;
+        font-size: 26px;
+        line-height: 1.4;
+        color: var(--g11);
+      }
+      .d-tile {
+        display: grid;
+        place-items: center;
+        width: 74px;
+        height: 74px;
+        border-radius: 14px;
+        background: #333;
+        box-shadow: 0 0 0 0.5px #4a4a4a;
+        color: #ddd;
+      }
+      .d-tile.light {
+        background: var(--stage);
+        box-shadow: none;
+        color: var(--g12);
+      }
+
+      .d-table {
+        position: absolute;
+        left: 72px;
+        top: 216px;
+        width: 1458px;
+        border-collapse: collapse;
+        font-size: 25px;
+      }
+      .d-table th {
+        text-align: left;
+        font-weight: 400;
+        font-size: 22px;
+        color: var(--g11);
+        background: var(--stage);
+        padding: 18px 24px;
+      }
+      .d-table td {
+        padding: 15px 24px;
+        border-bottom: 1px solid #e8e8e8;
+        background: #fff;
+        color: var(--g11);
+        vertical-align: middle;
+      }
+      .d-table td:last-child {
+        color: var(--g12);
+      }
+      .d-table th.d-accent {
+        color: var(--accent);
+      }
+
+      .d-grid {
+        position: absolute;
+        left: 72px;
+        top: 216px;
+        width: 1458px;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 36px;
+      }
+      .d-card {
+        padding: 36px;
+        min-height: 192px;
+      }
+      .d-card .d-tile {
+        width: 60px;
+        height: 60px;
+        border-radius: 12px;
+      }
+      .d-card .d-ico {
+        width: 26px;
+        height: 26px;
+      }
+      .d-card h3 {
+        margin: 22px 0 8px;
+        font-size: 28px;
+        font-weight: 500;
+      }
+      .d-card p {
+        margin: 0;
+        font-size: 23px;
+        line-height: 1.4;
+        color: var(--g11);
+      }
+
+      /* Dark slides */
+      .d-dark-title {
+        position: absolute;
+        left: 108px;
+        top: 240px;
+        width: 516px;
+        margin: 0;
+        font-size: 50px;
+        line-height: 1.22;
+        font-weight: 500;
+        letter-spacing: -0.015em;
+      }
+      .d-cols {
+        position: absolute;
+        left: 720px;
+        top: 240px;
+        display: flex;
+        gap: 0;
+      }
+      .d-col {
+        width: 360px;
+        padding-left: 48px;
+        margin-left: 18px;
+        border-left: 1px dashed #4a4a4a;
+        min-height: 396px;
+      }
+      .d-col h3,
+      .d-step h3 {
+        margin: 34px 0 14px;
+        font-size: 30px;
+        font-weight: 500;
+      }
+      .d-col p,
+      .d-step p {
+        margin: 0;
+        font-size: 25px;
+        line-height: 1.4;
+        color: #a3a3a3;
+      }
+      .d-steps {
+        position: absolute;
+        left: 720px;
+        top: 240px;
+        display: flex;
+        flex-direction: column;
+        gap: 70px;
+      }
+      .d-step {
+        display: flex;
+        gap: 32px;
+        align-items: flex-start;
+      }
+      .d-step h3 {
+        margin: 0 0 8px;
+      }
+
+      /* Navigation and notes, outside the slide canvas */
+      .deck-nav {
+        position: fixed;
+        right: 16px;
+        bottom: 14px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font: 13px var(--sans);
+        color: var(--g11);
+        z-index: 10;
+      }
+      .deck-nav button {
+        font: inherit;
+        border: 0;
+        background: #fff;
+        border-radius: 6px;
+        padding: 5px 10px;
+        box-shadow: 0 0 0 0.5px rgba(0, 0, 0, 0.2);
+        cursor: pointer;
+      }
+      .deck-notes {
+        position: fixed;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        max-height: 30vh;
+        overflow: auto;
+        background: #202020;
+        color: #eee;
+        font: 16px/1.5 var(--sans);
+        padding: 16px 24px 48px;
+        display: none;
+        z-index: 9;
+      }
+      .deck-notes.open {
+        display: block;
+      }
+      .notes {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <svg width="0" height="0" style="position: absolute">
+      <defs>
+        <symbol id="i-agent" viewBox="0 0 16 16">
+          <path
+            d="M2.5 2.5l11 4.2-4.6 1.6-1.6 4.6z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.4"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-bolt" viewBox="0 0 16 16">
+          <path
+            d="M9 1.5L3.5 9H8l-1 5.5L12.5 7H8z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-mail" viewBox="0 0 16 16">
+          <rect
+            x="2"
+            y="3.5"
+            width="12"
+            height="9"
+            rx="1.5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+          />
+          <path d="M2.5 4.5L8 9l5.5-4.5" fill="none" stroke="currentColor" stroke-width="1.3" />
+        </symbol>
+        <symbol id="i-chat" viewBox="0 0 16 16">
+          <path
+            d="M3 3h10a1 1 0 011 1v6a1 1 0 01-1 1H7l-3 2.5V11H3a1 1 0 01-1-1V4a1 1 0 011-1z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-cal" viewBox="0 0 16 16">
+          <rect
+            x="2.5"
+            y="3.5"
+            width="11"
+            height="10"
+            rx="1.5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+          />
+          <path d="M2.5 6.5h11M5.5 2v3M10.5 2v3" stroke="currentColor" stroke-width="1.3" />
+        </symbol>
+        <symbol id="i-branch" viewBox="0 0 16 16">
+          <path
+            d="M4 2v4.5c0 2 1.5 3 4 3.5M12 2v4.5c0 2-1.5 3-4 3.5V14"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="i-hourglass" viewBox="0 0 16 16">
+          <path
+            d="M4 2h8M4 14h8M5 2c0 3.5 6 4 6 6s-6 2.5-6 6M11 2c0 3.5-6 4-6 6s6 2.5 6 6"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+          />
+        </symbol>
+        <symbol id="i-person" viewBox="0 0 16 16">
+          <circle cx="8" cy="5.5" r="2.7" fill="none" stroke="currentColor" stroke-width="1.3" />
+          <path
+            d="M2.8 14c.6-2.7 2.7-4.2 5.2-4.2s4.6 1.5 5.2 4.2"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+          />
+        </symbol>
+        <symbol id="i-play" viewBox="0 0 16 16">
+          <path
+            d="M5 3l8 5-8 5z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-check" viewBox="0 0 16 16">
+          <path
+            d="M3 8.5l3 3 7-7"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-chev" viewBox="0 0 16 16">
+          <path
+            d="M6 3.5L10.5 8 6 12.5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.4"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="i-down" viewBox="0 0 16 16">
+          <path
+            d="M3.5 6L8 10.5 12.5 6"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.4"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="i-send" viewBox="0 0 16 16">
+          <path
+            d="M8 13V3M3.5 7.5L8 3l4.5 4.5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="i-eye" viewBox="0 0 16 16">
+          <path
+            d="M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+          />
+          <circle cx="8" cy="8" r="2" fill="none" stroke="currentColor" stroke-width="1.3" />
+        </symbol>
+        <symbol id="i-list" viewBox="0 0 16 16">
+          <path
+            d="M5.5 4h8M5.5 8h8M5.5 12h8"
+            stroke="currentColor"
+            stroke-width="1.3"
+            stroke-linecap="round"
+          />
+          <circle cx="2.8" cy="4" r=".9" fill="currentColor" />
+          <circle cx="2.8" cy="8" r=".9" fill="currentColor" />
+          <circle cx="2.8" cy="12" r=".9" fill="currentColor" />
+        </symbol>
+        <symbol id="i-shield" viewBox="0 0 16 16">
+          <path
+            d="M8 1.8l5 2v4c0 3.2-2.2 5.3-5 6.4-2.8-1.1-5-3.2-5-6.4v-4z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+            stroke-linejoin="round"
+          />
+          <path
+            d="M5.8 8l1.6 1.6L10.4 6.6"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="i-allow" viewBox="0 0 16 16">
+          <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.2" />
+          <path
+            d="M5.4 8.2l1.8 1.8 3.4-3.6"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-hand" viewBox="0 0 16 16">
+          <path
+            d="M5.5 8V3.8a.9.9 0 011.8 0V7.5M7.3 7V2.9a.9.9 0 011.8 0V7M9.1 7.2V3.6a.9.9 0 011.8 0V8.5M10.9 6.4a.9.9 0 011.8 0v3.1c0 2.6-1.9 4.5-4.4 4.5-1.6 0-2.7-.7-3.6-1.9L3.1 9.6a.95.95 0 011.5-1.1l.9 1"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.15"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-deny" viewBox="0 0 16 16">
+          <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.2" />
+          <path d="M3.8 3.8l8.4 8.4" stroke="currentColor" stroke-width="1.2" />
+        </symbol>
+        <symbol id="i-slack" viewBox="0 0 16 16">
+          <rect x="2" y="6.5" width="6" height="2.6" rx="1.3" fill="#36c5f0" />
+          <rect x="6.5" y="2" width="2.6" height="6" rx="1.3" fill="#2eb67d" />
+          <rect x="8" y="6.9" width="6" height="2.6" rx="1.3" fill="#ecb22e" />
+          <rect x="6.9" y="8" width="2.6" height="6" rx="1.3" fill="#e01e5a" />
+        </symbol>
+
+        <symbol id="i-diff" viewBox="0 0 16 16">
+          <rect
+            x="2"
+            y="2.5"
+            width="8"
+            height="8"
+            rx="1.5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+          />
+          <rect
+            x="6"
+            y="5.5"
+            width="8"
+            height="8"
+            rx="1.5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+            stroke-dasharray="2 1.5"
+          />
+        </symbol>
+        <symbol id="i-reset" viewBox="0 0 16 16">
+          <path
+            d="M3 8a5 5 0 105-5H5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+            stroke-linecap="round"
+          />
+          <path
+            d="M6.5 1L4.5 3l2 2"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </symbol>
+        <symbol id="i-bell" viewBox="0 0 16 16">
+          <path
+            d="M4 11V7a4 4 0 018 0v4l1.2 1.5H2.8z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+            stroke-linejoin="round"
+          />
+          <path d="M6.5 14h3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" />
+        </symbol>
+      </defs>
+    </svg>
+    <div class="deck-canvas">
+      <section class="slide d-cover" id="slide-1" data-slide="1">
+        <h1 class="d-cover-title">
+          Building trust through <span class="d-accent">transparency</span>
+        </h1>
+        <p class="d-cover-body">Knowing what a routine will do matters as much as what it does.</p>
+        <div class="d-mockbox d-cover-mock">
+          <div class="stage tall">
+            <div class="win">
+              <div class="win-head">
+                <span class="tag">Draft</span><b>Launch a great first week</b
+                ><span class="spacer"></span>{ } JSON
+              </div>
+              <div class="win-body">
+                <div class="wf">
+                  <div class="trig">
+                    <span class="ico"
+                      ><svg><use href="#i-bolt"></use></svg></span
+                    >When an employee’s <span class="ref">start_date</span> is set
+                  </div>
+                  <div class="step">
+                    <span class="ico"
+                      ><svg><use href="#i-branch"></use></svg
+                    ></span>
+                    <div class="title">Get the first day ready</div>
+                    <div class="sub">3 branches run at the same time</div>
+                    <div class="branch">
+                      <div class="lbl">
+                        Branch 1 · Find time for a manager welcome <span class="tag">Calendar</span>
+                      </div>
+                      <div class="lbl">
+                        Branch 2 · Give the manager a heads-up <span class="tag live">Slack</span>
+                      </div>
+                      <div class="lbl">
+                        Branch 3 · Welcome them in #general <span class="tag live">Slack</span>
+                        <span class="tag ask">You notice this</span>
+                      </div>
+                      <div class="card tint" style="box-shadow: 0 0 0 1px var(--accent-line)">
+                        <div class="row"><span>To</span><span>#general</span></div>
+                        <div class="row">
+                          <span>Message</span
+                          ><span
+                            >Please welcome <span class="ref">employee.name</span>, who joins us as
+                            <span class="ref">employee.role</span> on
+                            <span class="ref">employee.start_date</span>!</span
+                          >
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="step">
+                    <span class="ico"
+                      ><svg><use href="#i-mail"></use></svg
+                    ></span>
+                    <div class="title">Send the right welcome email</div>
+                    <div class="sub">
+                      Send an email <span class="tag ask">Asks People Ops</span>
+                    </div>
+                    <div class="card">
+                      <div class="row">
+                        <span>If</span
+                        ><span
+                          >Role contains “engineer”:
+                          <b style="font-weight: 500">Engineering welcome email</b></span
+                        >
+                      </div>
+                      <div class="row">
+                        <span>Otherwise</span
+                        ><span><b style="font-weight: 500">Welcome email</b></span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="step">
+                    <span class="ico"
+                      ><svg><use href="#i-cal"></use></svg
+                    ></span>
+                    <div class="title">Book their first conversation</div>
+                    <div class="sub">
+                      30 minutes with <span class="ref">employee.manager</span> at the first open
+                      time
+                    </div>
+                  </div>
+                  <div class="step">
+                    <span class="ico"
+                      ><svg><use href="#i-hourglass"></use></svg
+                    ></span>
+                    <div class="title">Give them three days to settle in</div>
+                    <div class="sub">
+                      Until 3 days after <span class="ref">employee.start_date</span>
+                    </div>
+                  </div>
+                  <div class="step">
+                    <span class="ico"
+                      ><svg><use href="#i-person"></use></svg
+                    ></span>
+                    <div class="title">Ask the manager how it’s going</div>
+                    <div class="sub">
+                      <span class="ref">employee.manager</span> fills in: buddy, first project, help
+                      needed
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside class="notes">
+          This is a storyboard for the Automations studio demo. It tells one onboarding story twice.
+          First the way a typical AI agent works: delegate, then verify. Then the way the studio
+          works: see the plan, then trust it. Green marks what works in the studio today; orange
+          marks what we&#x27;re building before the demo.
+        </aside>
+      </section>
+      <section class="slide d-setup" id="slide-2" data-slide="2">
+        <h2 class="d-page-title">Let’s consider an automation task</h2>
+        <div class="d-bubble">
+          When someone new joins, welcome them on Slack, send our welcome email, and book 30 minutes
+          with their manager. Three days in, check how it’s going.
+        </div>
+        <div class="d-acts">
+          <div class="d-act">
+            <span class="d-tile light"
+              ><svg class="d-ico"><use href="#i-agent" /></svg
+            ></span>
+            <h3>Act one: agent delegation</h3>
+            <p>You hand an AI agent the job and check its audit log after it runs.</p>
+          </div>
+          <div class="d-act">
+            <span class="d-tile light"
+              ><svg class="d-ico"><use href="#i-eye" /></svg
+            ></span>
+            <h3>Act two: agent-built workflow</h3>
+            <p>You read the plan and iterate on it before it runs.</p>
+          </div>
+        </div>
+        <aside class="notes">
+          Both acts start from this exact sentence. It&#x27;s deliberately ordinary, and a little
+          ambiguous: &#x27;welcome them on Slack&#x27; could mean a DM, a team channel, or the whole
+          company. Watch where each approach lets you catch that.
+        </aside>
+      </section>
+      <section class="slide d-section" id="slide-3" data-slide="3">
+        <h1 class="d-section-title">Act one: agent delegation</h1>
+        <div class="d-thumbs">
+          <div class="d-mockbox d-thumb">
+            <div class="stage">
+              <div class="win narrow">
+                <div class="win-head">
+                  Agent <svg><use href="#i-chev"></use></svg><b>New hire onboarding</b>
+                </div>
+                <div class="win-body chat">
+                  <div class="me">
+                    When someone new joins, welcome them on Slack, send our welcome email, and book
+                    30 minutes with their manager. Three days in, check how it’s going.
+                  </div>
+                  <div class="bot">
+                    Got it. I’ll run this whenever someone is hired, and I’ll ask you before
+                    anything sensitive.
+                  </div>
+                  <div class="quiet">Created routine <a>New hire onboarding</a> ›</div>
+                  <div class="composer">
+                    Ask the agent…
+                    <span class="send"
+                      ><svg><use href="#i-send"></use></svg
+                    ></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="d-mockbox d-thumb">
+            <div class="stage">
+              <div class="win narrow">
+                <div class="win-head">
+                  <b>Routine</b><span class="spacer"></span><span class="spinner"></span>Test run in
+                  progress
+                </div>
+                <div class="win-body">
+                  <div class="pillbar">
+                    <span class="bolt"
+                      ><svg><use href="#i-bolt"></use></svg></span
+                    ><span class="p"
+                      ><svg><use href="#i-person"></use></svg>New Hire</span
+                    >
+                  </div>
+                  <div class="then">Then</div>
+                  <div class="rstep opaque">
+                    <span class="badge"
+                      ><svg><use href="#i-agent"></use></svg
+                    ></span>
+                    <div>
+                      <div>Agent</div>
+                      <div>Welcome and onboard the new hire</div>
+                    </div>
+                  </div>
+                  <div class="rstep opaque">
+                    <span class="badge"
+                      ><svg><use href="#i-agent"></use></svg
+                    ></span>
+                    <div>
+                      <div>Agent</div>
+                      <div>Check in after three days, loop in blockers</div>
+                    </div>
+                  </div>
+                </div>
+                <div class="win-foot">
+                  <span class="quiet">Active</span><span class="spacer"></span
+                  ><span class="btn btn-light btn-sm"
+                    ><svg><use href="#i-play"></use></svg>Run test</span
+                  >
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="d-mockbox d-thumb">
+            <div class="stage">
+              <div class="win narrow">
+                <div class="slack-head"># general <span class="sub">· 214 members</span></div>
+                <div class="msg">
+                  <div class="av" style="background: #202020">
+                    <svg width="14" height="14" style="color: #fff">
+                      <use href="#i-agent"></use>
+                    </svg>
+                  </div>
+                  <div>
+                    <div class="who">Agent<span class="app">APP</span><time>10:02 AM</time></div>
+                    <div class="txt">
+                      Please welcome <span class="mention">@Ada Lovelace</span>, who joins us as a
+                      Software Engineer on Monday! 🎉 Say hi and make her feel at home.
+                    </div>
+                  </div>
+                </div>
+                <div class="msg">
+                  <div class="av" style="background: #8e6bd8">GH</div>
+                  <div>
+                    <div class="who">Grace Hopper<time>10:05 AM</time></div>
+                    <div class="txt">
+                      Wait, was this supposed to go to #general? Her start date isn’t announced yet.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside class="notes">
+          Act one is how most AI agents work today. To be fair: the agent does ask before sensitive
+          actions and keeps an audit log. The question is when you learn what it&#x27;s going to do.
+        </aside>
+      </section>
+      <section class="slide d-frame" id="slide-4" data-slide="4">
+        <div class="d-meta"><span class="d-num">01</span></div>
+        <h2 class="d-title">Describe the job</h2>
+        <p class="d-caption">
+          The agent confirms what it’s been asked to do. Nothing on screen shows what it plans to
+          do.
+        </p>
+        <div class="d-mockbox">
+          <div class="stage">
+            <div class="win narrow">
+              <div class="win-head">
+                Agent <svg><use href="#i-chev"></use></svg><b>New hire onboarding</b>
+              </div>
+              <div class="win-body chat">
+                <div class="me">
+                  When someone new joins, welcome them on Slack, send our welcome email, and book 30
+                  minutes with their manager. Three days in, check how it’s going.
+                </div>
+                <div class="bot">
+                  Got it. I’ll run this whenever someone is hired, and I’ll ask you before anything
+                  sensitive.
+                </div>
+                <div class="quiet">Created routine <a>New hire onboarding</a> ›</div>
+                <div class="composer">
+                  Ask the agent…
+                  <span class="send"
+                    ><svg><use href="#i-send"></use></svg
+                  ></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside class="notes">
+          Here&#x27;s how most AI agents work today. You open the agent and describe the job in
+          plain language. It&#x27;s the exact request we&#x27;ll use in act two. The agent replies
+          that it understood and creates a routine. You don&#x27;t get any picture of what it&#x27;s
+          about to do.
+        </aside>
+      </section>
+      <section class="slide d-frame" id="slide-5" data-slide="5">
+        <div class="d-meta"><span class="d-num">02</span></div>
+        <h2 class="d-title">Set what it may do</h2>
+        <p class="d-caption">
+          Permissions are set broadly, based on what the creator thinks the agent needs to do its
+          job. Allowing email doesn’t say which email goes out or who gets it.
+        </p>
+        <div class="d-mockbox">
+          <div class="stage">
+            <div class="win narrow">
+              <div class="win-head">
+                <svg><use href="#i-shield"></use></svg><b>Agent permissions</b
+                ><span class="spacer"></span>Routine: New hire onboarding
+              </div>
+              <div class="win-body">
+                <div class="perm">
+                  <span class="ico"
+                    ><svg><use href="#i-slack"></use></svg
+                  ></span>
+                  <div class="what">
+                    <div>Send Slack messages</div>
+                    <div>Any channel or person</div>
+                  </div>
+                  <span class="seg"
+                    ><span class="on"
+                      ><svg><use href="#i-allow"></use></svg></span
+                    ><span class=""
+                      ><svg><use href="#i-hand"></use></svg></span
+                    ><span class=""
+                      ><svg><use href="#i-deny"></use></svg></span
+                  ></span>
+                </div>
+                <div class="perm">
+                  <span class="ico"
+                    ><svg><use href="#i-mail"></use></svg
+                  ></span>
+                  <div class="what">
+                    <div>Send email</div>
+                    <div>From people@acme.com</div>
+                  </div>
+                  <span class="seg"
+                    ><span class="on"
+                      ><svg><use href="#i-allow"></use></svg></span
+                    ><span class=""
+                      ><svg><use href="#i-hand"></use></svg></span
+                    ><span class=""
+                      ><svg><use href="#i-deny"></use></svg></span
+                  ></span>
+                </div>
+                <div class="perm">
+                  <span class="ico"
+                    ><svg><use href="#i-cal"></use></svg
+                  ></span>
+                  <div class="what">
+                    <div>Create calendar events</div>
+                    <div>On anyone’s calendar</div>
+                  </div>
+                  <span class="seg"
+                    ><span class="on"
+                      ><svg><use href="#i-allow"></use></svg></span
+                    ><span class=""
+                      ><svg><use href="#i-hand"></use></svg></span
+                    ><span class=""
+                      ><svg><use href="#i-deny"></use></svg></span
+                  ></span>
+                </div>
+                <div class="perm">
+                  <span class="ico"
+                    ><svg><use href="#i-person"></use></svg
+                  ></span>
+                  <div class="what">
+                    <div>Change employee records</div>
+                    <div>Asks you first</div>
+                  </div>
+                  <span class="seg"
+                    ><span class=""
+                      ><svg><use href="#i-allow"></use></svg></span
+                    ><span class="on"
+                      ><svg><use href="#i-hand"></use></svg></span
+                    ><span class=""
+                      ><svg><use href="#i-deny"></use></svg></span
+                  ></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside class="notes">
+          Next you set permissions on the agent: allow Slack, email and calendar; ask before
+          changing employee records. That feels like control, but each setting covers a whole
+          category. Allowing email doesn&#x27;t tell you which email goes out, to whom, or what it
+          says.
+        </aside>
+      </section>
+      <section class="slide d-frame" id="slide-6" data-slide="6">
+        <div class="d-meta"><span class="d-num">03</span></div>
+        <h2 class="d-title">Turn it on and test it</h2>
+        <p class="d-caption">The routine shows the agent’s general instructions.</p>
+        <div class="d-mockbox">
+          <div class="stage">
+            <div class="win narrow">
+              <div class="win-head">
+                <b>Routine</b><span class="spacer"></span><span class="spinner"></span>Test run in
+                progress
+              </div>
+              <div class="win-body">
+                <div class="pillbar">
+                  <span class="bolt"
+                    ><svg><use href="#i-bolt"></use></svg></span
+                  ><span class="p"
+                    ><svg><use href="#i-person"></use></svg>New Hire</span
+                  >
+                </div>
+                <div class="then">Then</div>
+                <div class="rstep opaque">
+                  <span class="badge"
+                    ><svg><use href="#i-agent"></use></svg
+                  ></span>
+                  <div>
+                    <div>Agent</div>
+                    <div>Welcome and onboard the new hire</div>
+                  </div>
+                </div>
+                <div class="rstep opaque">
+                  <span class="badge"
+                    ><svg><use href="#i-agent"></use></svg
+                  ></span>
+                  <div>
+                    <div>Agent</div>
+                    <div>Check in after three days, loop in blockers</div>
+                  </div>
+                </div>
+              </div>
+              <div class="win-foot">
+                <span class="quiet">Active</span><span class="spacer"></span
+                ><span class="btn btn-light btn-sm"
+                  ><svg><use href="#i-play"></use></svg>Run test</span
+                >
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside class="notes">
+          The routine is on. All you can see is the agent&#x27;s general instructions, a sentence of
+          intent for each part of the job. The only way to find out what that means is to run a
+          test.
+        </aside>
+      </section>
+      <section class="slide d-frame" id="slide-7" data-slide="7">
+        <div class="d-meta"><span class="d-num">04</span></div>
+        <h2 class="d-title">It asks along the way</h2>
+        <p class="d-caption">Approvals arrive one action at a time during the run.</p>
+        <div class="d-mockbox">
+          <div class="stage">
+            <div class="ghost-card" style="top: -18px">Confirm action · Order Ada’s laptop?</div>
+            <div class="win narrow confirm" style="position: relative">
+              <div class="win-body">
+                <div class="kicker">Confirm action</div>
+                <h4>Send a welcome email to Ada Lovelace?</h4>
+                <dl class="kv">
+                  <dt>Person</dt>
+                  <dd><span class="mention">Ada Lovelace</span></dd>
+                  <dt>Subject</dt>
+                  <dd>Welcome to Acme!</dd>
+                  <dt>Reason</dt>
+                  <dd>New hire routine</dd>
+                </dl>
+              </div>
+              <div class="win-foot">
+                <span class="btn btn-light btn-sm"
+                  ><svg><use href="#i-agent"></use></svg>Ask Agent</span
+                ><span class="spacer"></span><span class="btn btn-light btn-sm">Deny</span
+                ><span class="btn btn-dark btn-sm">Confirm</span>
+              </div>
+            </div>
+            <div class="ghost-card" style="bottom: -18px">
+              Confirm action · Book 30 minutes with Grace?
+            </div>
+          </div>
+        </div>
+        <aside class="notes">
+          During the run it asks for confirmation on sensitive actions. That&#x27;s a real
+          safeguard. But each approval arrives on its own, mid-run. You&#x27;re judging one email
+          without knowing what came before it or what comes next.
+        </aside>
+      </section>
+      <section class="slide d-frame" id="slide-8" data-slide="8">
+        <div class="d-meta"><span class="d-num">05</span></div>
+        <h2 class="d-title">Check the log afterwards</h2>
+        <p class="d-caption">
+          You only know what happened from what the audit log recorded after the run.
+        </p>
+        <div class="d-questions">
+          <div class="d-questions-label">Questions the log can’t answer</div>
+          <ul>
+            <li>Will engineers and sales people get different emails?</li>
+            <li>Will it post in #general every time?</li>
+            <li>What do I re-prompt to change one thing?</li>
+          </ul>
+        </div>
+        <div class="d-mockbox">
+          <div class="stage">
+            <div class="win">
+              <div class="win-head">
+                <svg><use href="#i-list"></use></svg><b>Activity</b><span class="spacer"></span>New
+                hire onboarding · test run
+              </div>
+              <table class="log">
+                <tbody>
+                  <tr>
+                    <th>Time</th>
+                    <th>Action</th>
+                    <th>Detail</th>
+                  </tr>
+                  <tr>
+                    <td class="t">10:02:11</td>
+                    <td>Read employee</td>
+                    <td class="d">Ada Lovelace</td>
+                  </tr>
+                  <tr>
+                    <td class="t">10:02:14</td>
+                    <td>Posted in Slack</td>
+                    <td class="d">#general, 1 message</td>
+                  </tr>
+                  <tr>
+                    <td class="t">10:02:40</td>
+                    <td>Sent email</td>
+                    <td class="d">ada@acme.com, “Welcome to Acme!”</td>
+                  </tr>
+                  <tr>
+                    <td class="t">10:03:02</td>
+                    <td>Created event</td>
+                    <td class="d">Intro with Grace, Tue 2:00 PM</td>
+                  </tr>
+                  <tr>
+                    <td class="t">10:03:05</td>
+                    <td>Scheduled follow-up</td>
+                    <td class="d">In 3 days</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+        <aside class="notes">
+          This is the verify half. The audit log is accurate and useful, but it&#x27;s a receipt. It
+          tells you what this run did. It can&#x27;t tell you what the next hire gets, or how to
+          change one thing without moving something else.
+        </aside>
+      </section>
+      <section class="slide d-dark" id="slide-9" data-slide="9">
+        <h2 class="d-dark-title">You grant trust before the run and check the work after it.</h2>
+        <div class="d-cols">
+          <div class="d-col">
+            <span class="d-tile"
+              ><svg class="d-ico"><use href="#i-shield" /></svg
+            ></span>
+            <h3>Permissions are broad</h3>
+            <p>They cover kinds of action, so the agent picks the specifics as it runs.</p>
+          </div>
+          <div class="d-col">
+            <span class="d-tile"
+              ><svg class="d-ico"><use href="#i-list" /></svg
+            ></span>
+            <h3>The log is a receipt</h3>
+            <p>It records what one run did. The next run is decided again from scratch.</p>
+          </div>
+        </div>
+        <aside class="notes">
+          So in act one, you grant trust before you know what you&#x27;re trusting, and you verify
+          after the fact. Permissions are categories. The log is a receipt. And every run gets
+          decided again.
+        </aside>
+      </section>
+      <section class="slide d-section" id="slide-10" data-slide="10">
+        <h1 class="d-section-title">Act two: agent-built workflow</h1>
+        <div class="d-thumbs">
+          <div class="d-mockbox d-thumb">
+            <div class="stage tall">
+              <div class="win">
+                <div class="win-head">
+                  <span class="tag">Draft</span><b>Launch a great first week</b
+                  ><span class="spacer"></span>{ } JSON
+                </div>
+                <div class="win-body">
+                  <div class="wf">
+                    <div class="trig">
+                      <span class="ico"
+                        ><svg><use href="#i-bolt"></use></svg></span
+                      >When an employee’s <span class="ref">start_date</span> is set
+                    </div>
+                    <div class="step">
+                      <span class="ico"
+                        ><svg><use href="#i-branch"></use></svg
+                      ></span>
+                      <div class="title">Get the first day ready</div>
+                      <div class="sub">3 branches run at the same time</div>
+                      <div class="branch">
+                        <div class="lbl">
+                          Branch 1 · Find time for a manager welcome
+                          <span class="tag">Calendar</span>
+                        </div>
+                        <div class="lbl">
+                          Branch 2 · Give the manager a heads-up <span class="tag live">Slack</span>
+                        </div>
+                        <div class="lbl">
+                          Branch 3 · Welcome them in #general <span class="tag live">Slack</span>
+                          <span class="tag ask">You notice this</span>
+                        </div>
+                        <div class="card tint" style="box-shadow: 0 0 0 1px var(--accent-line)">
+                          <div class="row"><span>To</span><span>#general</span></div>
+                          <div class="row">
+                            <span>Message</span
+                            ><span
+                              >Please welcome <span class="ref">employee.name</span>, who joins us
+                              as <span class="ref">employee.role</span> on
+                              <span class="ref">employee.start_date</span>!</span
+                            >
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="step">
+                      <span class="ico"
+                        ><svg><use href="#i-mail"></use></svg
+                      ></span>
+                      <div class="title">Send the right welcome email</div>
+                      <div class="sub">
+                        Send an email <span class="tag ask">Asks People Ops</span>
+                      </div>
+                      <div class="card">
+                        <div class="row">
+                          <span>If</span
+                          ><span
+                            >Role contains “engineer”:
+                            <b style="font-weight: 500">Engineering welcome email</b></span
+                          >
+                        </div>
+                        <div class="row">
+                          <span>Otherwise</span
+                          ><span><b style="font-weight: 500">Welcome email</b></span>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="step">
+                      <span class="ico"
+                        ><svg><use href="#i-cal"></use></svg
+                      ></span>
+                      <div class="title">Book their first conversation</div>
+                      <div class="sub">
+                        30 minutes with <span class="ref">employee.manager</span> at the first open
+                        time
+                      </div>
+                    </div>
+                    <div class="step">
+                      <span class="ico"
+                        ><svg><use href="#i-hourglass"></use></svg
+                      ></span>
+                      <div class="title">Give them three days to settle in</div>
+                      <div class="sub">
+                        Until 3 days after <span class="ref">employee.start_date</span>
+                      </div>
+                    </div>
+                    <div class="step">
+                      <span class="ico"
+                        ><svg><use href="#i-person"></use></svg
+                      ></span>
+                      <div class="title">Ask the manager how it’s going</div>
+                      <div class="sub">
+                        <span class="ref">employee.manager</span> fills in: buddy, first project,
+                        help needed
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="d-mockbox d-thumb">
+            <div class="stage tall">
+              <div class="split">
+                <div class="win">
+                  <div class="win-body chat">
+                    <div class="me">
+                      Not #general, their start isn’t announced yet. Welcome engineers in #eng-team
+                      instead.
+                    </div>
+                    <div class="bot">
+                      Changed the welcome post to <b style="font-weight: 500">#eng-team</b>, only
+                      for engineering hires. Nothing goes to #general.
+                    </div>
+                  </div>
+                </div>
+                <div class="win">
+                  <div class="win-body">
+                    <div class="wf">
+                      <div class="step faded">
+                        <span class="ico"
+                          ><svg><use href="#i-mail"></use></svg
+                        ></span>
+                        <div class="title">Send the right welcome email</div>
+                      </div>
+                      <div class="step new">
+                        <span class="ico"
+                          ><svg><use href="#i-chat"></use></svg
+                        ></span>
+                        <div class="title">
+                          Welcome them in #eng-team <span class="tag added">Changed</span>
+                        </div>
+                        <div class="sub">
+                          Only if <span class="ref">employee.role</span> contains “engineer” · Send
+                          a Slack message
+                        </div>
+                        <div class="card" style="background: #fff">
+                          <div class="row">
+                            <span>To</span
+                            ><span
+                              >#eng-team
+                              <span class="quiet" style="text-decoration: line-through"
+                                >#general</span
+                              ></span
+                            >
+                          </div>
+                          <div class="row">
+                            <span>Message</span
+                            ><span
+                              >Say hi to <span class="ref">employee.name</span>, who joins us as
+                              <span class="ref">employee.role</span> on
+                              <span class="ref">employee.start_date</span>!</span
+                            >
+                          </div>
+                        </div>
+                      </div>
+                      <div class="step faded">
+                        <span class="ico"
+                          ><svg><use href="#i-cal"></use></svg
+                        ></span>
+                        <div class="title">Book their first conversation</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="d-mockbox d-thumb">
+            <div class="stage">
+              <div class="win narrow">
+                <div class="win-head">
+                  Run · Ada Lovelace <svg><use href="#i-chev"></use></svg
+                  ><b>Send the right welcome email</b>
+                </div>
+                <div class="win-body">
+                  <dl class="kv" style="grid-template-columns: 92px 1fr">
+                    <dt>Path taken</dt>
+                    <dd>Role contains “engineer”</dd>
+                    <dt>Template</dt>
+                    <dd>Engineering welcome email</dd>
+                    <dt>Approved by</dt>
+                    <dd>Grace Hopper, People Ops · 10:14 AM</dd>
+                    <dt>Sent to</dt>
+                    <dd>ada@acme.com</dd>
+                    <dt>Recorded</dt>
+                    <dd>Message ID msg_8f2c41</dd>
+                  </dl>
+                </div>
+                <div class="win-foot">
+                  <span class="quiet">Saved version from Oct 13</span><span class="spacer"></span
+                  ><span class="btn btn-light btn-sm">Open in studio</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside class="notes">
+          Act two is the same request in Automations studio. Show people the plan, let them change
+          it by talking, and only then run it.
+        </aside>
+      </section>
+      <section class="slide d-frame" id="slide-11" data-slide="11">
+        <div class="d-meta"><span class="d-num">01</span></div>
+        <h2 class="d-title">Describe the job</h2>
+        <p class="d-caption">
+          The request goes to the studio agent. Where there’s a real choice, it asks before
+          drafting.
+        </p>
+        <div class="d-mockbox">
+          <div class="stage">
+            <div class="win narrow">
+              <div class="win-head">
+                <b>Studio agent</b><span class="spacer"></span>Launch a great first week
+              </div>
+              <div class="win-body chat">
+                <div class="me">
+                  When someone new joins, welcome them on Slack, send our welcome email, and book 30
+                  minutes with their manager. Three days in, check how it’s going.
+                </div>
+                <div class="q">
+                  <div class="qh">
+                    Should People Ops review the welcome email before it goes out?
+                    <span>1 of 1</span>
+                  </div>
+                  <div class="opt sel">
+                    <span class="k">1</span>
+                    <div>
+                      <div>Yes, People Ops approves each one</div>
+                      <div>Every run waits for their approval</div>
+                    </div>
+                  </div>
+                  <div class="opt">
+                    <span class="k">2</span>
+                    <div>
+                      <div>No, send it automatically</div>
+                      <div>Uses your approved templates as written</div>
+                    </div>
+                  </div>
+                  <div class="opt">
+                    <span class="k">3</span>
+                    <div><div class="quiet">Write your own answer</div></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside class="notes">
+          Same words, typed into the studio. Instead of guessing, the planner asks a real question:
+          should People Ops review the welcome email? The answer goes into the plan you&#x27;ll read
+          next.
+        </aside>
+      </section>
+      <section class="slide d-frame" id="slide-12" data-slide="12">
+        <div class="d-meta"><span class="d-num">02</span></div>
+        <h2 class="d-title">Review before run</h2>
+        <p class="d-caption">
+          Every step, message and recipient is on screen. The studio agent also chose #general, and
+          you can see it before anyone gets a message.
+        </p>
+        <div class="d-mockbox">
+          <div class="stage tall">
+            <div class="win">
+              <div class="win-head">
+                <span class="tag">Draft</span><b>Launch a great first week</b
+                ><span class="spacer"></span>{ } JSON
+              </div>
+              <div class="win-body">
+                <div class="wf">
+                  <div class="trig">
+                    <span class="ico"
+                      ><svg><use href="#i-bolt"></use></svg></span
+                    >When an employee’s <span class="ref">start_date</span> is set
+                  </div>
+                  <div class="step">
+                    <span class="ico"
+                      ><svg><use href="#i-branch"></use></svg
+                    ></span>
+                    <div class="title">Get the first day ready</div>
+                    <div class="sub">3 branches run at the same time</div>
+                    <div class="branch">
+                      <div class="lbl">
+                        Branch 1 · Find time for a manager welcome <span class="tag">Calendar</span>
+                      </div>
+                      <div class="lbl">
+                        Branch 2 · Give the manager a heads-up <span class="tag live">Slack</span>
+                      </div>
+                      <div class="lbl">
+                        Branch 3 · Welcome them in #general <span class="tag live">Slack</span>
+                      </div>
+                      <div class="card tint" style="box-shadow: 0 0 0 1px var(--accent-line)">
+                        <div class="row"><span>To</span><span>#general</span></div>
+                        <div class="row">
+                          <span>Message</span
+                          ><span
+                            >Please welcome <span class="ref">employee.name</span>, who joins us as
+                            <span class="ref">employee.role</span> on
+                            <span class="ref">employee.start_date</span>!</span
+                          >
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="step">
+                    <span class="ico"
+                      ><svg><use href="#i-mail"></use></svg
+                    ></span>
+                    <div class="title">Send the right welcome email</div>
+                    <div class="sub">
+                      Send an email <span class="tag ask">Asks People Ops</span>
+                    </div>
+                    <div class="card">
+                      <div class="row">
+                        <span>If</span
+                        ><span
+                          >Role contains “engineer”:
+                          <b style="font-weight: 500">Engineering welcome email</b></span
+                        >
+                      </div>
+                      <div class="row">
+                        <span>Otherwise</span
+                        ><span><b style="font-weight: 500">Welcome email</b></span>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="step">
+                    <span class="ico"
+                      ><svg><use href="#i-cal"></use></svg
+                    ></span>
+                    <div class="title">Book their first conversation</div>
+                    <div class="sub">
+                      30 minutes with <span class="ref">employee.manager</span> at the first open
+                      time
+                    </div>
+                  </div>
+                  <div class="step">
+                    <span class="ico"
+                      ><svg><use href="#i-hourglass"></use></svg
+                    ></span>
+                    <div class="title">Give them three days to settle in</div>
+                    <div class="sub">
+                      Until 3 days after <span class="ref">employee.start_date</span>
+                    </div>
+                  </div>
+                  <div class="step">
+                    <span class="ico"
+                      ><svg><use href="#i-person"></use></svg
+                    ></span>
+                    <div class="title">Ask the manager how it’s going</div>
+                    <div class="sub">
+                      <span class="ref">employee.manager</span> fills in: buddy, first project, help
+                      needed
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside class="notes">
+          This is the moment that matters. The whole plan is on screen before anything runs: the
+          trigger, the parallel prep, which template each role gets, who approves the email, the
+          wait, the check-in. Look at branch three. The planner made the same #general call the
+          agent in act one did. Here you can see it before it reaches anyone.
+        </aside>
+      </section>
+      <section class="slide d-frame" id="slide-13" data-slide="13">
+        <div class="d-meta"><span class="d-num">03</span></div>
+        <h2 class="d-title">Update through chat</h2>
+        <p class="d-caption">
+          You tell the agent what you want and it updates the plan accordingly.
+        </p>
+        <div class="d-mockbox">
+          <div class="stage tall">
+            <div class="split">
+              <div class="win">
+                <div class="win-body chat">
+                  <div class="me">
+                    Not #general, their start isn’t announced yet. Welcome engineers in #eng-team
+                    instead.
+                  </div>
+                  <div class="bot">
+                    Changed the welcome post to <b style="font-weight: 500">#eng-team</b>, only for
+                    engineering hires. Nothing goes to #general.
+                  </div>
+                </div>
+              </div>
+              <div class="win">
+                <div class="win-body">
+                  <div class="wf">
+                    <div class="step faded">
+                      <span class="ico"
+                        ><svg><use href="#i-mail"></use></svg
+                      ></span>
+                      <div class="title">Send the right welcome email</div>
+                    </div>
+                    <div class="step new">
+                      <span class="ico"
+                        ><svg><use href="#i-chat"></use></svg
+                      ></span>
+                      <div class="title">
+                        Welcome them in #eng-team <span class="tag added">Changed</span>
+                      </div>
+                      <div class="sub">
+                        Only if <span class="ref">employee.role</span> contains “engineer” · Send a
+                        Slack message
+                      </div>
+                      <div class="card" style="background: #fff">
+                        <div class="row">
+                          <span>To</span
+                          ><span
+                            >#eng-team
+                            <span class="quiet" style="text-decoration: line-through"
+                              >#general</span
+                            ></span
+                          >
+                        </div>
+                        <div class="row">
+                          <span>Message</span
+                          ><span
+                            >Say hi to <span class="ref">employee.name</span>, who joins us as
+                            <span class="ref">employee.role</span> on
+                            <span class="ref">employee.start_date</span>!</span
+                          >
+                        </div>
+                      </div>
+                    </div>
+                    <div class="step faded">
+                      <span class="ico"
+                        ><svg><use href="#i-cal"></use></svg
+                      ></span>
+                      <div class="title">Book their first conversation</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside class="notes">
+          So you say what you want: not #general, welcome engineers in #eng-team instead. The
+          planner changes that one step, and the change is marked so you can read exactly what
+          moved.
+        </aside>
+      </section>
+      <section class="slide d-frame" id="slide-14" data-slide="14">
+        <div class="d-meta">
+          <span class="d-num">04</span><span class="d-pill ok">Works today</span>
+        </div>
+        <h2 class="d-title">Permissions attach to the plan</h2>
+        <p class="d-caption">
+          Only the permissions the workflow uses are shown, each tied to its step in the workflow.
+          When People Ops approves, they approve this exact email.
+        </p>
+        <div class="d-mockbox">
+          <div class="stage">
+            <div class="win narrow">
+              <div class="win-head">
+                <svg><use href="#i-shield"></use></svg><b>Permissions</b
+                ><span class="spacer"></span>Operations this workflow uses
+              </div>
+              <div class="win-body">
+                <div class="perm">
+                  <span class="ico"
+                    ><svg><use href="#i-mail"></use></svg
+                  ></span>
+                  <div class="what">
+                    <div>Send an email</div>
+                    <div>1 step · Send the welcome email</div>
+                  </div>
+                  <span class="select"
+                    >Ask People Ops<svg><use href="#i-down"></use></svg
+                  ></span>
+                </div>
+                <div class="perm">
+                  <span class="ico"
+                    ><svg><use href="#i-slack"></use></svg
+                  ></span>
+                  <div class="what">
+                    <div>Send a Slack message</div>
+                    <div>2 steps · heads-up, #eng-team welcome</div>
+                  </div>
+                  <span class="select"
+                    >Allow<svg><use href="#i-down"></use></svg
+                  ></span>
+                </div>
+                <div class="perm">
+                  <span class="ico"
+                    ><svg><use href="#i-cal"></use></svg
+                  ></span>
+                  <div class="what">
+                    <div>Create a calendar event</div>
+                    <div>1 step · Book their first conversation</div>
+                  </div>
+                  <span class="select"
+                    >Allow<svg><use href="#i-down"></use></svg
+                  ></span>
+                </div>
+                <div class="perm">
+                  <span class="ico"
+                    ><svg><use href="#i-cal"></use></svg
+                  ></span>
+                  <div class="what">
+                    <div>Find open times</div>
+                    <div>1 step · Find time for a manager welcome</div>
+                  </div>
+                  <span class="select"
+                    >Allow<svg><use href="#i-down"></use></svg
+                  ></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside class="notes">
+          Permissions here belong to the operations this workflow uses, and each one lists its
+          steps. Asking People Ops about email means they approve this specific message.
+        </aside>
+      </section>
+      <section class="slide d-frame" id="slide-15" data-slide="15">
+        <div class="d-meta"><span class="d-num">05</span></div>
+        <h2 class="d-title">Run it on a real record</h2>
+        <p class="d-caption">
+          The run follows the saved plan step by step. Editing the draft afterwards doesn’t touch
+          runs already going.
+        </p>
+        <div class="d-mockbox">
+          <div class="stage">
+            <div class="win narrow">
+              <div class="win-head">
+                <b>Run</b> · Ada Lovelace<span class="spacer"></span
+                ><span class="tag">Saved version</span>
+              </div>
+              <div class="win-body">
+                <div class="runrow">
+                  <span class="st done"
+                    ><svg><use href="#i-check"></use></svg></span
+                  ><span class="name">Find time for a manager welcome</span
+                  ><span class="meta">4 open times</span>
+                </div>
+                <div class="runrow">
+                  <span class="st done"
+                    ><svg><use href="#i-check"></use></svg></span
+                  ><span class="name">Give the manager a heads-up</span
+                  ><span class="meta">Sent to Grace</span>
+                </div>
+                <div class="runrow">
+                  <span class="st done"
+                    ><svg><use href="#i-check"></use></svg></span
+                  ><span class="name">Welcome them in #eng-team</span
+                  ><span class="meta">Posted</span>
+                </div>
+                <div class="runrow">
+                  <span class="st wait"></span><span class="name">Send the right welcome email</span
+                  ><span class="meta" style="color: var(--accent)">Waiting for People Ops</span>
+                </div>
+                <div class="runrow dim">
+                  <span class="st todo"></span
+                  ><span class="name">Book their first conversation</span>
+                </div>
+                <div class="runrow dim">
+                  <span class="st todo"></span
+                  ><span class="name">Give them three days to settle in</span>
+                </div>
+              </div>
+              <div class="win-foot">
+                <span class="select"
+                  >Ada Lovelace<svg><use href="#i-down"></use></svg></span
+                ><span class="spacer"></span
+                ><span class="btn btn-dark btn-sm"
+                  ><svg><use href="#i-play"></use></svg>Run saved version</span
+                >
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside class="notes">
+          Save, pick Ada, run. The run walks the plan you already read, one row per step. Because
+          runs use the saved version, you can keep editing the draft without touching anything in
+          flight.
+        </aside>
+      </section>
+      <section class="slide d-frame" id="slide-16" data-slide="16">
+        <div class="d-meta"><span class="d-num">06</span></div>
+        <h2 class="d-title">Approve in Slack</h2>
+        <p class="d-caption">
+          People Ops gets a direct message with the finished email and a link to the run.
+        </p>
+        <div class="d-mockbox">
+          <div class="stage">
+            <div class="win narrow">
+              <div class="slack-head">Automations <span class="sub">· direct message</span></div>
+              <div class="msg">
+                <div class="av" style="background: #202020">
+                  <svg width="14" height="14" style="color: #fff"><use href="#i-eye"></use></svg>
+                </div>
+                <div>
+                  <div class="who">
+                    Automations<span class="app">APP</span><time>10:03 AM</time>
+                  </div>
+                  <div class="txt">
+                    <b>Launch a great first week</b> needs People Ops to approve an email before it
+                    goes to <span class="mention">Ada Lovelace</span>.
+                  </div>
+                  <div class="attach">
+                    <div class="row"><span>Template:</span> Engineering welcome email</div>
+                    <div class="row">
+                      <span>Subject:</span> Welcome to engineering, Ada Lovelace
+                    </div>
+                    <div class="row">
+                      <span>Body:</span> Hi Ada Lovelace, welcome to the engineering team! You start
+                      on 2026-11-02, and Grace Hopper will be your manager…
+                    </div>
+                  </div>
+                  <span class="sbtn">Open in Studio</span><span class="sbtn go dim">Approve</span
+                  ><span class="sbtn no dim">Reject</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside class="notes">
+          People Ops gets a DM with the finished email and a link into the run. They approve with
+          the whole plan behind it.
+        </aside>
+      </section>
+      <section class="slide d-frame" id="slide-17" data-slide="17">
+        <div class="d-meta"><span class="d-num">07</span></div>
+        <h2 class="d-title">The results match the plan</h2>
+        <p class="d-caption">
+          The Slack message and the welcome email arrive word for word as reviewed.
+        </p>
+        <div class="d-mockbox">
+          <div class="stage tall">
+            <div class="split">
+              <div class="win">
+                <div class="slack-head">
+                  Automations <span class="sub">· direct message to Grace Hopper</span
+                  ><span style="flex: 1"></span><span class="tag live">Sent</span>
+                </div>
+                <div class="msg">
+                  <div class="av" style="background: #202020">
+                    <svg width="14" height="14" style="color: #fff"><use href="#i-eye"></use></svg>
+                  </div>
+                  <div>
+                    <div class="who">
+                      Automations<span class="app">APP</span><time>10:02 AM</time>
+                    </div>
+                    <div class="txt">
+                      Ada Lovelace joins as Software Engineer on 2026-11-02. Please pick a buddy and
+                      have their first project ready.
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div class="win">
+                <div class="mail-head">
+                  <div class="subj">Welcome to engineering, Ada Lovelace</div>
+                  <div class="from">
+                    <span class="av round" style="background: #ff3e02">A</span>Acme People Team · to
+                    ada@acme.com<span style="flex: 1"></span><span class="tag live">Sent</span>
+                  </div>
+                </div>
+                <div class="mail-body">
+                  Hi Ada Lovelace,<br /><br />Welcome to the engineering team! You start on
+                  2026-11-02, and Grace Hopper will be your manager.<br /><br />In your first week
+                  you’ll set up your development environment, pair with a teammate on a small
+                  change, and ship it to production.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside class="notes">
+          And the results arrive exactly as reviewed: the heads-up to the manager in Slack, and the
+          engineering welcome email in Ada&#x27;s inbox.
+        </aside>
+      </section>
+      <section class="slide d-frame" id="slide-18" data-slide="18">
+        <div class="d-meta"><span class="d-num">08</span></div>
+        <h2 class="d-title">Come back to one step</h2>
+        <p class="d-caption">
+          Open the step in the run to see which path it took, who approved it, and what it sent.
+        </p>
+        <div class="d-mockbox">
+          <div class="stage">
+            <div class="win narrow">
+              <div class="win-head">
+                Run · Ada Lovelace <svg><use href="#i-chev"></use></svg
+                ><b>Send the right welcome email</b>
+              </div>
+              <div class="win-body">
+                <dl class="kv" style="grid-template-columns: 92px 1fr">
+                  <dt>Path taken</dt>
+                  <dd>Role contains “engineer”</dd>
+                  <dt>Template</dt>
+                  <dd>Engineering welcome email</dd>
+                  <dt>Approved by</dt>
+                  <dd>Grace Hopper, People Ops · 10:14 AM</dd>
+                  <dt>Sent to</dt>
+                  <dd>ada@acme.com</dd>
+                  <dt>Recorded</dt>
+                  <dd>Message ID msg_8f2c41</dd>
+                </dl>
+              </div>
+              <div class="win-foot">
+                <span class="quiet">Saved version from Oct 13</span><span class="spacer"></span
+                ><span class="btn btn-light btn-sm">Open in studio</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside class="notes">
+          Weeks later someone asks about Ada&#x27;s email. You don&#x27;t search a log. You open
+          that step on the run: which branch it took, which template, who approved it and when, what
+          it sent.
+        </aside>
+      </section>
+      <section class="slide d-frame" id="slide-19" data-slide="19">
+        <div class="d-meta"><span class="d-num">09</span></div>
+        <h2 class="d-title">The manager checks in</h2>
+        <p class="d-caption">
+          The check-in is a form you designed. The manager’s answers are saved on the run.
+        </p>
+        <div class="d-mockbox">
+          <div class="stage">
+            <div class="win narrow">
+              <div class="win-head">
+                <svg><use href="#i-person"></use></svg><b>Ask the manager how it’s going</b
+                ><span class="spacer"></span>For Grace Hopper
+              </div>
+              <div class="win-body">
+                <div style="margin-bottom: 10px">
+                  How is <span class="ref">Ada Lovelace</span> settling in? Record their buddy,
+                  first project, and anything they need help with.
+                </div>
+                <div class="card">
+                  <div class="row"><span>Buddy</span><span>Katherine Johnson</span></div>
+                  <div class="row">
+                    <span>Project</span><span>Ship the onboarding checklist API</span>
+                  </div>
+                  <div class="row">
+                    <span>Help</span><span>Access to the staging database</span>
+                  </div>
+                </div>
+              </div>
+              <div class="win-foot">
+                <span class="quiet">Answered in the studio</span><span class="spacer"></span
+                ><span class="btn btn-dark btn-sm">Submit</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <aside class="notes">
+          The human step is one you designed, with the exact fields you asked for. The
+          manager&#x27;s answers live on the run for whoever comes back later.
+        </aside>
+      </section>
+      <section class="slide d-dark" id="slide-20" data-slide="20">
+        <h2 class="d-dark-title">You trust the run because you read the plan first.</h2>
+        <div class="d-cols">
+          <div class="d-col">
+            <span class="d-tile"
+              ><svg class="d-ico"><use href="#i-list" /></svg
+            ></span>
+            <h3>Runs follow the saved plan</h3>
+            <p>The same input gets the same steps every time.</p>
+          </div>
+          <div class="d-col">
+            <span class="d-tile"
+              ><svg class="d-ico"><use href="#i-chat" /></svg
+            ></span>
+            <h3>Chat edits the plan</h3>
+            <p>Talking to the planner changes steps you can read before they run.</p>
+          </div>
+        </div>
+        <aside class="notes">
+          In act two, trust comes from reading. The saved plan is what every run follows, and
+          conversation edits that plan rather than steering a black box.
+        </aside>
+      </section>
+      <section class="slide d-compare" id="slide-21" data-slide="21">
+        <h2 class="d-page-title">How the two approaches compare</h2>
+        <table class="d-table">
+          <thead>
+            <tr>
+              <th>Question</th>
+              <th>Agent delegation</th>
+              <th class="d-accent">Agent-built workflow</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>When do you learn what it will do?</td>
+              <td>After a run, from its output and log</td>
+              <td>Before saving, from the plan on screen</td>
+            </tr>
+            <tr>
+              <td>What does a permission cover?</td>
+              <td>A kind of action, like sending email</td>
+              <td>The steps that use an operation, with their exact messages</td>
+            </tr>
+            <tr>
+              <td>What does an approver see?</td>
+              <td>One action, in the middle of a run</td>
+              <td>The finished message inside the plan it belongs to</td>
+            </tr>
+            <tr>
+              <td>How do you update it?</td>
+              <td>Re-prompt the agent and run it again</td>
+              <td>Ask the planner, then read the changed step</td>
+            </tr>
+            <tr>
+              <td>Where do problems show up?</td>
+              <td>In the agent trace or audit log</td>
+              <td>On the step in the run that caused them</td>
+            </tr>
+            <tr>
+              <td>Will the next run match this one?</td>
+              <td>The agent decides again each time</td>
+              <td>It follows the same saved plan</td>
+            </tr>
+          </tbody>
+        </table>
+        <aside class="notes">
+          Here&#x27;s the whole argument in one table. The left column isn&#x27;t wrong; it&#x27;s
+          just later. Every row on the right moves the moment of understanding to before anything
+          runs.
+        </aside>
+      </section>
+      <section class="slide d-dark d-close" id="slide-22" data-slide="22">
+        <h2 class="d-dark-title">Agents and workflows aren’t mutually exclusive.</h2>
+        <div class="d-steps">
+          <div class="d-step">
+            <span class="d-tile"
+              ><svg class="d-ico"><use href="#i-agent" /></svg
+            ></span>
+            <div>
+              <h3>Agents can run workflows</h3>
+              <p>An agent can start a saved workflow and follow its steps.</p>
+            </div>
+          </div>
+          <div class="d-step">
+            <span class="d-tile"
+              ><svg class="d-ico"><use href="#i-branch" /></svg
+            ></span>
+            <div>
+              <h3>Workflows can invoke agents</h3>
+              <p>A workflow step can hand a task to an agent.</p>
+            </div>
+          </div>
+          <div class="d-step">
+            <span class="d-tile"
+              ><svg class="d-ico"><use href="#i-eye" /></svg
+            ></span>
+            <div>
+              <h3>Confidence for the user</h3>
+              <p>People understand what actions will be performed on their behalf.</p>
+            </div>
+          </div>
+        </div>
+        <aside class="notes">
+          Agents and workflows aren&#x27;t mutually exclusive. Agents can run workflows, and
+          workflows can invoke agents. The goal is to give people confidence that they understand
+          what actions will be performed on their behalf.
+        </aside>
+      </section>
+    </div>
+    <nav class="deck-nav">
+      <button class="deck-prev" aria-label="Previous slide">‹</button
+      ><span class="deck-count"></span><button class="deck-next" aria-label="Next slide">›</button>
+    </nav>
+    <div class="deck-notes"></div>
+    <script>
+      (() => {
+        const slides = [...document.querySelectorAll(".slide")];
+        const canvas = document.querySelector(".deck-canvas");
+        const counter = document.querySelector(".deck-count");
+        const notes = document.querySelector(".deck-notes");
+        let current = 1;
+
+        function scale() {
+          const s = Math.min(innerWidth / 1600, innerHeight / 900);
+          canvas.style.transform = `translate(-50%, -50%) scale(${s})`;
+        }
+
+        // Zoom each live mock so it fills its box without overflowing.
+        function fitMocks() {
+          document.querySelectorAll(".d-mockbox").forEach((box) => {
+            const stage = box.firstElementChild;
+            if (!stage) return;
+            stage.style.zoom = 1;
+            const z = Math.min(
+              box.clientWidth / stage.offsetWidth,
+              box.clientHeight / stage.offsetHeight,
+            );
+            stage.style.zoom = z;
+          });
+        }
+
+        function show(n) {
+          current = Math.max(1, Math.min(slides.length, n));
+          slides.forEach((s) => s.classList.toggle("active", Number(s.dataset.slide) === current));
+          counter.textContent = `${current} / ${slides.length}`;
+          const aside = slides[current - 1].querySelector(".notes");
+          notes.textContent = aside ? aside.textContent : "";
+          if (location.hash !== `#slide-${current}`)
+            history.replaceState(null, "", `#slide-${current}`);
+        }
+
+        function fromHash() {
+          const m = location.hash.match(/^#slide-(\d+)$/);
+          show(m ? Number(m[1]) : 1);
+        }
+
+        addEventListener("keydown", (ev) => {
+          const t = ev.target;
+          if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+          if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+          if (["ArrowRight", "PageDown", " "].includes(ev.key)) {
+            ev.preventDefault();
+            show(current + 1);
+          } else if (["ArrowLeft", "PageUp"].includes(ev.key)) {
+            ev.preventDefault();
+            show(current - 1);
+          } else if (ev.key === "Home") show(1);
+          else if (ev.key === "End") show(slides.length);
+          else if (ev.key === "n") notes.classList.toggle("open");
+        });
+        document.querySelector(".deck-prev").addEventListener("click", () => show(current - 1));
+        document.querySelector(".deck-next").addEventListener("click", () => show(current + 1));
+        addEventListener("hashchange", fromHash);
+        addEventListener("resize", scale);
+
+        scale();
+        fitMocks();
+        fromHash();
+        document.fonts && document.fonts.ready.then(fitMocks);
+      })();
+    </script>
+  </body>
+</html>
