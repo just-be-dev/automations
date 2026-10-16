@@ -27,8 +27,12 @@ import { Message } from "./message.ts";
 import { type Model, Request } from "./model.ts";
 import { trustedHref } from "./update.ts";
 import * as Dictation from "../dictation/index.ts";
+import { type ShortcutModifier, submitShortcut } from "../platform.ts";
 
-export const view = Submodel.defineView<Model, Message>((model, h) => {
+/** What the root app tells the assistant panel about the browser. */
+export type ViewInputs = { readonly shortcutModifier: ShortcutModifier };
+
+export const view = Submodel.defineView<Model, Message, ViewInputs>((model, viewInputs, h) => {
   const busy = Request.guards.Sending(model.request);
   const status = busy
     ? "Working…"
@@ -318,6 +322,11 @@ export const view = Submodel.defineView<Model, Message>((model, h) => {
                   placeholder: "Ask a question or describe a task…",
                   value: model.input,
                   onInput: (value) => Message.UpdatedInput({ value }),
+                  attributes: submitShortcut(
+                    viewInputs.shortcutModifier,
+                    Message.SubmittedChat(),
+                    h,
+                  ),
                   rows: 2,
                   className:
                     "min-h-12 max-h-40 resize-none rounded-none border-0 bg-transparent px-1 py-0 focus-visible:ring-0",

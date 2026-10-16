@@ -10,7 +10,8 @@ import { icon } from "@/lib/icons";
 import { newAutomationDescriptionId } from "../constant.ts";
 import { Message, toNewAutomationDialogMessage } from "../message.ts";
 import { type Model, NewAutomation } from "../model.ts";
-import { characterCountView, submitShortcut } from "./shared.ts";
+import { submitShortcut } from "../platform.ts";
+import { characterCountView } from "./shared.ts";
 
 export const newAutomationDialogView = (model: Model, h: HtmlBuilder<Message>) => {
   const description = model.newAutomation.description;

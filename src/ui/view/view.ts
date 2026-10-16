@@ -49,6 +49,7 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
                 slotId: "assistant",
                 model: model.assistant,
                 view: Assistant.view,
+                viewInputs: { shortcutModifier: model.shortcutModifier },
                 toParentMessage: toAssistantMessage,
               }),
             ],

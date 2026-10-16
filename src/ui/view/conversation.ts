@@ -22,7 +22,8 @@ import {
   openQuestionnaire,
 } from "../model.ts";
 import { answersView, askedQuestionsView, openQuestionnaireView } from "./questionnaire.ts";
-import { characterCountView, submitShortcut } from "./shared.ts";
+import { submitShortcut } from "../platform.ts";
+import { characterCountView } from "./shared.ts";
 import * as Dictation from "../dictation/index.ts";
 
 export const conversationView = (model: Model, h: HtmlBuilder<Message>) =>

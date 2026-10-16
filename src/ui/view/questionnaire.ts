@@ -21,8 +21,7 @@ import type { AskedQuestions, Question, QuestionOption } from "../../workflow.ts
 import { ownAnswerId } from "../constant.ts";
 import { Questionnaire } from "../domain/index.ts";
 import { Message } from "../message.ts";
-import type { ShortcutModifier } from "../platform.ts";
-import { submitShortcut } from "./shared.ts";
+import { type ShortcutModifier, submitShortcut } from "../platform.ts";
 
 const cardClass = "mt-1 flex flex-col gap-3 rounded-xl bg-background p-3 shadow-card";
 

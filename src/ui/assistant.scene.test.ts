@@ -1,7 +1,20 @@
 import { test } from "bun:test";
 import * as Option from "effect/Option";
 import { modifyFields } from "foldkit/struct";
-import { scene, given, role, label, expect, type, click, Command, submit } from "foldkit/scene";
+import {
+  scene,
+  given,
+  role,
+  label,
+  expect,
+  type,
+  click,
+  Command,
+  submit,
+  keydown,
+  expectHandled,
+  expectIgnored,
+} from "foldkit/scene";
 import * as Assistant from "./assistant/index.ts";
 import { assistantOf, sessionId, stateOf } from "./assistant/fixtures.ts";
 import { PersistCollapsed } from "./assistant/command.ts";
@@ -129,6 +142,48 @@ test("collapsing keeps the input and session; expanding restores the composer", 
         sentInput: "Keep this draft",
       }),
     ),
+  );
+});
+
+test("the platform's modifier with Enter sends the assistant message, and Enter alone doesn't", () => {
+  const composer = label("Message assistant");
+  const sent = Assistant.RequestAssistant({
+    sessionId,
+    sequence: 1,
+    path: "/chat",
+    body: Option.some({ message: "Add a customer", context: { pathname: "/templates" } }),
+    delay: 0,
+    sentInput: "Add a customer",
+  });
+  const succeeded = Assistant.Message.SucceededRequest({
+    sessionId,
+    sequence: 1,
+    state: stateOf(),
+    sentInput: "Add a customer",
+  });
+  scene(
+    { update, view },
+    given(root("/templates")),
+    expect(composer).toHaveAttr("aria-keyshortcuts", "Meta+Enter"),
+    type(composer, "Add a customer"),
+    keydown(composer, "Enter"),
+    expectIgnored(),
+    keydown(composer, "Enter", { ctrlKey: true }),
+    expectIgnored(),
+    keydown(composer, "Enter", { metaKey: true }),
+    expectHandled(),
+    Command.expectExact(sent),
+    Command.resolve(Assistant.RequestAssistant, succeeded),
+  );
+  scene(
+    { update, view },
+    given(modifyFields(root("/templates"), { shortcutModifier: () => "Control" as const })),
+    type(composer, "Add a customer"),
+    keydown(composer, "Enter", { metaKey: true }),
+    expectIgnored(),
+    keydown(composer, "Enter", { ctrlKey: true }),
+    Command.expectExact(sent),
+    Command.resolve(Assistant.RequestAssistant, succeeded),
   );
 });
 
