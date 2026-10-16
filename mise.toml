@@ -44,3 +44,7 @@ run = "bun run deploy --stage prod"
 [tasks."demo:reset"]
 description = "Reset the local studio from `mise run dev` to the demo's known state"
 run = "bun demo/reset.ts"
+
+[tasks.slides]
+description = "Open the demo's slide deck in the browser"
+run = "open docs/demo/deck/index.html"

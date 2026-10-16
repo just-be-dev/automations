@@ -87,6 +87,8 @@ Entity, type, and template writes are prepared and approved through `/api/change
 
 The people, role, and templates are in [`demo/seed.ts`](../demo/seed.ts). The type and templates match what the migrations seed, which a test checks. The fallback, [`demo/onboarding.json`](../demo/onboarding.json), is the storyboard's plan after its edit: it welcomes engineers in `#eng-team` instead of `#general`. If the live planner misbehaves on stage, open `/?automation=first-week` and run it on Ada. The reset prints that link.
 
+`mise run slides` opens the talk's slide deck, [`docs/demo/deck/index.html`](demo/deck/index.html), in the browser. It's one self-contained file, so it needs no server.
+
 ### Demo addresses
 
 Each person's address comes from `.env`, which is gitignored. The reset reads these keys itself, so changing them needs no restart. A key left unset keeps an `example.com` placeholder that reaches no one, and the reset lists which ones are unset.
