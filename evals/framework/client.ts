@@ -57,6 +57,8 @@ export const layer = Layer.effect(
             headers: { "content-type": "application/json" },
             body: JSON.stringify(body),
             signal,
+            // Bun gives up on a request after five minutes; each call's own `timeout` limits it.
+            timeout: false,
           });
           return { ok: response.ok, body: (await response.json()) as unknown };
         },
