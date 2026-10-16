@@ -501,6 +501,7 @@ describe("task notifications in a run", () => {
         PiAgent.of({
           createConversation: unused(),
           instruct: unused,
+          abort: Effect.void,
           liveAnswer: Effect.succeed(undefined),
           transcript: unused,
           prompt: unused,

@@ -3,44 +3,32 @@ import * as Schema from "effect/Schema";
 import { defineMessageUnion } from "foldkit/message";
 import { UrlRequest } from "foldkit/navigation";
 import { Url } from "foldkit/url";
-import * as Dialog from "@/components/ui/dialog";
 import { Role } from "../entities.ts";
-import { PendingChat, Permission, Run, RunSummary, Workflow } from "../workflow.ts";
+import {
+  PendingChat,
+  Permission,
+  Run,
+  RunSummary,
+  Workflow,
+  WorkflowChanges,
+} from "../workflow.ts";
 import { SubjectOption } from "./api.ts";
 import { EventInput } from "./domain/index.ts";
-import { AutomationSummary, Exchange, WorkflowDisplay } from "./model.ts";
+import { AutomationSummary, WorkflowDisplay } from "./model.ts";
 import { Entities, Overview, Templates, Traces } from "./page/index.ts";
 import * as Assistant from "./assistant/index.ts";
-import * as Dictation from "./dictation/index.ts";
 
 export const Message = defineMessageUnion({
-  GotDictationMessage: { message: Dictation.Message },
   GotAssistantMessage: { message: Assistant.Message },
-  ToggledPlannerHistory: { isOpen: Schema.Boolean },
   ClickedLink: { request: UrlRequest },
   ChangedUrl: { url: Url },
   CompletedNavigateInternal: {},
   CompletedLoadExternal: {},
   ClickedNewAutomation: {},
-  GotNewAutomationDialogMessage: { message: Dialog.Message },
-  UpdatedNewAutomationDescription: { value: Schema.String },
-  SubmittedNewAutomation: {},
-  SucceededCreateAutomation: { automation: AutomationSummary, wasDescriptionSent: Schema.Boolean },
-  FailedCreateAutomation: { error: Schema.String },
-  UpdatedMessageInput: { value: Schema.String },
   ToggledStepDetails: { stepId: Schema.String, isOpen: Schema.Boolean },
   SelectedWorkflowDisplay: { display: WorkflowDisplay },
   ClickedThemeToggle: {},
   CompletedApplyTheme: {},
-  SubmittedMessage: {},
-  ClickedQuestionStep: { chatId: Schema.String, step: Schema.Int },
-  ClickedQuestionOption: { chatId: Schema.String, question: Schema.Int, label: Schema.String },
-  ClickedWriteOwnAnswer: { chatId: Schema.String, question: Schema.Int },
-  UpdatedOwnAnswer: { chatId: Schema.String, question: Schema.Int, text: Schema.String },
-  ClickedNextQuestion: { chatId: Schema.String, question: Schema.Int },
-  ClickedSendAnswers: { chatId: Schema.String },
-  ClickedSkipQuestions: { chatId: Schema.String },
-  CompletedFocusOwnAnswer: {},
   ClickedSave: {},
   SelectedPermission: { operation: Schema.String, permission: Permission },
   SelectedSubject: { subjectId: Schema.String },
@@ -62,7 +50,7 @@ export const Message = defineMessageUnion({
     revision: Schema.Int,
     maybeDraft: Schema.Option(Workflow),
     maybeSaved: Schema.Option(Workflow),
-    conversation: Schema.Array(Exchange),
+    maybeLatestChanges: Schema.Option(WorkflowChanges),
     maybePendingChat: Schema.Option(PendingChat),
     runs: Schema.Array(RunSummary),
     maybeProgress: Schema.Option(Schema.String),
@@ -95,12 +83,6 @@ export const Message = defineMessageUnion({
     entityType: Schema.String,
     error: Schema.String,
   },
-  SucceededSendMessage: {
-    revision: Schema.Int,
-    sentMessage: Schema.String,
-    pendingChat: PendingChat,
-  },
-  SucceededSendAnswers: { revision: Schema.Int, pendingChat: PendingChat },
   SucceededSaveDraft: { revision: Schema.Int, saved: Workflow },
   SucceededSetPermission: { revision: Schema.Int, draft: Workflow },
   SucceededStartRun: { revision: Schema.Int, runId: Schema.String },
@@ -129,9 +111,6 @@ export type Message = typeof Message.Type;
 
 export const toAssistantMessage = (message: Assistant.Message) =>
   Message.GotAssistantMessage({ message });
-
-export const toNewAutomationDialogMessage = (message: Dialog.Message) =>
-  Message.GotNewAutomationDialogMessage({ message });
 
 export const toOverviewMessage = (message: Overview.Message) =>
   Message.GotOverviewMessage({ message });

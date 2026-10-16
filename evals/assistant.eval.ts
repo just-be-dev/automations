@@ -41,6 +41,23 @@ export default defineEval({
           "templates used",
         ),
     },
+    /** The automations it handed drafts to, in order. */
+    drafted: {
+      value: Expected,
+      check: (expected) => (output) => expectMatch(output.drafted, expected, "drafted automations"),
+    },
+    /** The operations the drafted workflows use. */
+    operationsUsed: {
+      value: Expected,
+      check: (expected) => (output) =>
+        expectMatch(
+          output.workflows
+            .flatMap((workflow) => flattenSteps(workflow.steps))
+            .flatMap((step) => (step.kind === "action" ? [step.use] : [])),
+          expected,
+          "operations used",
+        ),
+    },
     /** At least this many of its activities end with this status. */
     activities: {
       value: Schema.Struct({

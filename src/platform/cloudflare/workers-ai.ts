@@ -1,6 +1,6 @@
 /** Selects production AI models and adapts an Ai binding for naming and classification, also used by evals. */
 import * as Effect from "effect/Effect";
-import { AutomationNamer, NamerError } from "../../agents/namer/namer.ts";
+import { Namer, NamerError } from "../../agents/namer/namer.ts";
 import { Classifier, ClassifierError, type ClassifierModel } from "../../ai/classifier.ts";
 
 /** The planner, the assistant, and agent steps, through pi. */
@@ -15,7 +15,7 @@ export const NAMING_MODEL = "@cf/meta/llama-3.1-8b-instruct-fp8";
 const messageOf = (cause: unknown) => (cause instanceof Error ? cause.message : String(cause));
 
 export const workersAiNamer = (ai: Ai) =>
-  AutomationNamer.of({
+  Namer.of({
     complete: (request) =>
       Effect.tryPromise({
         try: () => ai.run(NAMING_MODEL, { ...request, messages: [...request.messages] }),

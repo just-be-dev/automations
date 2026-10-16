@@ -1,13 +1,13 @@
 # Studio assistant
 
-The studio assistant is a page-aware chat that reads the catalog, proposes entity, type and template changes, asks the person questions, and hands workflow design to an automation's planner. It never saves, activates or runs a workflow, and nothing it proposes is written until the person confirms it inline. [Architecture](../ARCHITECTURE.md) places it in the whole system; this page follows one conversation through the code.
+The studio assistant, shown as the studio agent, is a page-aware chat that reads the catalog, proposes entity, type and template changes, asks the person questions, and hands workflow design to an automation's planner. It is the only way the studio designs automations: **New automation** opens a fresh thread, and the studio page shows the draft with no chat of its own. It never saves, activates or runs a workflow, and nothing it proposes is written until the person confirms it inline. Each person keeps a history of threads they can reopen, archive, clear, or stop. [Architecture](../ARCHITECTURE.md) places it in the whole system; this page follows one conversation through the code.
 
-## One Durable Object holds each person's browser session
+## One Durable Object holds each thread
 
 ```diagram
                         ┌───────────────────────────────────────┐
                         │ Browser · src/ui/assistant/           │
-                        │ session UUID in localStorage          │
+                        │ open thread's UUID in localStorage    │
                         │ studio-assistant-session              │
                         └───────────────────┬───────────────────┘
                                             │ HTTPS /api/assistant/:sessionId
@@ -41,22 +41,27 @@ The studio assistant is a page-aware chat that reads the catalog, proposes entit
 ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────┐
 │ Workers AI        │  │ D1                │  │ AutomationAgent   │  │ ChangeCoordinator │
 │ PLANNER_MODEL     │  │ EntityStoreD1     │  │ per automation    │  │ one per tenant    │
-│                   │  │ AutomationIndexD1 │  │ planner + draft   │  │ name "studio"     │
+│ NAMING_MODEL      │  │ AutomationIndexD1 │  │ planner + draft   │  │ name "studio"     │
+│                   │  │ AssistantThreadsD1│  │                   │  │                   │
 └───────────────────┘  └───────────────────┘  └───────────────────┘  └───────────────────┘
 ```
 
-The browser keeps a UUID v4 under `studio-assistant-session` in `localStorage` ([`command.ts`](../src/ui/assistant/command.ts)) and addresses `/api/assistant/:sessionId`. [The routes](../src/http/assistant.ts) check that the session ID is a UUID v4, the same check the object makes, so a session it would refuse gets a 404 at the route; they take the owner from `RequestIdentity`, which [`access.ts`](../src/platform/cloudflare/access.ts) reads from `cf-access-authenticated-user-email`. Under `alchemy dev` it falls back to `DEV_USER_EMAIL` when that is set. Other local dev requests and service-token requests have no email and share the owner `local`.
+A thread is a session: the browser keeps the open thread's UUID v4 under `studio-assistant-session` in `localStorage` ([`command.ts`](../src/ui/assistant/command.ts)) and addresses `/api/assistant/:sessionId`. A new thread is a new UUID, and opening a past one stores its UUID. [The routes](../src/http/assistant.ts) check that the session ID is a UUID v4, the same check the object makes, so a session it would refuse gets a 404 at the route; they take the owner from `RequestIdentity`, which [`access.ts`](../src/platform/cloudflare/access.ts) reads from `cf-access-authenticated-user-email`. Under `alchemy dev` it falls back to `DEV_USER_EMAIL` when that is set. Other local dev requests and service-token requests have no email and share the owner `local`.
 
-| Route                                         | Body                       | Session operation |
-| --------------------------------------------- | -------------------------- | ----------------- |
-| `GET /api/assistant/:sessionId`               |                            | `inspect`         |
-| `POST /api/assistant/:sessionId/chat`         | `{ message, context }`     | `chat`            |
-| `POST /api/assistant/:sessionId/confirmation` | `{ proposalId, approved }` | `confirm`         |
-| `POST /api/assistant/:sessionId/answers`      | `{ callId, answer }`       | `answer`          |
+| Route                                         | Body                       | Operation               |
+| --------------------------------------------- | -------------------------- | ----------------------- |
+| `GET /api/assistant`                          |                            | `AssistantThreads.list` |
+| `GET /api/assistant/:sessionId`               |                            | `inspect`               |
+| `POST /api/assistant/:sessionId/chat`         | `{ message, context }`     | `chat`                  |
+| `POST /api/assistant/:sessionId/confirmation` | `{ proposalId, approved }` | `confirm`               |
+| `POST /api/assistant/:sessionId/answers`      | `{ callId, answer }`       | `answer`                |
+| `POST /api/assistant/:sessionId/stop`         |                            | `stop`                  |
+| `POST /api/assistant/:sessionId/clear`        |                            | `clear`                 |
+| `POST /api/assistant/:sessionId/archive`      | `{ archived }`             | `archiveThread`         |
 
-Every route returns the session's `AssistantState` ([`model.ts`](../src/assistant/model.ts)). [`assistantsLayer`](../src/platform/cloudflare/assistant.ts) names the object `JSON.stringify([owner, sessionId])`. The object accepts only a UUID v4. The first call stores that pair under `identity`; a call with another pair fails with `Session identity mismatch`, and [`makeAssistantSession`](../src/assistant/session.ts) checks the pair again against the stored `assistant` record.
+`GET /api/assistant` and `archive` return `{ threads }`, the owner's threads with archived ones included, most recently used first. The other routes return the session's `AssistantState` ([`model.ts`](../src/assistant/model.ts)). [`assistantsLayer`](../src/platform/cloudflare/assistant.ts) names the object `JSON.stringify([owner, sessionId])`. The object accepts only a UUID v4. The first call stores that pair under `identity`; a call with another pair fails with `Session identity mismatch`, and [`makeAssistantSession`](../src/assistant/session.ts) checks the pair again against the stored `assistant` record.
 
-The object's outer Effect binds Workers AI, the `Automation` and `ChangeCoordinator` namespaces, and the D1 adapters. Its instance builds the session and opens pi once (`Effect.cached`), installing the session's tools before pi resumes, so a turn interrupted mid-call keeps them. [pi-durable](../src/platform/cloudflare/pi.ts) keeps the conversation in `pi_*` tables of the same SQLite database ([`pi-storage.ts`](../src/platform/cloudflare/pi-storage.ts)) and calls `PLANNER_MODEL` from [`workers-ai.ts`](../src/platform/cloudflare/workers-ai.ts). No route reads the assistant's transcript; the traces page shows automation traces only.
+The object's outer Effect binds Workers AI, the `Automation` and `ChangeCoordinator` namespaces, and the D1 adapters, the thread directory's among them. Its instance builds the session and opens pi once (`Effect.cached`), installing the session's tools before pi resumes, so a turn interrupted mid-call keeps them. [pi-durable](../src/platform/cloudflare/pi.ts) keeps the conversation in `pi_*` tables of the same SQLite database ([`pi-storage.ts`](../src/platform/cloudflare/pi-storage.ts)) and calls `PLANNER_MODEL` from [`workers-ai.ts`](../src/platform/cloudflare/workers-ai.ts). No route reads the assistant's transcript; the traces page shows automation traces only.
 
 ## Accepting a message and scheduling its reply commit together
 
@@ -253,7 +258,7 @@ Approval compares a fresh snapshot with `before`, so even an unrelated edit make
                       ▼
 ┌───────────────────────────────────────────┐
 │ one transaction                           │
-│ automationId = given ?? assistant-<uuid>  │
+│ automationId = given ?? <name>-<8 hex>    │
 │ activity working · jobs.reply in 1 s      │
 └─────────────────────┬─────────────────────┘
                       │
@@ -282,13 +287,71 @@ Approval compares a fresh snapshot with `before`, so even an unrelated edit make
 └───────────────────┘  └───────────────────┘  └───────────────────┘  └───────────────────┘
 ```
 
-`draft_automation` takes a name, the person's description, and optionally an existing `automationId`. A new draft gets `assistant-<uuid>` and a directory entry through `AutomationIndex.recordIfMissing`. The ID is stored in the receipt before any call leaves the object, so a replay reuses it.
+`draft_automation` takes a name, the person's description, and optionally an existing `automationId`. The instructions tell the assistant to pass the open automation's ID from the selection hint when the person asks to change "this" automation, and to omit it only for a new one. A new draft gets a readable ID from its name with a random suffix (`welcome-employees-3f9a1c2e`) and a directory entry through `AutomationIndex.recordIfMissing`. The ID is stored in the receipt before any call leaves the object, so a replay reuses it.
 
 It submits the description with `Automations.get(id).chat(id, description, "<sessionId>:<callId>")`. [The design session](../src/automation/design-session.ts) uses that request ID as the pending chat's ID, so resubmitting returns the same pending chat. The planner then works in the automation's own Durable Object, as [Conversation produces a draft, not a running program](../ARCHITECTURE.md#conversation-produces-a-draft-not-a-running-program) describes.
 
 The assistant follows the planner by polling: while `pendingChat` is `working`, each reply schedules the next one a second later. When the planner asks, the assistant mirrors its questions under a `plannerCall` ID and a signature of the questions. The person's answer is stored on the draft receipt, and the next reply forwards it with `client.answer` only if the planner still asks the same questions.
 
-When `pendingChat` clears or reports `failed`, the receipt completes with the draft, or fails if the planner failed or left no draft. A pending chat with another ID means the planner turn was replaced, and the receipt fails. The activity links to `/?automation=<id>`; saving the draft is left to the person.
+When `pendingChat` clears or reports `failed`, the receipt completes with the draft and the planner's reply (`plannerReply`), which the assistant relays, or fails if the planner failed or left no draft. A pending chat with another ID means the planner turn was replaced, and the receipt fails. The activity links to `/?automation=<id>`; saving the draft is left to the person. The studio page has no chat of its own: while the planner works it shows the planner's progress phrase above the draft, and the assistant relays its questions.
+
+## Threads are listed in D1 and named by a fast model
+
+```diagram
+┌──────────────────────────────┐   ┌──────────────────────────────┐   ┌──────────────────────────────┐
+│ chat                         │   │ first reply                  │   │ GET /api/assistant           │
+│ after the turn commits:      │   │ beside the pi prompt:        │   │ POST /:sessionId/archive     │
+│ AssistantThreads.touch       │   │ nameThread(first message)    │   │ AssistantThreads.list ·      │
+│ list it, move it to the top, │   │ NAMING_MODEL, 5 s, else the  │   │ archive, scoped to the owner │
+│ take it out of the archive   │   │ message's opening words      │   │                              │
+│ best effort                  │   │ state.title, then rename     │   │                              │
+└──────────────────────────────┘   └──────────────────────────────┘   └──────────────────────────────┘
+```
+
+Cloudflare can't list Durable Objects, so the `assistant_threads` table ([migration](../migrations/0005_assistant_threads.sql), [`threads.ts`](../src/assistant/threads.ts), [D1 adapter](../src/platform/cloudflare/assistant-threads-d1.ts)) records each owner's threads: ID, title, when they were created and last used, and whether they're archived. It only feeds the history view, so a failure to write it fails no turn, as with the automation directory. The thread's own object stays the authority for its conversation and its title, `AssistantState.title`.
+
+`chat` touches the thread after its transaction commits. `deliverReply` names an untitled thread from its first message alongside the reply, with [`nameThread`](../src/agents/namer/namer.ts): the same fast model and cleanup as automation names, asked for the conversation's subject rather than its request. It never fails the reply; a slow or failed answer falls back to the message's opening words. The title is stored only if the thread is still untitled and still starts with that message, then copied to the directory.
+
+Archiving only sets a flag, so an archived thread still opens and answers; sending it a message takes it out of the archive. The panel moves on to a new thread when the person archives the open one.
+
+## Stopping ends the turn before aborting anything
+
+```diagram
+┌───────────────────────────────────────────┐
+│ POST /:sessionId/stop · Assistant.stop    │
+│ turn idle or failed? return the state     │
+└─────────────────────┬─────────────────────┘
+                      ▼
+┌───────────────────────────────────────────┐
+│ change receipts with a proposal:          │
+│   Changes.decide(approved ?? false)       │
+│   a recorded decision stands; a pending   │
+│   proposal is cancelled                   │
+└─────────────────────┬─────────────────────┘
+                      ▼
+┌───────────────────────────────────────────┐
+│ one transaction                           │
+│ every open receipt: cancelled "Stopped"   │
+│ status idle · message stopped: true       │
+│ clear confirmation and questions          │
+└─────────────────────┬─────────────────────┘
+                      ▼
+┌───────────────────────────────────────────┐        ┌─────────────────────────────────┐
+│ submitted drafts: Automations.stopChat    │───────▶│ design session stop(chatId)     │
+│ pi.abort · release waiting tools          │        │ pendingChat failed "Stopped"    │
+└───────────────────────────────────────────┘        │ drop plan · abort planner's pi  │
+                                                     └─────────────────────────────────┘
+```
+
+The person can stop a turn that is working or waiting on them. Storage says the turn is over before anything is aborted, so work that finishes late finds an idle turn and writes nothing: `reply` returns for an idle turn, `updateTurn` changes the session only while its turn is in progress, `finish` leaves a receipt that already has a result, and `put` never drops one. A draft tool checks its receipt again before calling the planner, and sends the message and records it as submitted without interruption; if the turn stopped meanwhile, it stops the planner it just started. Either way, `stop` or the tool sees the other's write. A proposal prepared after the turn stopped is not stored.
+
+A change the person already approved or declined is decided before the turn ends, since that decision stands; a proposal still waiting is cancelled through `Changes.decide`. A planner the turn handed design to is stopped with `stopChat("<sessionId>:<callId>")`, which marks its pending chat failed with `Stopped`, drops its working copy, and aborts the planner's pi turn, so the draft stays as it was.
+
+`PiAgent.abort` aborts the root conversation. pi signals the tools it is running, and [the pi adapter](../src/platform/cloudflare/pi.ts) passes that signal to the tool's Effect, so a tool parked on a question is interrupted rather than holding the abort open.
+
+## Clearing erases the thread in place
+
+`POST /:sessionId/clear` stops the turn in progress, untitles the thread in the directory, and erases the object: `deleteAll` takes pi's tables, the receipts and the reply jobs with it, then the instance resets with `Assistant thread cleared`. [The client](../src/platform/cloudflare/assistant.ts) recognizes that reset and returns the empty thread. The thread keeps its ID and its place in the history view, and the next message binds the identity again and names it anew.
 
 ## Turn status is a small state machine
 
@@ -299,7 +362,9 @@ When `pendingChat` clears or reports `failed`, the receipt completes with the dr
 │ idle   │          │ working                           │            │ failed │
 │        │◀─────────│                                   │───────────▶│        │
 └────────┘          └───┬───────────────────────┬───────┘            └────────┘
-        model answer    │   ▲               ▲   │          model or reply error
+   model answer, or     │   ▲               ▲   │          model or reply error
+   stop from any of the │   │               │   │
+   three in progress    │   │               │   │
          propose_change │   │ decided       │   │ ask_question or
                prepared │   │        answer │   │ planner asks
                         ▼   │               │   ▼
@@ -308,7 +373,7 @@ When `pendingChat` clears or reports `failed`, the receipt completes with the dr
                   └──────────────┘      └────────────┘
 ```
 
-`AssistantState.status` is `idle`, `working`, `confirming`, `asking` or `failed`. Only `idle` and `failed` accept a message; a failed turn keeps its conversation and shows its error. Any error that escapes a reply moves the turn to `failed` from `working`, `confirming` or `asking`.
+`AssistantState.status` is `idle`, `working`, `confirming`, `asking` or `failed`. Only `idle` and `failed` accept a message; a failed turn keeps its conversation and shows its error. Any error that escapes a reply moves the turn to `failed` from `working`, `confirming` or `asking`, and stopping moves it to `idle` from any of them.
 
 Each receipt has its own lifecycle: started, then holding a proposal, questions or automation ID, then `approved`, `answer` or `submitted`, and finally a `result`. A receipt with a result is never reopened. The panel's activities (`working`, `completed`, `failed`, `cancelled`) mirror the change and draft receipts; a question shows an activity only if it fails.
 
@@ -322,6 +387,8 @@ Each receipt has its own lifecycle: started, then holding a proposal, questions 
 
 ## The browser panel lives outside the page lifecycle
 
-[`src/ui/assistant/`](../src/ui/assistant/update.ts) is a submodel of the root. [`update/assistant.ts`](../src/ui/update/assistant.ts) folds it with the current `pageContext` and whether the page has dirty forms or an unsent message. Its only subscription is dictation into the message box ([`subscriptions.ts`](../src/ui/assistant/subscriptions.ts)); polling is a delayed `RequestAssistant` command.
+[`src/ui/assistant/`](../src/ui/assistant/update.ts) is a submodel of the root. [`update/assistant.ts`](../src/ui/update/assistant.ts) folds it with the current `pageContext` and whether the page has dirty forms. Its only subscription is dictation into the message box ([`subscriptions.ts`](../src/ui/assistant/subscriptions.ts)); polling is a delayed `RequestAssistant` command.
 
-A newly completed activity makes the root reload its resources. With Follow on, the panel navigates to the newest activity link it hasn't seen that passes `trustedHref`, and never while the page is dirty. A failed request shows the error and a "Reconnect assistant" button that reads the session again.
+The header has **New thread**, **Past threads**, **Clear thread** (once the thread has messages, after an inline confirmation), Follow, and Collapse. While a turn is in progress, **Stop** replaces Send. Past threads swaps the chat for the owner's threads, with archived ones behind a toggle; each row opens the thread or archives or restores it. **New automation** in the sidebar and on the overview opens a new thread with "Draft an automation that " in the composer, through `startThread`.
+
+Opening a thread, new or past, starts a new request sequence and drops the previous thread's state, so a late reply for it is ignored. A newly completed activity makes the root reload its resources. With Follow on, the panel navigates to the newest activity link it hasn't seen that passes `trustedHref`, and never while the page is dirty; the first read of a thread marks its earlier activities seen, so opening one never jumps to old work. A failed request shows the error and a "Reconnect assistant" button that reads the session again.

@@ -11,8 +11,8 @@ Most modules open with a comment saying what they own.
 - `src/http/`: platform-independent routes, composed in `api.ts`: automations and the overview, entities, roles and templates (`catalog.ts`), changes, events, the assistant, dictation (`transcription.ts`), and entity MCP (`entity-mcp.ts`). `response.ts` shares boundary decoding and responses.
 - `src/automation/`: one automation. `application.ts` joins `design-session.ts` (chat, pending replies, drafts) and `runs.ts` (runs, tasks, triggers), which share `workflow-store.ts` (snapshots and save) and `run-store.ts` (run records). `host.ts` is its storage and jobs contract, `service.ts` addresses an automation, and `index.ts` is the D1 directory.
 - `src/agents/planner/`, `src/automation/planning.ts`: the planner: its instructions and `planDraft` (`planner.ts`), the working copy (`plan.ts`) its tools (`tools.ts`) edit, progress phrases, and the stored working copy and questions (`planning.ts`).
-- `src/agents/namer/`, `src/automation/creation.ts`: creating an automation from a description, named by a fast model.
-- `src/assistant/`: the studio-wide assistant session.
+- `src/agents/namer/`, `src/automation/creation.ts`: creating an automation from a description, named by a fast model, which also titles assistant threads.
+- `src/assistant/`: the studio-wide assistant (the studio agent): one session per thread (`session.ts`), its receipts (`ledger.ts`), and the per-person thread directory (`threads.ts`).
 - `src/changes/`: confirmed changes to entities, types and templates.
 - `src/workflow/`: the pure DSL (`model.ts`), the catalog checker (`catalog.ts`), schedules, the run record (`run.ts`), interpreter values (`execution.ts`), the interpreter, the durable engine, and agent-step prompts (`agent-step.ts`).
 - `src/entities/`: entity types and records, templates (`templates.ts`), roles, the `EntityStore` service with its memory layer, and `EntitySubscribers`.
@@ -38,7 +38,7 @@ Most modules open with a comment saying what they own.
 
 ## Design sessions and the planner
 
-- `chat` only stores the message as `pendingChat` and schedules `planReply`, so a reload mid-answer loses nothing.
+- `chat` only stores the message as `pendingChat` and schedules `planReply`, so a reload mid-answer loses nothing. `stop` marks it failed with `Stopped`, drops `plan`, and aborts pi; a later delivery finds nothing pending.
 - The planner never writes a whole workflow. Its tools set values or replace steps by ID, and no tool argument nests steps, so a call pi repeats after a restart changes nothing more. Keep every planner tool idempotent.
 - The assembled answer must decode and check against the catalog; otherwise the planner gets exactly one retry with the problems. An answer that changed nothing leaves the draft as it is.
 - Questions are kept beside the working copy, not in it, so asking never counts as a change.
@@ -50,6 +50,9 @@ Most modules open with a comment saying what they own.
 
 ## The assistant and changes
 
+- The studio designs automations only through the assistant: the studio page has no chat, and **New automation** opens an assistant thread. `POST /api/automations` and `/chat` stay for API clients and the demo.
+- A thread is an assistant session. `assistant_threads` in D1 only lists them for the history view; the thread's object is the authority for its conversation and title, and directory writes never fail a turn.
+- Stopping ends the turn in storage before it aborts pi or stops a delegated planner (`stopChat`), so late work finds the turn over. Keep `updateTurn` for writes made while a turn runs, and never let `put` or `finish` reopen a receipt that has a result. A change the person already decided is settled, not dropped.
 - The assistant reads through `EntityStore`, writes only through `Changes`, and delegates drafts to `Automations.chat` with a stable request ID. It never saves or runs workflows. Its host commits storage and reply scheduling together, and its tools are installed before pi resumes.
 - There is one live `ChangeCoordinator` for the tenant. Never instantiate separate coordinators for different writers. D1 and proposal storage cannot share a transaction, so recovery checks original and expected state and blocks conflicting writes.
 - Entity, type and template writes over HTTP go through `/api/changes` and `/api/changes/:id/decision`. MCP mutation tools return proposals, and `decide_change` applies the person's decision. Role writes are direct.
@@ -123,10 +126,10 @@ Stick to these `GET` routes unless the user asks for more. `chat` calls Workers 
 - `Alchemy.makeCallback` delivers at least once. Keep handlers idempotent:
   - A replay only reruns what the engine's journal lacks. Agent steps use the pi `requestId` `agent:<key>`, where the key is the Activity's idempotency key including the attempt, so a retry asks again but a replay doesn't. Action steps pass a key that stays the same across retries to the operation, and `http.post` sends it as `Idempotency-Key`.
   - Chat replies reuse the pi `requestId` `chat:${chatId}`, and their retry `chat:${chatId}:retry`. A redelivery keeps the working copy the first delivery started for that chat ID. Only the delivery that still finds that message pending writes the exchange.
-  - Callback names and payloads are persisted contracts. Keep them compatible: `planReply` `{ automationId, chatId }`, `advance` `{ executionId }`, `clock` `{ executionId, deferredName }`, and `tick` `{ at }` under the job ID `schedule`.
+  - Callback names and payloads are persisted contracts. Keep them compatible: `planReply` `{ automationId, chatId }`, `advance` `{ executionId }`, `clock` `{ executionId, deferredName }`, and `tick` `{ at }` under the job ID `schedule`, and the assistant's `assistantReply` `{ turnId }`.
   - A timed trigger's (`schedule` or `date`) `tick` starts each occurrence's runs under IDs fixed by its time and subject (`scheduled-<at>`, `scheduled-<at>-<entity id>`), so a redelivery finds them instead of starting them again, then books the next occurrence. A date trigger ticks daily at its time. Saving books or cancels the tick in the same transaction as the snapshot.
   - An occurrence never starts only some of its runs: past `MAX_SCHEDULED_RUNS` it starts none and records a failed `scheduled-<at>` run saying why, and save refuses a trigger that already matches more. Keep it that way; don't trim the list.
-- Storage keys are persisted contracts too: `draft`, `saved`, `pendingChat`, `plan` (the planner's working copy for one chat ID, with each `ask_question` call's questions and answer by call ID), `run:<id>`, `studio` (the automation's ID and the studio origin its latest save came from, for task links), `execution:<executionId>` (its run ID), `event:<eventId>` (`{runId}` receipt, with `runId: null` when ignored), `exchange:<000000>`, and `exchangeCount` in `Automation`, plus the engine's journal under `wf:<executionId>:` (see `src/workflow/durable-engine.ts`). Event runs use `event-<eventId>` and retain the optional original event in their run and execution payloads. A stored value that doesn't decode is a defect, not missing data.
+- Storage keys are persisted contracts too: `draft`, `saved`, `pendingChat`, `plan` (the planner's working copy for one chat ID, with each `ask_question` call's questions and answer by call ID), `run:<id>`, `studio` (the automation's ID and the studio origin its latest save came from, for task links), `execution:<executionId>` (its run ID), `event:<eventId>` (`{runId}` receipt, with `runId: null` when ignored), `exchange:<000000>`, and `exchangeCount` in `Automation`, `identity`, `assistant` and `tool:<callId>` in `StudioAssistant`, plus the engine's journal under `wf:<executionId>:` (see `src/workflow/durable-engine.ts`). Event runs use `event-<eventId>` and retain the optional original event in their run and execution payloads. A stored value that doesn't decode is a defect, not missing data.
 - Activity and deferred names in `src/workflow/interpreter.ts` (`<id>`, `<id>/refs`, `<id>/now`, `<id>/request`, `<id>/outcome`, `<id>/timeout`, `<id>/approval-request`, `<id>/approval`) are journal keys for runs in flight. Renaming one makes a waiting run redo that step.
 - Never edit an applied D1 migration. Add the next numbered file in `migrations/` instead; Alchemy tracks applied files by hash in `__alchemy_migrations`.
 

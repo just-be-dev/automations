@@ -1,7 +1,7 @@
 /** Real assistant tools and specialist planner over disposable fixtures; approvals are explicit. */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { AssistantState } from "../../src/assistant/model.ts";
+import { AssistantState, PageContext } from "../../src/assistant/model.ts";
 import { assistantFixture, fixtureValue } from "../../src/assistant/fixtures.ts";
 import { AssistantError } from "../../src/assistant/host.ts";
 import { messageOf } from "../../src/error.ts";
@@ -11,11 +11,22 @@ import type { Call } from "../framework/call.ts";
 import { openPi } from "../framework/models.ts";
 import { planner } from "./planner.ts";
 
-const Input = Schema.Struct({ message: Schema.String, approve: Schema.Boolean });
+const Input = Schema.Struct({
+  message: Schema.String,
+  approve: Schema.Boolean,
+  /** Where the person is; defaults to the templates page. */
+  context: Schema.optionalKey(PageContext),
+  /** An automation the studio already lists, with its draft. */
+  existing: Schema.optionalKey(
+    Schema.Struct({ id: Schema.String, name: Schema.String, draft: Workflow }),
+  ),
+});
 const Output = Schema.Struct({
   state: AssistantState,
   changes: Schema.Array(ChangeAction),
   descriptions: Schema.Array(Schema.String),
+  /** The automation each delegated draft went to, in order. */
+  drafted: Schema.Array(Schema.String),
   workflows: Schema.Array(Workflow),
   toolCalls: Schema.Array(Schema.String),
 });
@@ -27,6 +38,10 @@ export const assistant: Call<typeof Input.Type, typeof Output.Type> = {
   run: (input) =>
     Effect.gen(function* () {
       const f = yield* assistantFixture;
+      if (input.existing !== undefined) {
+        f.directory.set(input.existing.id, input.existing.name);
+        f.drafts.set(input.existing.id, input.existing.draft);
+      }
       const session = yield* f.open();
       const calls: Array<string> = [];
       const pi = yield* openPi(
@@ -38,7 +53,10 @@ export const assistant: Call<typeof Input.Type, typeof Output.Type> = {
             ),
         })),
       );
-      const initial = yield* session.chat(input.message, { pathname: "/templates" });
+      const initial = yield* session.chat(
+        input.message,
+        input.context ?? { pathname: "/templates" },
+      );
       const turnId = fixtureValue(initial.conversation[0]).id;
       const designed = new Set<string>();
       for (let i = 0; i < 30; i++) {
@@ -55,8 +73,10 @@ export const assistant: Call<typeof Input.Type, typeof Output.Type> = {
         for (const submission of f.submissions) {
           if (designed.has(submission.requestId)) continue;
           designed.add(submission.requestId);
+          const draft = f.drafts.get(submission.id);
           const result = yield* planner.run({
             message: submission.description,
+            ...(draft === undefined ? {} : { draft }),
             catalog: {
               types: yield* f.entities.listTypes,
               templates: yield* f.entities.listTemplates,
@@ -80,6 +100,7 @@ export const assistant: Call<typeof Input.Type, typeof Output.Type> = {
         state: yield* session.inspect(),
         changes: f.mutations,
         descriptions: f.submissions.map((s) => s.description),
+        drafted: f.submissions.map((s) => s.id),
         workflows: [...f.drafts.values()],
         toolCalls: calls,
       };

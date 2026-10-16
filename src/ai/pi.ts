@@ -56,6 +56,11 @@ export class PiAgent extends Context.Service<
     readonly prompt: (options: PromptOptions) => Effect.Effect<string, PiError>;
     /** Sets the root's instructions for the next request; unchanged instructions aren't resent. */
     readonly instruct: (instructions: string) => Effect.Effect<void, PiError>;
+    /**
+     * Stops the root conversation: withdraws its queued inputs, interrupts the tools it is running,
+     * and resolves once it is idle. A prompt waiting on it settles unanswered.
+     */
+    readonly abort: Effect.Effect<void, PiError>;
     readonly liveAnswer: Effect.Effect<LiveAnswer | undefined, PiError>;
     /** What a conversation recorded, oldest first. Defaults to the root conversation. */
     readonly transcript: (conversation?: number) => Effect.Effect<Trace, PiError>;

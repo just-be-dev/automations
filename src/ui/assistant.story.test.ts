@@ -10,7 +10,7 @@ import { Message, toAssistantMessage } from "./message.ts";
 import { Page, type Model } from "./model.ts";
 import { studioUrl } from "./fixtures.ts";
 import { update } from "./update/index.ts";
-import { pageContext } from "./update/assistant.ts";
+import { pageContext, startAssistantThread } from "./update/assistant.ts";
 import { employeesOpen } from "./page/entities/fixtures.ts";
 import { welcomeOpen } from "./page/templates/fixtures.ts";
 import { Message as EntityMessage, update as updateEntities } from "./page/entities/index.ts";
@@ -189,7 +189,7 @@ test("pending assistant turns keep the next message without submitting it", () =
   });
 });
 
-test("collapsed assistant continues polling, and unsent planner and new-automation descriptions prevent following", () => {
+test("collapsed assistant continues polling", () => {
   const collapsed = modifyFields(root(), {
     assistant: (assistant) => modifyFields(assistant, { collapsed: () => true }),
   });
@@ -198,26 +198,74 @@ test("collapsed assistant continues polling, and unsent planner and new-automati
       (command) => command.name === "RequestAssistant",
     ),
   ).toBe(true);
-  const planner = modifyFields(root(), {
-    automationId: () => "studio",
-    page: () => Page.Studio(),
-    messageInputs: () => ({ studio: "Keep this planner message" }),
+});
+
+test("a new automation opens the collapsed assistant on a fresh thread with the request started", () => {
+  const collapsed = modifyFields(root(), {
+    assistant: (assistant) => modifyFields(assistant, { collapsed: () => true }),
   });
-  const newAutomation = update(
-    update(root(), Message.ClickedNewAutomation()).model,
-    Message.UpdatedNewAutomationDescription({ value: "Keep this description" }),
-  ).model;
-  [planner, newAutomation].forEach((dirty) => {
-    const following = modifyFields(dirty, {
-      assistant: (assistant) => modifyFields(assistant, { follow: () => true }),
-    });
-    expect(
-      update(
-        following,
-        response(0, {
-          activities: [{ id: "resource", label: "Created", status: "working", href: "/templates" }],
-        }),
-      ).commands?.some((command) => command.name === "NavigateInternal") ?? false,
-    ).toBe(false);
+  const requested = startAssistantThread(collapsed, "Draft an automation that ");
+  expect(requested.model.assistant.collapsed).toBe(false);
+  expect(requested.commands?.map((command) => command.name)).toEqual([
+    "CreateThread",
+    "PersistCollapsed",
+  ]);
+  const created = update(
+    requested.model,
+    toAssistantMessage(
+      Assistant.Message.CompletedCreateThread({
+        sessionId: "c3a1e2b4-5d6f-4a7b-8c9d-0e1f2a3b4c5d",
+        input: "Draft an automation that ",
+      }),
+    ),
+  );
+  expect(created.model.assistant.sessionId).toBe("c3a1e2b4-5d6f-4a7b-8c9d-0e1f2a3b4c5d");
+  expect(created.model.assistant.input).toBe("Draft an automation that ");
+  expect(Option.isNone(created.model.assistant.maybeState)).toBe(true);
+  expect(created.commands?.map((command) => command.name)).toEqual([
+    "RequestAssistant",
+    "FocusInput",
+  ]);
+  // A late reply for the previous thread is ignored.
+  expect(Option.isNone(update(created.model, response(1)).model.assistant.maybeState)).toBe(true);
+});
+
+test("archiving the open thread moves on to a fresh one; archiving another doesn't", () => {
+  const threads = [
+    { id: sessionId, createdAt: 0, updatedAt: 0, archived: true },
+    { id: "other", createdAt: 0, updatedAt: 0, archived: true },
+  ];
+  const archivedOpen = update(
+    root(),
+    toAssistantMessage(
+      Assistant.Message.SucceededArchiveThread({ sessionId, archived: true, threads }),
+    ),
+  );
+  expect(archivedOpen.commands?.map((command) => command.name)).toEqual(["CreateThread"]);
+  const archivedOther = update(
+    root(),
+    toAssistantMessage(
+      Assistant.Message.SucceededArchiveThread({ sessionId: "other", archived: true, threads }),
+    ),
+  );
+  expect(archivedOther.commands ?? []).toEqual([]);
+});
+
+test("opening a thread doesn't follow its earlier activities", () => {
+  const following = modifyFields(root(), {
+    assistant: (assistant) =>
+      modifyFields(assistant, { follow: () => true, maybeState: () => Option.none() }),
   });
+  const opened = update(
+    following,
+    response(0, {
+      activities: [
+        { id: "old", label: "Old", status: "completed", href: "/templates?template=welcome_email" },
+      ],
+    }),
+  );
+  expect(opened.commands?.some((command) => command.name === "NavigateInternal") ?? false).toBe(
+    false,
+  );
+  expect(opened.model.assistant.seenActivities).toEqual(["old:/templates?template=welcome_email"]);
 });

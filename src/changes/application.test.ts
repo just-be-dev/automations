@@ -93,6 +93,7 @@ const harness = () => {
         overview: () => Effect.succeed({ activeRuns: [] }),
         inspectWorkflow: unused,
         answer: unused,
+        stopChat: unused,
         chat: unused,
         save: unused,
         setPermissions: unused,

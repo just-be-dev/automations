@@ -16,7 +16,6 @@ import {
   LoadRuns,
   LoadEventInput,
   NavigateInternal,
-  PollAutomation,
   PollRun,
   SaveDraft,
   SetPermission,
@@ -34,8 +33,6 @@ import {
   Activity,
   Directory,
   type Model,
-  messageInputOf,
-  modifyMessageInput,
   Page,
   RoleChoices,
   RunDetail,
@@ -47,16 +44,7 @@ import { Entities, Overview, Templates, Traces } from "../page/index.ts";
 import { routeFromUrl, runHref } from "../route.ts";
 import { nextTheme } from "../theme.ts";
 import { followRoute, openRunPanel, opensInPanel } from "./navigation.ts";
-import * as Dictation from "../dictation/index.ts";
-import { dirtyForms, foldAssistant, pageHref } from "./assistant.ts";
-import {
-  createdAutomation,
-  failedToCreate,
-  foldNewAutomationDialog,
-  openNewAutomation,
-  describeNewAutomation,
-  submitNewAutomation,
-} from "./new-automation.ts";
+import { dirtyForms, foldAssistant, pageHref, startAssistantThread } from "./assistant.ts";
 import {
   answerTask,
   chooseRunSubjects,
@@ -70,23 +58,12 @@ import {
   startSavedRun,
 } from "./open-run.ts";
 import {
-  chooseOption,
-  nextQuestion,
-  sendAnswers,
-  showQuestionStep,
-  skipQuestions,
-  updateOwnAnswer,
-  writeOwnAnswer,
-} from "./questionnaire.ts";
-import {
   choicesEntityType,
   chooseSubjects,
   fail,
   isAnswering,
   loadedAutomation,
   savedSubjectType,
-  sendMessage,
-  thinking,
 } from "./studio.ts";
 
 const foldEntities = Update.foldChild({
@@ -116,6 +93,10 @@ const foldTraces = Update.foldChild({
   toParentMessage: toTracesMessage,
 });
 
+/** New automations are drafted by the studio agent, on a fresh thread it opens for them. */
+const draftNewAutomation = (model: Model) =>
+  startAssistantThread(model, "Draft an automation that ");
+
 const foldOverview = Update.foldChild({
   update: Overview.update,
   read: (model: Model) =>
@@ -125,49 +106,13 @@ const foldOverview = Update.foldChild({
   toParentMessage: toOverviewMessage,
   foldOutMessage: (outMessage: Overview.OutMessage) => (model: Model) =>
     Overview.OutMessage.match<Update.Return<Model, Message>>(outMessage, {
-      RequestedNewAutomation: () => openNewAutomation(model),
+      RequestedNewAutomation: () => draftNewAutomation(model),
     }),
 });
 
 export const update = (model: Model, message: Message) =>
   Message.match<Update.Return<Model, Message>>(message, {
-    GotDictationMessage: ({ message }) => {
-      const nextModel =
-        message._tag === "ClickedMicrophone" && !Dictation.active(model.dictation)
-          ? modifyFields(model, {
-              assistant: (assistant) => modifyFields(assistant, { dictation: Dictation.cancel }),
-            })
-          : model;
-      return Update.foldChild({
-        update: Dictation.update,
-        read: (model: Model) =>
-          Page.guards.Studio(model.page) ? Option.some(model.dictation) : Option.none(),
-        write: (model: Model, dictation: Dictation.Model) =>
-          modifyFields(model, { dictation: () => dictation }),
-        toParentMessage: (message) => Message.GotDictationMessage({ message }),
-        foldOutMessage: (outMessage) => (model: Model) =>
-          Dictation.OutMessage.match(outMessage, {
-            DraftedText: ({ previous, text }) => ({
-              model: modifyMessageInput(model, (input) => Dictation.draft(input, previous, text)),
-            }),
-          }),
-      })(nextModel, message);
-    },
-    GotAssistantMessage: ({ message }) =>
-      foldAssistant(
-        message._tag === "GotDictationMessage" &&
-          message.message._tag === "ClickedMicrophone" &&
-          !Dictation.active(model.assistant.dictation)
-          ? modifyFields(model, { dictation: Dictation.cancel })
-          : model,
-        message,
-      ),
-    ToggledPlannerHistory: ({ isOpen }) => ({
-      model: modifyFields(model, {
-        plannerHistoryOpen: () => isOpen,
-        dictation: (dictation) => (isOpen ? dictation : Dictation.cancel(dictation)),
-      }),
-    }),
+    GotAssistantMessage: ({ message }) => foldAssistant(model, message),
     ClickedLink: ({ request }) =>
       UrlRequest.match<Update.Return<Model, Message>>(request, {
         Internal: ({ url }) => {
@@ -213,13 +158,7 @@ export const update = (model: Model, message: Message) =>
     },
     CompletedNavigateInternal: () => ({ model }),
     CompletedLoadExternal: () => ({ model }),
-    ClickedNewAutomation: () => openNewAutomation(model),
-    GotNewAutomationDialogMessage: ({ message }) => foldNewAutomationDialog(model, message),
-    UpdatedNewAutomationDescription: ({ value }) => describeNewAutomation(model, value),
-    SubmittedNewAutomation: () => submitNewAutomation(model),
-    SucceededCreateAutomation: ({ automation, wasDescriptionSent }) =>
-      createdAutomation(model, automation, wasDescriptionSent),
-    FailedCreateAutomation: ({ error }) => failedToCreate(model, error),
+    ClickedNewAutomation: () => draftNewAutomation(model),
     ToggledStepDetails: ({ stepId, isOpen }) => ({
       model: modifyFields(model, {
         expandedStepIds: (stepIds) => {
@@ -239,24 +178,6 @@ export const update = (model: Model, message: Message) =>
       };
     },
     CompletedApplyTheme: () => ({ model }),
-    UpdatedMessageInput: ({ value }) => ({
-      model: modifyFields(
-        modifyMessageInput(model, () => value),
-        { dictation: Dictation.edited },
-      ),
-    }),
-    SubmittedMessage: () =>
-      Dictation.active(model.dictation) ? { model } : sendMessage(model, messageInputOf(model)),
-    ClickedQuestionStep: ({ chatId, step }) => showQuestionStep(model, chatId, step),
-    ClickedQuestionOption: ({ chatId, question, label }) =>
-      chooseOption(model, chatId, question, label),
-    ClickedWriteOwnAnswer: ({ chatId, question }) => writeOwnAnswer(model, chatId, question),
-    UpdatedOwnAnswer: ({ chatId, question, text }) =>
-      updateOwnAnswer(model, chatId, question, text),
-    ClickedNextQuestion: ({ chatId, question }) => nextQuestion(model, chatId, question),
-    ClickedSendAnswers: ({ chatId }) => sendAnswers(model, chatId),
-    ClickedSkipQuestions: ({ chatId }) => skipQuestions(model, chatId),
-    CompletedFocusOwnAnswer: () => ({ model }),
     ClickedSave: () => {
       if (Activity.guards.Working(model.activity)) {
         return { model };
@@ -422,7 +343,7 @@ export const update = (model: Model, message: Message) =>
       revision,
       maybeDraft,
       maybeSaved,
-      conversation,
+      maybeLatestChanges,
       maybePendingChat,
       runs,
       maybeProgress,
@@ -433,7 +354,7 @@ export const update = (model: Model, message: Message) =>
             modifyFields(model, {
               maybeDraft: () => maybeDraft,
               maybeSaved: () => maybeSaved,
-              conversation: () => conversation,
+              maybeLatestChanges: () => maybeLatestChanges,
               maybePendingChat: () => maybePendingChat,
               runs: () => runs,
               maybeProgress: () => maybeProgress,
@@ -449,33 +370,6 @@ export const update = (model: Model, message: Message) =>
               chooseSubjects,
             ],
           ),
-    SucceededSendMessage: ({ revision, sentMessage, pendingChat }) =>
-      revision !== model.revision
-        ? { model }
-        : {
-            model: modifyFields(
-              modifyMessageInput(model, (value) => (value === sentMessage ? "" : value)),
-              {
-                maybePendingChat: () => Option.some(pendingChat),
-                maybeQuestionnaire: () => Option.none(),
-                maybeProgress: () => Option.none(),
-                activity: () => thinking,
-              },
-            ),
-            commands: [PollAutomation({ automationId: model.automationId.trim(), revision })],
-          },
-    SucceededSendAnswers: ({ revision, pendingChat }) =>
-      revision !== model.revision
-        ? { model }
-        : {
-            model: modifyFields(model, {
-              maybePendingChat: () => Option.some(pendingChat),
-              maybeQuestionnaire: () => Option.none(),
-              maybeProgress: () => Option.none(),
-              activity: () => thinking,
-            }),
-            commands: [PollAutomation({ automationId: model.automationId.trim(), revision })],
-          },
     SucceededSaveDraft: ({ revision, saved }) =>
       revision !== model.revision
         ? { model }

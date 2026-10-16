@@ -7,8 +7,11 @@ import * as Schema from "effect/Schema";
 import { QuestionsAnswer } from "../../ai/ask-question/question.ts";
 import { AssistantError, type AssistantHost } from "../../assistant/host.ts";
 import { PageContext } from "../../assistant/model.ts";
-import { makeAssistantSession } from "../../assistant/session.ts";
+import { emptyState, makeAssistantSession } from "../../assistant/session.ts";
 import { Assistants } from "../../assistant/service.ts";
+import { Namer } from "../../agents/namer/namer.ts";
+import { messageOf } from "../../error.ts";
+import { AssistantThreadsD1 } from "./assistant-threads-d1.ts";
 import Automation from "./automation.ts";
 import { automationsLayer } from "./automations.ts";
 import { AutomationIndexD1 } from "./automation-index-d1.ts";
@@ -16,7 +19,10 @@ import ChangeCoordinator, { changesLayer } from "./changes.ts";
 import { EntityStoreD1 } from "./entity-store-d1.ts";
 import { openPiAgent } from "./pi.ts";
 import { openPiStorage } from "./pi-storage.ts";
-import { PLANNER_MODEL } from "./workers-ai.ts";
+import { PLANNER_MODEL, workersAiNamer } from "./workers-ai.ts";
+
+/** Why a cleared thread resets its instance. The RPC client recognizes the reset by it. */
+export const CLEARED = "Assistant thread cleared";
 
 const Identity = Schema.Struct({
   owner: Schema.NonEmptyString,
@@ -33,9 +39,13 @@ export default class StudioAssistant extends Cloudflare.DurableObject<StudioAssi
     const coordinator = yield* ChangeCoordinator;
     const index = yield* AutomationIndexD1;
     const entities = yield* EntityStoreD1;
+    const threads = yield* AssistantThreadsD1;
+    const namer = Layer.effect(Namer, Effect.map(ai.raw, workersAiNamer));
     const services = Layer.mergeAll(
       index,
       entities,
+      threads,
+      namer,
       automationsLayer(namespace),
       changesLayer(coordinator),
     );
@@ -65,6 +75,17 @@ export default class StudioAssistant extends Cloudflare.DurableObject<StudioAssi
           reply: (turnId, after = 0) =>
             remote(reply.schedule(turnId, { after, payload: { turnId } })).pipe(Effect.orDie),
         },
+        // deleteAll drops pi's tables and the scheduler's job tables with the keys. pi keeps
+        // handles to its tables open, so the instance resets once the deletion is durable, and
+        // the next call opens everything fresh. Resetting fails the call that cleared.
+        erase: remote(
+          Effect.gen(function* () {
+            yield* state.storage.deleteAll();
+            yield* state.storage.deleteAlarm();
+            yield* state.storage.sync();
+            yield* state.abort(CLEARED);
+          }),
+        ),
       };
       const initialize = yield* Effect.cached(
         Effect.gen(function* () {
@@ -128,6 +149,10 @@ export default class StudioAssistant extends Cloudflare.DurableObject<StudioAssi
               ),
             ),
           ),
+        stop: (owner: string, sessionId: string) =>
+          bind(owner, sessionId).pipe(Effect.flatMap(({ session, pi }) => session.stop(pi))),
+        clear: (owner: string, sessionId: string) =>
+          bind(owner, sessionId).pipe(Effect.flatMap(({ session, pi }) => session.clear(pi))),
       };
     }).pipe(Effect.provide(services));
   }).pipe(
@@ -157,6 +182,15 @@ export const assistantsLayer = (namespace: Effect.Success<typeof StudioAssistant
             confirm: (proposalId, approved) =>
               remote(stub.confirm(owner, sessionId, proposalId, approved)),
             answer: (callId, answer) => remote(stub.answer(owner, sessionId, callId, answer)),
+            stop: () => remote(stub.stop(owner, sessionId)),
+            // Erasing resets the object, so a clear that finished fails the call with the reset.
+            clear: () =>
+              remote(stub.clear(owner, sessionId)).pipe(
+                Effect.catchIf(
+                  (error) => messageOf(error, "").includes(CLEARED),
+                  () => Effect.succeed(emptyState(sessionId)),
+                ),
+              ),
           };
         },
       });

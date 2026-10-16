@@ -71,9 +71,10 @@ const parseStringArguments = (parameters: AgentTool["parameters"], args: unknown
   if (typeof args !== "object" || args === null || typeof properties !== "object") {
     return args;
   }
+  const schemas = new Map(Object.entries(properties ?? {}));
   return Object.fromEntries(
     Object.entries(args).map(([name, value]) => {
-      if (typeof value !== "string" || !objectType(Reflect.get(properties ?? {}, name))) {
+      if (typeof value !== "string" || !objectType(schemas.get(name))) {
         return [name, value];
       }
       try {
@@ -102,9 +103,11 @@ const toolExtension = (tools: ReadonlyArray<AgentTool>) =>
         executionMode: "sequential",
         // pi validates what this returns against `parameters`.
         prepareArguments: (args) => parseStringArguments(tool.parameters, args),
-        execute: async (args, api) => {
+        // Aborting the conversation signals the call, which interrupts a tool parked on an answer.
+        execute: async (args, api, callContext) => {
           const result = await Effect.runPromise(
             Effect.result(tool.execute(args, { id: String(api.taskId) })),
+            { signal: callContext.abortSignal },
           );
           if (Result.isFailure(result)) {
             throw new Error(result.failure.message);
@@ -194,6 +197,11 @@ export const openPiAgent = Effect.fn("PiAgent.open")(function* (options: PiAgent
     return yield* attempt("Set pi instructions", () => root.configure({ instructions }, context));
   });
 
+  const abort = attempt("Abort pi", async () => {
+    const root = await harness.root(context, { agent });
+    await root.abort(context);
+  }).pipe(Effect.withSpan("PiAgent.abort"));
+
   // pi commits the in-flight response at most every 100 ms, so this trails the model slightly.
   const liveAnswer = attempt("Read pi live answer", async (): Promise<LiveAnswer | undefined> => {
     const live = await harness.snapshot(LiveDoc, rootId, context);
@@ -219,5 +227,5 @@ export const openPiAgent = Effect.fn("PiAgent.open")(function* (options: PiAgent
     return yield* attempt("Read pi transcript", () => readTrace(target, context));
   });
 
-  return PiAgent.of({ createConversation, prompt, instruct, liveAnswer, transcript });
+  return PiAgent.of({ createConversation, prompt, instruct, abort, liveAnswer, transcript });
 });

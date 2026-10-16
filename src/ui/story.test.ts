@@ -1,15 +1,14 @@
-/** Checks root app transitions for chat, saving, run polling, task answers, and navigation.
+/** Checks root app transitions for planner progress, saving, run polling, task answers, and navigation.
  * Exercises request freshness and recovery without executing browser or server effects. */
 import { expect, test } from "bun:test";
 import * as Option from "effect/Option";
 import { Command, given, message, model, story } from "foldkit/story";
 import { UrlRequest } from "foldkit/navigation";
 import { modifyFields } from "foldkit/struct";
-import type { Workflow } from "../workflow.ts";
+import { diffWorkflows, type Workflow } from "../workflow.ts";
 import {
   AnswerTask,
   ApplyTheme,
-  CreateAutomation,
   LoadAutomation,
   LoadAutomations,
   LoadRun,
@@ -20,20 +19,14 @@ import {
   PollAutomation,
   PollRun,
   ResumeNow,
-  SendMessage,
   SaveDraft,
   StartRun,
   StartSavedRun,
 } from "./command.ts";
 import { init } from "./main.ts";
-import { Message } from "./message.ts";
-import {
-  blankNewAutomation,
-  messageInputOf,
-  type Model,
-  modifyMessageInput,
-  NewAutomation,
-} from "./model.ts";
+import * as Assistant from "./assistant/index.ts";
+import { Message, toAssistantMessage } from "./message.ts";
+import type { Model } from "./model.ts";
 import { Overview } from "./page/index.ts";
 import { update } from "./update/index.ts";
 import {
@@ -54,7 +47,7 @@ const automationLoaded = (
     revision: 0,
     maybeDraft: Option.none(),
     maybeSaved: Option.none(),
-    conversation: [],
+    maybeLatestChanges: Option.none(),
     maybePendingChat: Option.none(),
     maybeProgress: Option.none(),
     runs: [],
@@ -66,8 +59,6 @@ const loaded = (search = "automation=my-automation") =>
     init({ theme: "System", shortcutModifier: "Meta" }, studioUrl(search)).model,
     automationLoaded(),
   ).model;
-
-const typed = (current: Model, text: string) => modifyMessageInput(current, () => text);
 
 const runUrl = (runId: string) => studioUrl(`automation=my-automation&run=${runId}`);
 
@@ -103,7 +94,15 @@ const workflow: Workflow = {
   ],
 };
 
+const changes = diffWorkflows(workflow, { ...workflow, name: "Daily order summary" });
+
+const newSessionId = "3f1c2d4e-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+
 const working = { id: "chat-1", prompt: "Summarize orders", status: "working" } as const;
+
+/** The studio with a draft, so Save sends a request. */
+const withDraft = () =>
+  update(loaded(), automationLoaded({ maybeDraft: Option.some(workflow) })).model;
 
 const requestArgs = { automationId: "my-automation", revision: 0 };
 
@@ -141,56 +140,26 @@ const loadedRun = (run: ReturnType<typeof runOf>) => ({
   resumesAt: {},
 });
 
-test("chat waits for the agent's reply, shows the draft, and saves that automation", () => {
+test("the studio follows the planner the studio agent started, shows its draft, and saves it", () => {
   story(
     update,
-    given(typed(loaded("automation=orders"), "Summarize orders")),
-    message(Message.SubmittedMessage()),
-    Command.expectExact(
-      SendMessage({ automationId: "orders", revision: 0, message: "Summarize orders" }),
-    ),
-    model((current) => expect(current.activity._tag).toBe("Working")),
-    Command.resolve(
-      SendMessage,
-      Message.SucceededSendMessage({
-        revision: 0,
-        sentMessage: "Summarize orders",
-        pendingChat: working,
+    given(loaded("automation=orders")),
+    message(
+      automationLoaded({
+        maybePendingChat: Option.some(working),
+        maybeProgress: Option.some("Planning the steps…"),
       }),
     ),
-    model((current) => {
-      expect(messageInputOf(current)).toBe("");
-      expect(current.maybePendingChat).toEqual(Option.some(working));
-    }),
+    model((current) =>
+      expect(current.activity).toEqual({ _tag: "Working", notice: "Planning the steps…" }),
+    ),
     Command.expectExact(PollAutomation({ automationId: "orders", revision: 0 })),
     Command.resolve(PollAutomation, automationLoaded({ maybePendingChat: Option.some(working) })),
+    model((current) => expect(current.activity).toEqual({ _tag: "Working", notice: "Thinking…" })),
     Command.expectExact(PollAutomation({ automationId: "orders", revision: 0 })),
-    Command.resolve(
-      PollAutomation,
-      automationLoaded({
-        maybeDraft: Option.some(workflow),
-        conversation: [
-          {
-            id: 0,
-            prompt: "Summarize orders",
-            reply: "Review these steps.",
-            maybeChanges: Option.none(),
-            asked: [],
-          },
-        ],
-      }),
-    ),
+    Command.resolve(PollAutomation, automationLoaded({ maybeDraft: Option.some(workflow) })),
     Command.resolve(LoadAutomations, Message.SucceededLoadAutomations({ automations: [] })),
     model((current) => {
-      expect(current.conversation).toEqual([
-        {
-          id: 0,
-          prompt: "Summarize orders",
-          reply: "Review these steps.",
-          maybeChanges: Option.none(),
-          asked: [],
-        },
-      ]);
       expect(current.maybeDraft).toEqual(Option.some(workflow));
       expect(current.maybePendingChat).toEqual(Option.none());
       expect(current.activity).toEqual(
@@ -232,68 +201,53 @@ test("reopening an automation while the agent is answering keeps waiting for the
   expect(reopened.commands?.map((command) => command.name)).toEqual(["PollAutomation"]);
 });
 
-test("a reply the agent couldn't write puts the prompt back in the composer", () => {
+test("while the planner waits on questions, the studio points to the studio agent", () => {
+  const asking = {
+    id: "chat-1",
+    prompt: "Summarize orders",
+    status: "asking",
+    questions: [],
+  } as const;
+  const reopened = update(
+    init({ theme: "System", shortcutModifier: "Meta" }, studioUrl("automation=orders")).model,
+    automationLoaded({ maybePendingChat: Option.some(asking) }),
+  );
+  expect(reopened.model.activity).toEqual({
+    _tag: "Ready",
+    notice: "The studio agent is waiting for your answers.",
+  });
+  // The person answers in the studio agent's panel, so the studio keeps watching for the planner.
+  expect(reopened.commands?.map((command) => command.name)).toEqual(["PollAutomation"]);
+});
+
+test("a planner the person stopped says the draft is unchanged, not that it failed", () => {
+  const stopped = {
+    id: "chat-1",
+    prompt: "Summarize orders",
+    status: "failed",
+    error: "Stopped",
+  } as const;
+  const reopened = update(
+    init({ theme: "System", shortcutModifier: "Meta" }, studioUrl("automation=orders")).model,
+    automationLoaded({ maybePendingChat: Option.some(stopped) }),
+  );
+  expect(reopened.model.activity).toEqual({
+    _tag: "Ready",
+    notice: "The planner was stopped. The draft is unchanged.",
+  });
+});
+
+test("a draft the planner couldn't finish says so without its technical error", () => {
   const failed = { ...working, status: "failed", error: "Agent did not answer" } as const;
   const reopened = update(
     init({ theme: "System", shortcutModifier: "Meta" }, studioUrl("automation=orders")).model,
     automationLoaded({ maybePendingChat: Option.some(failed) }),
   );
-  expect(messageInputOf(reopened.model)).toBe("Summarize orders");
-  expect(reopened.model.activity).toEqual(
-    expect.objectContaining({
-      _tag: "Failed",
-      error: "The agent couldn't finish its reply. Send your message again to retry.",
-    }),
-  );
+  expect(reopened.model.activity).toEqual({
+    _tag: "Failed",
+    error: "The planner couldn't finish this draft. Ask the studio agent to try again.",
+  });
   expect(reopened.commands ?? []).toEqual([]);
-});
-
-test("an unsent or failed message stays with its automation", () => {
-  const failed = { ...working, status: "failed", error: "Agent did not answer" } as const;
-  const restored = update(
-    init({ theme: "System", shortcutModifier: "Meta" }, studioUrl("automation=orders")).model,
-    automationLoaded({ maybePendingChat: Option.some(failed) }),
-  ).model;
-  const switched = update(
-    restored,
-    Message.ChangedUrl({ url: studioUrl("automation=other") }),
-  ).model;
-  expect(messageInputOf(switched)).toBe("");
-  const typedOther = update(switched, Message.UpdatedMessageInput({ value: "Other idea" })).model;
-  const back = update(
-    typedOther,
-    Message.ChangedUrl({ url: studioUrl("automation=orders") }),
-  ).model;
-  expect(messageInputOf(back)).toBe("Summarize orders");
-  const again = update(back, Message.ChangedUrl({ url: studioUrl("automation=other") })).model;
-  expect(messageInputOf(again)).toBe("Other idea");
-});
-
-test("a late chat response cannot touch another automation", () => {
-  const switched = update(
-    loaded(),
-    Message.ChangedUrl({ url: studioUrl("automation=other") }),
-  ).model;
-  const received = update(
-    switched,
-    Message.SucceededSendMessage({ revision: 0, sentMessage: "Old prompt", pendingChat: working }),
-  );
-  expect(received.model).toBe(switched);
-  expect(received.commands).toBeUndefined();
-  expect(switched.maybePendingChat).toEqual(Option.none());
-});
-
-test("sending preserves text typed while the request was in flight", () => {
-  const current = typed(loaded(), "Next revision");
-  const received = update(
-    current,
-    Message.SucceededSendMessage({
-      revision: 0,
-      sentMessage: "First prompt",
-      pendingChat: working,
-    }),
-  );
-  expect(messageInputOf(received.model)).toBe("Next revision");
 });
 
 test("a saved workflow about an employee loads employees, and a run starts for the one picked", () => {
@@ -671,7 +625,7 @@ test("a form task submits its prefilled defaults with the person's edits as type
 });
 
 test("request failures re-enable actions and old failures leave a new automation unchanged", () => {
-  const sending = update(typed(loaded(), "Hello"), Message.SubmittedMessage());
+  const sending = update(withDraft(), Message.ClickedSave());
   const failed = update(
     sending.model,
     Message.FailedRequest({ revision: 0, error: "Access denied" }),
@@ -687,32 +641,13 @@ test("request failures re-enable actions and old failures leave a new automation
 });
 
 test("invalid IDs and saving without a draft return errors without requests", () => {
-  const invalid = typed(modifyFields(loaded(), { automationId: () => "orders/bad" }), "Hello");
-  expect(update(invalid, Message.SubmittedMessage()).commands).toBeUndefined();
-  expect(update(invalid, Message.SubmittedMessage()).model.activity._tag).toBe("Failed");
+  const invalid = modifyFields(withDraft(), { automationId: () => "orders/bad" });
+  expect(update(invalid, Message.ClickedSave()).commands).toBeUndefined();
+  expect(update(invalid, Message.ClickedSave()).model.activity._tag).toBe("Failed");
   expect(update(loaded(), Message.ClickedSave()).model.activity).toEqual({
     _tag: "Failed",
     error: "Create a draft first",
   });
-});
-
-test("messages up to 10,000 characters are sent and longer ones are rejected", () => {
-  const longest = "a".repeat(10_000);
-  const withInput = (messageInput: string) => typed(loaded(), messageInput);
-
-  story(
-    update,
-    given(withInput(longest)),
-    message(Message.SubmittedMessage()),
-    Command.expectExact(SendMessage({ ...requestArgs, message: longest })),
-    Command.resolve(SendMessage, Message.FailedRequest({ revision: 0, error: "Offline" })),
-  );
-
-  const rejected = update(withInput(`${longest}a`), Message.SubmittedMessage());
-  expect(rejected.model.activity).toEqual(
-    expect.objectContaining({ _tag: "Failed", error: "Message must be 1–10,000 characters" }),
-  );
-  expect(rejected.commands).toBeUndefined();
 });
 
 test("the URL picks which automation opens and loads it with the automation list and roles", () => {
@@ -747,76 +682,35 @@ test("the URL picks which automation opens and loads it with the automation list
   ).toBe("Failed");
 });
 
-test("each new automation starts from a blank description and is created once", () => {
-  const opened = update(
-    modifyFields(loaded(), {
-      newAutomation: () =>
-        NewAutomation.Editing({ description: "Earlier", maybeError: Option.some("Earlier error") }),
-    }),
-    Message.ClickedNewAutomation(),
-  );
-  expect(opened.model.newAutomationDialog.isOpen).toBe(true);
-  expect(opened.model.newAutomation).toEqual(blankNewAutomation);
-  expect(opened.commands?.map((command) => command.name)).toContain("ShowDialog");
-
-  const tooLong = "x".repeat(10_001);
-  story(
-    update,
-    given(modifyFields(loaded(), { newAutomation: () => blankNewAutomation })),
-    message(Message.UpdatedNewAutomationDescription({ value: tooLong })),
-    message(Message.SubmittedNewAutomation()),
-    model((current) =>
-      expect(current.newAutomation).toEqual(
-        NewAutomation.Editing({
-          description: tooLong,
-          maybeError: Option.some("Keep the description to 10,000 characters"),
-        }),
-      ),
-    ),
-    message(Message.UpdatedNewAutomationDescription({ value: "Summarize orders" })),
-    message(Message.SubmittedNewAutomation()),
-    Command.expectExact(CreateAutomation({ description: "Summarize orders" })),
-    model((current) => {
-      expect(current.newAutomation).toEqual(
-        NewAutomation.Creating({ description: "Summarize orders" }),
-      );
-      expect(update(current, Message.SubmittedNewAutomation()).commands).toBeUndefined();
-      const edited = update(current, Message.UpdatedNewAutomationDescription({ value: "Edit" }));
-      expect(edited.model).toBe(current);
-    }),
-    Command.resolve(CreateAutomation, Message.FailedCreateAutomation({ error: "Offline" })),
-    model((current) =>
-      expect(current.newAutomation).toEqual(
-        NewAutomation.Editing({
-          description: "Summarize orders",
-          maybeError: Option.some("Offline"),
-        }),
-      ),
-    ),
-  );
-});
-
-test("a description that couldn't be sent waits in the new automation's composer", () => {
-  const creating = modifyFields(loaded(), {
-    newAutomation: () => NewAutomation.Creating({ description: "Summarize orders" }),
+test("New automation opens a new studio agent thread with a draft request in its composer", () => {
+  const collapsed = modifyFields(loaded(), {
+    assistant: (assistant) => modifyFields(assistant, { collapsed: () => true }),
   });
-  const automation = { id: "summarize-orders", name: "Summarize orders" };
-  const unsent = update(
-    creating,
-    Message.SucceededCreateAutomation({ automation, wasDescriptionSent: false }),
+  const draftRequest = "Draft an automation that ";
+  const opened = update(collapsed, Message.ClickedNewAutomation());
+  expect(opened.model.assistant.collapsed).toBe(false);
+  expect(opened.commands?.map((command) => command.name)).toEqual([
+    "CreateThread",
+    "PersistCollapsed",
+  ]);
+  expect(opened.commands?.[0]?.args).toEqual({ input: draftRequest });
+  const created = update(
+    opened.model,
+    toAssistantMessage(
+      Assistant.Message.CompletedCreateThread({ sessionId: newSessionId, input: draftRequest }),
+    ),
   );
-  expect(unsent.model.messageInputs["summarize-orders"]).toBe("Summarize orders");
-  expect(unsent.model.newAutomation).toEqual(blankNewAutomation);
-  expect(unsent.commands?.map((command) => command.name)).toContain("NavigateInternal");
+  expect(created.model.assistant.sessionId).toBe(newSessionId);
+  expect(created.model.assistant.input).toBe(draftRequest);
 
-  const sent = update(
-    creating,
-    Message.SucceededCreateAutomation({ automation, wasDescriptionSent: true }),
+  const fromOverview = update(
+    init({ theme: "System", shortcutModifier: "Meta" }, studioUrl()).model,
+    Message.GotOverviewMessage({ message: Overview.Message.ClickedNewAutomation() }),
   );
-  expect(sent.model.messageInputs["summarize-orders"]).toBeUndefined();
+  expect(fromOverview.commands?.[0]?.args).toEqual({ input: draftRequest });
 });
 
-test("a URL change loads that automation, restores its conversation, and leaves the run", () => {
+test("a URL change loads that automation, restores what its latest reply changed, and leaves the run", () => {
   story(
     update,
     given(withOpenRun(runOf({ status: "completed" }))),
@@ -833,30 +727,14 @@ test("a URL change loads that automation, restores its conversation, and leaves 
         revision: 1,
         maybeDraft: Option.some(workflow),
         maybeSaved: Option.some(workflow),
-        conversation: [
-          {
-            id: 0,
-            prompt: "Summarize orders",
-            reply: "Review these steps.",
-            maybeChanges: Option.none(),
-            asked: [],
-          },
-        ],
+        maybeLatestChanges: Option.some(changes),
         runs: [summaryOf(runOf({ status: "completed" }))],
       }),
     ),
     model((current) => {
       expect(current.maybeDraft).toEqual(Option.some(workflow));
       expect(current.runs).toHaveLength(1);
-      expect(current.conversation).toEqual([
-        {
-          id: 0,
-          prompt: "Summarize orders",
-          reply: "Review these steps.",
-          maybeChanges: Option.none(),
-          asked: [],
-        },
-      ]);
+      expect(current.maybeLatestChanges).toEqual(Option.some(changes));
     }),
   );
 });
@@ -885,7 +763,7 @@ test("the studio boots with the saved theme", () => {
 });
 
 test("the overview drops the studio's late replies, and a run link from it opens that run", () => {
-  const sending = update(typed(loaded(), "Hello"), Message.SubmittedMessage()).model;
+  const sending = update(withDraft(), Message.ClickedSave()).model;
   story(
     update,
     given(sending),

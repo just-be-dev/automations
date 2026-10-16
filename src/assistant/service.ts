@@ -15,6 +15,10 @@ export interface AssistantClient {
     callId: string,
     answer: QuestionsAnswer,
   ) => Effect.Effect<AssistantState, unknown>;
+  /** Stops the turn in progress; an idle thread stays as it is. */
+  readonly stop: () => Effect.Effect<AssistantState, unknown>;
+  /** Erases the thread's conversation in place and resolves with the empty thread. */
+  readonly clear: () => Effect.Effect<AssistantState, unknown>;
 }
 
 export class Assistants extends Context.Service<

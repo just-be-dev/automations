@@ -44,6 +44,7 @@ test("stable chat IDs survive completion and never answer an unrelated planner q
         Layer.succeed(PiAgent, {
           instruct: () => Effect.void,
           prompt: () => Effect.succeed("Done"),
+          abort: Effect.void,
           liveAnswer: Effect.succeed(undefined),
           createConversation: Effect.succeed(0),
           transcript: () => Effect.succeed({ events: [], truncated: false }),
@@ -91,6 +92,74 @@ test("stable chat IDs survive completion and never answer an unrelated planner q
             ? answered.asked?.[0]?.answer
             : undefined,
         ).toEqual({ kind: "message", text: "Email please" });
+      }).pipe(Effect.provide(layer));
+    }),
+  ));
+
+test("stopping a planner turn marks it stopped, drops its working copy, and aborts pi once", () =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const f = yield* assistantFixture;
+      const aborted: Array<true> = [];
+      const host = AutomationHost.of({
+        storage: { ...f.host.storage, transaction: (effect) => effect },
+        jobs: {
+          planReply: () => Effect.void,
+          advance: () => Effect.void,
+          clock: () => Effect.void,
+          tick: () => Effect.void,
+          cancelTick: Effect.void,
+        },
+        erase: Effect.void,
+      });
+      const layer = Layer.mergeAll(
+        answerHubLayer,
+        Layer.succeed(AutomationHost, host),
+        Layer.succeed(EntityStore, f.entities),
+        Layer.succeed(AutomationIndex, {
+          list: Effect.succeed([]),
+          create: () => Effect.succeed(true),
+          record: () => Effect.void,
+          recordIfMissing: () => Effect.void,
+          remove: () => Effect.void,
+        }),
+        Layer.succeed(Classifier, { classify: () => Effect.die("No reasoning") }),
+        Layer.succeed(PiAgent, {
+          instruct: () => Effect.void,
+          prompt: () => Effect.succeed("Done"),
+          abort: Effect.sync(() => void aborted.push(true)),
+          liveAnswer: Effect.succeed(undefined),
+          createConversation: Effect.succeed(0),
+          transcript: () => Effect.succeed({ events: [], truncated: false }),
+        }),
+      );
+      yield* Effect.gen(function* () {
+        const session = yield* makeDesignSession({
+          read: () => Effect.succeed(undefined),
+          catalog: Effect.succeed({ types: [], templates: [], roles: [] }),
+          save: () => Effect.die("Never save"),
+          studioLink: Effect.succeed(undefined),
+        });
+        yield* session.chat("a1", "Design welcome", "stable");
+        const planning = yield* makePlanning();
+        yield* planning.start("stable", undefined);
+        const stopped = yield* session.stop("stable");
+        expect(stopped.pendingChat).toEqual({
+          id: "stable",
+          prompt: "Design welcome",
+          status: "failed",
+          error: "Stopped",
+        });
+        expect(yield* host.storage.get("plan")).toBeUndefined();
+        expect(aborted.length).toBe(1);
+        // A delivery that was already scheduled writes nothing, and stopping again does nothing.
+        yield* session.planReply({ automationId: "a1", chatId: "stable" });
+        yield* session.stop("stable");
+        expect(aborted.length).toBe(1);
+        expect((yield* session.inspect()).conversation).toEqual([]);
+        // The next message starts a fresh turn.
+        const next = yield* session.chat("a1", "Try again");
+        expect(next.pendingChat.status).toBe("working");
       }).pipe(Effect.provide(layer));
     }),
   ));

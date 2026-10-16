@@ -1,7 +1,6 @@
-/** Exercises visible studio and run interactions, including questionnaires, permissions, and safe rendering.
- * Covers the shared shell's dialogs, run panels, and integration with the other pages. */
+/** Exercises visible studio and run interactions, including planner progress, permissions, and safe rendering.
+ * Covers the shared shell's run panels, the studio agent's entry points, and the other pages. */
 import { test } from "bun:test";
-import { Animation, Dialog as FoldkitDialog } from "@foldkit/ui";
 import * as Option from "effect/Option";
 import { UrlRequest } from "foldkit/navigation";
 import { modifyFields } from "foldkit/struct";
@@ -10,12 +9,8 @@ import {
   change,
   click,
   expect,
-  expectHandled,
-  expectIgnored,
   given,
-  keydown,
   label,
-  Mount,
   role,
   scene,
   selector,
@@ -24,21 +19,15 @@ import {
   type,
   within,
 } from "foldkit/scene";
-import { diffWorkflows, type Question, type Step, type Workflow } from "../workflow.ts";
-import * as Dialog from "@/components/ui/dialog";
+import { diffWorkflows, type Step, type Workflow } from "../workflow.ts";
 import {
   AnswerTask,
-  CreateAutomation,
-  FocusOwnAnswer,
   LoadAutomations,
   LoadEventInput,
   LoadRun,
   NavigateInternal,
-  PollAutomation,
   ResumeNow,
   SaveDraft,
-  SendAnswers,
-  SendMessage,
   SetPermission,
   StartRun,
   StartSavedRun,
@@ -55,6 +44,8 @@ import {
   summaryOf,
 } from "./fixtures.ts";
 import { init } from "./main.ts";
+import * as Assistant from "./assistant/index.ts";
+import { CreateThread, FocusInput, PersistCollapsed } from "./assistant/command.ts";
 import { Message, toOverviewMessage } from "./message.ts";
 import type { Model } from "./model.ts";
 import { EventInput } from "./domain/index.ts";
@@ -69,7 +60,7 @@ const automationLoaded = (
     revision: 0,
     maybeDraft: Option.none(),
     maybeSaved: Option.none(),
-    conversation: [],
+    maybeLatestChanges: Option.none(),
     maybePendingChat: Option.none(),
     maybeProgress: Option.none(),
     runs: [],
@@ -115,70 +106,73 @@ const withOpenRun = (run: ReturnType<typeof runOf>) =>
     runLoaded({ revision: 0, poll: 1, run }),
   ]);
 
-test("the accessible message input drives chat and safely renders the workflow", () => {
+test("the studio shows the planner's progress, then safely renders the draft it wrote", () => {
+  const working = { id: "chat-1", prompt: "Summarize orders", status: "working" } as const;
+  const status = within(role("region", { name: "Workflow" }), role("status"));
   scene(
     { update, view },
-    given(loaded),
+    given(update(loaded, automationLoaded({ maybePendingChat: Option.some(working) })).model),
     expect(role("banner")).toContainText("my-automation"),
-    expect(role("region", { name: "Conversation" })).toExist(),
-    type(label("Your message"), "Summarize orders"),
-    click(role("button", { name: "Send message" })),
-    Command.expectExact(SendMessage({ ...requestArgs, message: "Summarize orders" })),
-    Command.resolve(
-      SendMessage,
-      Message.SucceededSendMessage({
-        revision: 0,
-        sentMessage: "Summarize orders",
-        pendingChat: { id: "chat-1", prompt: "Summarize orders", status: "working" },
-      }),
-    ),
-    expect(label("Your message")).toHaveValue(""),
-    expect(text("Summarize orders")).toExist(),
-    expect(text("Thinking…")).toExist(),
-    Command.resolve(
-      PollAutomation,
-      automationLoaded({
-        maybePendingChat: Option.some({
-          id: "chat-1",
-          prompt: "Summarize orders",
-          status: "working",
+    expect(role("region", { name: "Conversation" })).not.toExist(),
+    expect(label("Your message")).not.toExist(),
+    expect(text(/Ask the studio agent to draft this automation/)).toExist(),
+    expect(status).toHaveText("Thinking…"),
+    expect(role("button", { name: "Save draft" })).toBeDisabled(),
+  );
+  scene(
+    { update, view },
+    given(
+      update(
+        loaded,
+        automationLoaded({
+          maybePendingChat: Option.some(working),
+          maybeProgress: Option.some("Planning the steps…"),
         }),
-        maybeProgress: Option.some("Planning the steps…"),
-      }),
+      ).model,
     ),
-    expect(text("Planning the steps…")).toExist(),
-    expect(text("Thinking…")).not.toExist(),
-    Command.resolve(
-      PollAutomation,
-      automationLoaded({
-        conversation: [
-          {
-            id: 0,
+    expect(status).toHaveText("Planning the steps…"),
+  );
+  scene(
+    { update, view },
+    given(
+      update(
+        loaded,
+        automationLoaded({
+          maybePendingChat: Option.some({
+            id: "chat-1",
             prompt: "Summarize orders",
-            reply: "Ready to review.",
-            maybeChanges: Option.none(),
-            asked: [],
-          },
-        ],
-        maybeDraft: Option.some({
-          name: "Orders",
-          trigger: { kind: "manual" },
-          steps: [
-            {
-              id: "summary",
-              kind: "agent",
-              title: "<script>alert('unsafe')</script>",
-              instruction: "Summarize",
-            },
-          ],
+            status: "asking",
+            questions: [],
+          }),
         }),
-      }),
+      ).model,
+    ),
+    expect(status).toHaveText("The studio agent is waiting for your answers."),
+  );
+  scene(
+    { update, view },
+    given(
+      update(
+        loaded,
+        automationLoaded({
+          maybeDraft: Option.some({
+            name: "Orders",
+            trigger: { kind: "manual" },
+            steps: [
+              {
+                id: "summary",
+                kind: "agent",
+                title: "<script>alert('unsafe')</script>",
+                instruction: "Summarize",
+              },
+            ],
+          }),
+        }),
+      ).model,
     ),
     expect(text("Thinking…")).not.toExist(),
-    expect(text("Ready to review.")).toExist(),
     expect(text("Manual start")).toExist(),
     expect(text("<script>alert('unsafe')</script>")).toExist(),
-    Command.resolve(LoadAutomations, Message.SucceededLoadAutomations({ automations: [] })),
   );
 });
 
@@ -212,15 +206,7 @@ test("the draft marks what the agent's latest reply changed until the draft is s
   const replied = automationLoaded({
     maybeDraft: Option.some(after),
     maybeSaved: Option.some(before),
-    conversation: [
-      {
-        id: 0,
-        prompt: "Welcome engineers in #eng-team instead",
-        reply: "Changed the welcome post to #eng-team.",
-        asked: [],
-        maybeChanges: Option.some(diffWorkflows(before, after)),
-      },
-    ],
+    maybeLatestChanges: Option.some(diffWorkflows(before, after)),
   });
   const summary = text(/The agent's last reply/);
   scene(
@@ -250,13 +236,6 @@ test("the draft marks what the agent's latest reply changed until the draft is s
 test("a reply that changed nothing, or a draft that matches the saved version, marks nothing", () => {
   const before: Workflow = onboarding;
   const after: Workflow = { ...onboarding, name: "Onboarding" };
-  const exchange = (id: number, maybeChanges: Option.Option<ReturnType<typeof diffWorkflows>>) => ({
-    id,
-    prompt: "Rename it",
-    reply: "Done.",
-    asked: [],
-    maybeChanges,
-  });
   const summary = text(/The agent's last reply/);
   scene(
     { update, view },
@@ -266,10 +245,7 @@ test("a reply that changed nothing, or a draft that matches the saved version, m
         automationLoaded({
           maybeDraft: Option.some(after),
           maybeSaved: Option.some(before),
-          conversation: [
-            exchange(0, Option.some(diffWorkflows(before, after))),
-            exchange(1, Option.none()),
-          ],
+          maybeLatestChanges: Option.none(),
         }),
       ).model,
     ),
@@ -283,251 +259,11 @@ test("a reply that changed nothing, or a draft that matches the saved version, m
         automationLoaded({
           maybeDraft: Option.some(after),
           maybeSaved: Option.some(after),
-          conversation: [exchange(0, Option.some(diffWorkflows(before, after)))],
+          maybeLatestChanges: Option.some(diffWorkflows(before, after)),
         }),
       ).model,
     ),
     expect(summary).not.toExist(),
-  );
-});
-
-test("the agent's reply renders Markdown without letting it add markup", () => {
-  const reply = [
-    "**Almost done.** Two things:",
-    "",
-    "1. Read [the guide](https://example.com/guide)",
-    "2. Ignore [this](javascript:alert(1)) and <b>raw</b> HTML",
-  ].join("\n");
-  const conversation = role("region", { name: "Conversation" });
-  scene(
-    { update, view },
-    given(
-      update(
-        loaded,
-        automationLoaded({
-          conversation: [
-            { id: 0, prompt: "Summarize orders", reply, asked: [], maybeChanges: Option.none() },
-          ],
-        }),
-      ).model,
-    ),
-    expect(within(conversation, role("strong"))).toHaveText("Almost done."),
-    expect(within(conversation, role("list"))).toContainText("Read the guide"),
-    expect(role("link", { name: "the guide" })).toHaveAttr("href", "https://example.com/guide"),
-    expect(role("link", { name: "the guide" })).toHaveAttr("target", "_blank"),
-    expect(role("link", { name: "this" })).not.toExist(),
-    expect(within(conversation, role("list"))).toContainText("Ignore this and <b>raw</b> HTML"),
-  );
-});
-
-const approver = {
-  question: "Who should approve the email?",
-  header: "Approver",
-  options: [{ label: "Managers", description: "Each hire's manager" }, { label: "HR" }],
-};
-
-const askedWith = (questions: ReadonlyArray<Question>) =>
-  update(
-    loaded,
-    automationLoaded({
-      maybePendingChat: Option.some({
-        id: "chat-1",
-        prompt: "Email new hires",
-        status: "asking" as const,
-        questions,
-      }),
-    }),
-  ).model;
-
-const answered = (answers: ReadonlyArray<string | null>) =>
-  SendAnswers({ ...requestArgs, chatId: "chat-1", answer: { kind: "answers", answers } });
-
-const resumedWith = (questions: ReadonlyArray<Question>, answers: ReadonlyArray<string | null>) =>
-  Command.resolve(
-    SendAnswers,
-    Message.SucceededSendAnswers({
-      revision: 0,
-      pendingChat: {
-        id: "chat-1",
-        prompt: "Email new hires",
-        status: "working",
-        asked: [{ questions, answer: { kind: "answers", answers } }],
-      },
-    }),
-  );
-
-const yourAnswers = selector('[aria-label="Your answers"]');
-
-test("picking an answer to the agent's only question sends it and resumes the reply", () => {
-  const managers = role("button", { name: /Managers/ });
-  scene(
-    { update, view },
-    given(askedWith([approver])),
-    expect(role("group", { name: "Questions from the agent" })).toContainText(approver.question),
-    expect(role("navigation", { name: "Questions" })).not.toExist(),
-    expect(managers).toContainText("Each hire's manager"),
-    expect(label("Your message")).toHaveAttr(
-      "placeholder",
-      "Or answer the agent in your own words…",
-    ),
-    click(managers),
-    Command.expectExact(answered(["Managers"])),
-    expect(managers).toBeDisabled(),
-    resumedWith([approver], ["Managers"]),
-    expect(managers).not.toExist(),
-    expect(role("list", { name: "Questions from the agent, answered" })).toContainText(
-      approver.question,
-    ),
-    expect(yourAnswers).toContainText("Approver"),
-    expect(yourAnswers).toContainText("Managers"),
-    expect(text("Thinking…")).toExist(),
-    Command.resolve(PollAutomation, Message.FailedRequest({ revision: 0, error: "Offline" })),
-  );
-});
-
-test("the person can skip the agent's questions", () => {
-  scene(
-    { update, view },
-    given(askedWith([approver])),
-    click(role("button", { name: "Skip questions" })),
-    Command.expectExact(answered([null])),
-    resumedWith([approver], [null]),
-    expect(text("Skipped the questions")).toExist(),
-    Command.resolve(PollAutomation, Message.FailedRequest({ revision: 0, error: "Offline" })),
-  );
-});
-
-test("a finished reply shows the questions it asked and how they were answered", () => {
-  const timeZone = {
-    question: "Which time zone?",
-    header: "Time zone",
-    options: [{ label: "London" }, { label: "Tokyo" }],
-  };
-  const conversation = role("region", { name: "Conversation" });
-  scene(
-    { update, view },
-    given(
-      update(
-        loaded,
-        automationLoaded({
-          conversation: [
-            {
-              id: 0,
-              prompt: "Email new hires",
-              asked: [
-                {
-                  questions: [approver, timeZone],
-                  answer: { kind: "answers", answers: ["HR", null] },
-                },
-                { questions: [timeZone], answer: { kind: "message", text: "Whatever HR uses" } },
-              ],
-              reply: "Done.",
-              maybeChanges: Option.none(),
-            },
-          ],
-        }),
-      ).model,
-    ),
-    expect(conversation).toContainText(approver.question),
-    expect(yourAnswers).toContainText("HR"),
-    expect(yourAnswers).toContainText("Skipped"),
-    expect(conversation).toContainText("Whatever HR uses"),
-    expect(conversation).toContainText("Done."),
-    expect(role("group", { name: "Questions from the agent" })).not.toExist(),
-  );
-});
-
-test("the person can answer a question in their own words", () => {
-  const ownAnswer = label("Your own answer");
-  scene(
-    { update, view },
-    given(askedWith([approver])),
-    click(role("button", { name: "Write your own answer" })),
-    Command.expectExact(FocusOwnAnswer()),
-    Command.resolve(FocusOwnAnswer, Message.CompletedFocusOwnAnswer()),
-    expect(role("button", { name: "Send answer" })).toBeDisabled(),
-    type(ownAnswer, "  The People Ops lead  "),
-    click(role("button", { name: "Send answer" })),
-    Command.expectExact(answered(["The People Ops lead"])),
-    resumedWith([approver], ["The People Ops lead"]),
-    expect(yourAnswers).toContainText("The People Ops lead"),
-    expect(ownAnswer).not.toExist(),
-    Command.resolve(PollAutomation, Message.FailedRequest({ revision: 0, error: "Offline" })),
-  );
-});
-
-test("several questions are answered one at a time, reviewed, and sent together", () => {
-  const timeZones = {
-    question: "Which time zones should it use?",
-    header: "Time zones",
-    multiSelect: true,
-    options: [{ label: "London" }, { label: "New York" }, { label: "Tokyo" }],
-  };
-  const channel = {
-    question: "Where should reminders go?",
-    header: "Channel",
-    options: [{ label: "Slack" }, { label: "Email" }],
-  };
-  const questions = role("group", { name: "Questions from the agent" });
-  const step = (name: string) =>
-    within(role("navigation", { name: "Questions" }), role("button", { name }));
-  scene(
-    { update, view },
-    given(askedWith([approver, timeZones, channel])),
-    expect(step("Approver")).toHaveAttr("aria-current", "step"),
-    click(role("button", { name: "HR" })),
-    expect(questions).toContainText(timeZones.question),
-    expect(step("Time zones")).toHaveAttr("aria-current", "step"),
-    expect(questions).toContainText("Pick any that apply."),
-    click(role("button", { name: "London" })),
-    click(role("button", { name: "New York" })),
-    click(role("button", { name: "Tokyo" })),
-    click(role("button", { name: "New York" })),
-    expect(role("button", { name: "London" })).toHaveAttr("aria-pressed", "true"),
-    expect(role("button", { name: "New York" })).toHaveAttr("aria-pressed", "false"),
-    click(role("button", { name: "Next" })),
-    expect(questions).toContainText(channel.question),
-    click(role("button", { name: "Skip" })),
-    expect(questions).toContainText("Review your answers"),
-    expect(questions).toContainText("London, Tokyo"),
-    expect(questions).toContainText("Not answered yet: Channel."),
-    click(step("Approver")),
-    expect(role("button", { name: "HR" })).toHaveAttr("aria-pressed", "true"),
-    click(step("Review")),
-    click(role("button", { name: "Send answers" })),
-    Command.expectExact(answered(["HR", "London, Tokyo", null])),
-    resumedWith([approver, timeZones, channel], ["HR", "London, Tokyo", null]),
-    expect(yourAnswers).toContainText("London, Tokyo"),
-    expect(yourAnswers).toContainText("Skipped"),
-    expect(questions).not.toExist(),
-    Command.resolve(PollAutomation, Message.FailedRequest({ revision: 0, error: "Offline" })),
-  );
-});
-
-test("the platform's modifier with Enter sends the composer's message, and Enter alone doesn't", () => {
-  const composer = label("Your message");
-  scene(
-    { update, view },
-    given(loaded),
-    type(composer, "Summarize orders"),
-    keydown(composer, "Enter"),
-    expectIgnored(),
-    keydown(composer, "Enter", { ctrlKey: true }),
-    expectIgnored(),
-    keydown(composer, "Enter", { metaKey: true }),
-    expectHandled(),
-    Command.expectExact(SendMessage({ ...requestArgs, message: "Summarize orders" })),
-    Command.resolve(SendMessage, Message.FailedRequest({ revision: 0, error: "Offline" })),
-  );
-  scene(
-    { update, view },
-    given(modifyFields(loaded, { shortcutModifier: () => "Control" as const })),
-    type(composer, "Summarize orders"),
-    keydown(composer, "Enter", { metaKey: true }),
-    expectIgnored(),
-    keydown(composer, "Enter", { ctrlKey: true }),
-    Command.expectExact(SendMessage({ ...requestArgs, message: "Summarize orders" })),
-    Command.resolve(SendMessage, Message.FailedRequest({ revision: 0, error: "Offline" })),
   );
 });
 
@@ -581,51 +317,37 @@ test("the sidebar links to every automation and marks the open one", () => {
   );
 });
 
-test("+ opens a dialog whose description creates an automation, lists it, and opens it", () => {
-  const created = { id: "onboard-new-hires", name: "Onboard new hires" };
-  const orders = { id: "orders", name: "Order summaries" };
-  const form = role("form", { name: "New automation" });
-  const onboarding = "When a hire's start date is set, welcome them by email.";
+const newSessionId = "3f1c2d4e-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+const threadCreated = Assistant.Message.CompletedCreateThread({
+  sessionId: newSessionId,
+  input: "Draft an automation that ",
+});
+/** What a new thread asks for once it opens: its first read, and focus on the composer. */
+const threadOpened = Command.resolveAll(
+  [
+    Assistant.RequestAssistant,
+    Assistant.Message.FailedRequest({ sessionId: newSessionId, sequence: 1, error: "Offline" }),
+  ],
+  [FocusInput, Assistant.Message.CompletedFocusInput()],
+);
+
+test("+ opens a new studio agent thread with a request to draft an automation", () => {
+  const collapsed = modifyFields(loaded, {
+    assistant: (assistant) => modifyFields(assistant, { collapsed: () => true }),
+  });
   scene(
     { update, view },
-    given(update(loaded, Message.SucceededLoadAutomations({ automations: [orders] })).model),
+    given(collapsed),
+    expect(label("Message assistant")).not.toExist(),
     click(role("button", { name: "New automation" })),
-    Command.resolveAll(
-      [FoldkitDialog.ShowDialog, Dialog.Message.SucceededShowDialog()],
-      [Animation.WaitForPaint, Animation.Message.CompletedWaitForPaint({ generation: 1 })],
-      [Animation.WaitForAnimationSettled, Animation.Message.EndedAnimation({ generation: 1 })],
-    ),
-    Mount.resolve(FoldkitDialog.AcquireResources, Dialog.Message.SucceededAcquireResources()),
-    expect(role("heading", { name: "New automation" })).toExist(),
-    submit(form),
-    expect(role("alert")).toHaveText("Describe what the automation should do"),
-    type(label("What should it do?"), onboarding),
-    expect(role("alert")).not.toExist(),
-    submit(form),
-    Command.expectExact(CreateAutomation({ description: onboarding })),
-    expect(role("button", { name: "Creating…" })).toBeDisabled(),
-    Command.resolve(
-      CreateAutomation,
-      Message.SucceededCreateAutomation({ automation: created, wasDescriptionSent: true }),
-    ),
-    expect(role("link", { name: /Onboard new hires/ })).toHaveAttr(
-      "href",
-      "/?automation=onboard-new-hires",
-    ),
-    Command.resolveAll(
-      [Animation.WaitForPaint, Animation.Message.CompletedWaitForPaint({ generation: 2 })],
-      [Animation.WaitForAnimationSettled, Animation.Message.EndedAnimation({ generation: 2 })],
-      [FoldkitDialog.CloseDialog, Dialog.Message.CompletedCloseDialog()],
-      [NavigateInternal, Message.CompletedNavigateInternal()],
-      [LoadAutomations, Message.SucceededLoadAutomations({ automations: [created, orders] })],
-    ),
-    Mount.expectEnded(FoldkitDialog.AcquireResources),
-    expect(role("heading", { name: "New automation" })).not.toExist(),
-    expect(role("link", { name: /Order summaries/ })).toExist(),
+    Command.resolve(PersistCollapsed, Assistant.Message.CompletedPersistCollapsed()),
+    Command.resolve(CreateThread, threadCreated),
+    threadOpened,
+    expect(label("Message assistant")).toHaveValue("Draft an automation that "),
   );
 });
 
-test("the empty overview's New automation button opens the dialog", () => {
+test("the empty overview's New automation button opens a new studio agent thread", () => {
   scene(
     { update, view },
     given(
@@ -638,59 +360,9 @@ test("the empty overview's New automation button opens the dialog", () => {
     ),
     expect(text("No automations yet")).toExist(),
     click(within(role("main"), role("button", { name: "New automation" }))),
-    Command.resolveAll(
-      [FoldkitDialog.ShowDialog, Dialog.Message.SucceededShowDialog()],
-      [Animation.WaitForPaint, Animation.Message.CompletedWaitForPaint({ generation: 1 })],
-      [Animation.WaitForAnimationSettled, Animation.Message.EndedAnimation({ generation: 1 })],
-    ),
-    Mount.resolve(FoldkitDialog.AcquireResources, Dialog.Message.SucceededAcquireResources()),
-    expect(role("heading", { name: "New automation" })).toExist(),
-  );
-});
-
-test("a description the server turns down stays in the dialog with the reason", () => {
-  scene(
-    { update, view },
-    given(
-      modifyFields(loaded, {
-        newAutomationDialog: () =>
-          modifyFields(Dialog.init({ id: "new-automation", isAnimated: false }), {
-            isOpen: () => true,
-          }),
-      }),
-    ),
-    Mount.resolve(FoldkitDialog.AcquireResources, Dialog.Message.SucceededAcquireResources()),
-    type(label("What should it do?"), "Summarize orders"),
-    submit(role("form", { name: "New automation" })),
-    Command.resolve(CreateAutomation, Message.FailedCreateAutomation({ error: "Offline" })),
-    expect(role("alert")).toHaveText("Offline"),
-    expect(label("What should it do?")).toHaveValue("Summarize orders"),
-    expect(role("button", { name: "Create automation" })).not.toBeDisabled(),
-  );
-});
-
-test("⌘+Enter in the description creates the automation, and Enter alone doesn't", () => {
-  const description = label("What should it do?");
-  scene(
-    { update, view },
-    given(
-      modifyFields(loaded, {
-        newAutomationDialog: () =>
-          modifyFields(Dialog.init({ id: "new-automation", isAnimated: false }), {
-            isOpen: () => true,
-          }),
-      }),
-    ),
-    Mount.resolve(FoldkitDialog.AcquireResources, Dialog.Message.SucceededAcquireResources()),
-    type(description, "Summarize orders"),
-    keydown(description, "Enter"),
-    expectIgnored(),
-    keydown(description, "Enter", { ctrlKey: true }),
-    expectIgnored(),
-    keydown(description, "Enter", { metaKey: true }),
-    expectHandled(),
-    Command.expectExact(CreateAutomation({ description: "Summarize orders" })),
-    Command.resolve(CreateAutomation, Message.FailedCreateAutomation({ error: "Offline" })),
+    Command.resolve(CreateThread, threadCreated),
+    threadOpened,
+    expect(label("Message assistant")).toHaveValue("Draft an automation that "),
   );
 });
 
@@ -1675,7 +1347,6 @@ test("a run opens in a panel beside the editor, which can expand to its page or 
   scene(
     { update, view },
     given(editing),
-    expect(role("region", { name: "Conversation" })).toExist(),
     expect(role("region", { name: "Workflow" })).toExist(),
     expect(
       within(
@@ -1692,7 +1363,7 @@ test("a run opens in a panel beside the editor, which can expand to its page or 
     Command.resolve(NavigateInternal, Message.CompletedNavigateInternal()),
     click(role("button", { name: "Close the run" })),
     expect(role("complementary", { name: "Run preview" })).not.toExist(),
-    expect(role("region", { name: "Conversation" })).toExist(),
+    expect(role("region", { name: "Workflow" })).toExist(),
   );
 });
 

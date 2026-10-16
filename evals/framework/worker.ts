@@ -14,6 +14,7 @@ import { decide } from "../calls/decide.ts";
 import { namer } from "../calls/namer.ts";
 import { planner } from "../calls/planner.ts";
 import { progress } from "../calls/progress.ts";
+import { threadNamer } from "../calls/thread-namer.ts";
 import type { Call } from "./call.ts";
 import { grade } from "./judge.ts";
 import { WorkersAi } from "./models.ts";
@@ -58,6 +59,7 @@ const calls: Readonly<Record<string, ReturnType<typeof serve>>> = {
   [namer.name]: serve(namer),
   [planner.name]: serve(planner),
   [progress.name]: serve(progress),
+  [threadNamer.name]: serve(threadNamer),
 };
 
 const routes = (ai: Cloudflare.Workers.AIClient) => {

@@ -39,3 +39,44 @@ cases:
         changes: []
       reports cancellation:
         activities: { status: cancelled, atLeast: 1 }
+
+  # The person has an automation open and asks to change it: the assistant edits that draft
+  # through the planner instead of creating another automation.
+  edit-open-automation:
+    input:
+      message: >-
+        After the welcome email, also post in #people-ops on Slack that they started. Don't save
+        it.
+      approve: true
+      context: { pathname: /, automationId: welcome-new-hires }
+      existing:
+        id: welcome-new-hires
+        name: Welcome new hires
+        draft:
+          name: Welcome new hires
+          trigger: { kind: entity, entity: employee }
+          steps:
+            - id: welcome
+              title: Email the new hire
+              kind: action
+              use: email.send
+              with: { to: "{{employee}}", subject: Welcome, body: Glad you're here }
+          permissions: { email.send: auto }
+    checks:
+      edits the open automation instead of creating one:
+        drafted: [welcome-new-hires]
+      the draft posts to Slack:
+        operationsUsed:
+          $includes: [slack.sendMessage]
+
+  # New automations are created only through the assistant, which drafts one through the planner.
+  new-automation:
+    input:
+      message: Draft a manual automation that posts a hello to #general on Slack. Don't save it.
+      approve: true
+      context: { pathname: / }
+    checks:
+      creates one new automation:
+        drafted: [{ $matches: "/^(?!welcome-new-hires$)[a-z0-9-]+$/" }]
+      doesn't change entities or templates:
+        changes: []

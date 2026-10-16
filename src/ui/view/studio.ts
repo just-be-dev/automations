@@ -254,7 +254,7 @@ const emptyWorkflowView = (h: HtmlBuilder<Message>) =>
           Empty.description(
             {},
             [
-              "Steps show up here once the agent replies. They run top to bottom, started by hand or when a record such as an employee changes.",
+              "Ask the studio agent to draft this automation. Steps show up here as it works. They run top to bottom, started by hand or when a record such as an employee changes.",
             ],
             h,
           ),

@@ -5,19 +5,30 @@ import * as Schema from "effect/Schema";
 import { QuestionsAnswer } from "../ai/ask-question/question.ts";
 import { PageContext } from "../assistant/model.ts";
 import { Assistants } from "../assistant/service.ts";
+import { archiveThread, AssistantThreads } from "../assistant/threads.ts";
 import { RequestIdentity } from "./identity.ts";
 import { limitedBody, pathParams, respond } from "./response.ts";
 
 // The same check as the StudioAssistant's identity, so a session the object would refuse gets a 400 here.
 const Params = Schema.Struct({ sessionId: Schema.String.check(Schema.isUUID(4)) });
+const ownerOf = Effect.map(RequestIdentity, ({ email }) => email ?? "local");
 const client = Effect.gen(function* () {
   const { sessionId } = yield* pathParams(Params);
-  const { email } = yield* RequestIdentity;
   const assistants = yield* Assistants;
-  return assistants.get(email ?? "local", sessionId);
+  return assistants.get(yield* ownerOf, sessionId);
 });
 export const assistantRoutes = HttpRouter.addAll(
   [
+    HttpRouter.route(
+      "GET",
+      "/",
+      respond(
+        Effect.gen(function* () {
+          const threads = yield* AssistantThreads;
+          return { threads: yield* threads.list(yield* ownerOf) };
+        }),
+      ),
+    ),
     HttpRouter.route(
       "GET",
       "/:sessionId",
@@ -59,6 +70,27 @@ export const assistantRoutes = HttpRouter.addAll(
             Schema.Struct({ callId: Schema.String, answer: QuestionsAnswer }),
           );
           return yield* c.answer(body.callId, body.answer);
+        }),
+      ),
+    ),
+    HttpRouter.route(
+      "POST",
+      "/:sessionId/stop",
+      respond(client.pipe(Effect.flatMap((c) => c.stop()))),
+    ),
+    HttpRouter.route(
+      "POST",
+      "/:sessionId/clear",
+      respond(client.pipe(Effect.flatMap((c) => c.clear()))),
+    ),
+    HttpRouter.route(
+      "POST",
+      "/:sessionId/archive",
+      respond(
+        Effect.gen(function* () {
+          const { sessionId } = yield* pathParams(Params);
+          const body = yield* limitedBody(Schema.Struct({ archived: Schema.Boolean }));
+          return yield* archiveThread(yield* ownerOf, sessionId, body.archived);
         }),
       ),
     ),

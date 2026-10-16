@@ -1,9 +1,7 @@
-/** Keeps shared studio headings, step metadata, and text-submission affordances consistent across views. */
+/** Keeps shared studio headings and step metadata consistent across views. */
 import * as Array from "effect/Array";
 import type { Html, HtmlBuilder } from "foldkit/html";
 import { componentName } from "@/lib/component";
-import { cn } from "@/lib/utils";
-import { maxMessageLength } from "../constant.ts";
 import type { Message } from "../message.ts";
 
 export const eyebrowClass = "text-xs font-medium text-sand-10";
@@ -29,18 +27,4 @@ export const stepMetaView = (items: ReadonlyArray<Html | string>, h: HtmlBuilder
       h.Class("flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-muted-foreground"),
     ],
     Array.map(items, (item) => h.li([], [item])),
-  );
-
-/** How much of a chat message's length a textarea has used. */
-export const characterCountView = (
-  length: number,
-  className: string | undefined,
-  h: HtmlBuilder<Message>,
-) =>
-  h.span(
-    [
-      componentName("character-count"),
-      h.Class(cn("font-mono text-[11px] text-muted-foreground tabular-nums", className)),
-    ],
-    [`${length} / ${maxMessageLength.toLocaleString("en-US")}`],
   );

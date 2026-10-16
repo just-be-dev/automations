@@ -1,25 +1,22 @@
 /** Carries out studio and run interactions with the server, including polling and task answers.
- * Also handles the root app's navigation, focus, and theme changes. */
+ * Also handles the root app's navigation and theme changes. */
 import * as Array from "effect/Array";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { Command, Dom, Http } from "foldkit";
+import { Command, Http } from "foldkit";
 import { load, pushUrl } from "foldkit/navigation";
 import { Role } from "../entities.ts";
 import { SuppliedEvent } from "../events/model.ts";
 import {
-  AskedQuestions,
   PendingChat,
   Permission,
-  QuestionsAnswer,
   RunSummary,
   TitledRun,
   Workflow,
   WorkflowChanges,
 } from "../workflow.ts";
 import { errorText, loadEventInput, loadSubjectOptions, requestJson } from "./api.ts";
-import { ownAnswerId } from "./constant.ts";
 import { TaskAnswer } from "./domain/index.ts";
 import { Message } from "./message.ts";
 import { AutomationSummary } from "./model.ts";
@@ -43,12 +40,7 @@ const AutomationState = Schema.Struct({
   draft: Schema.OptionFromOptional(Workflow),
   saved: Schema.OptionFromOptional(Workflow),
   conversation: Schema.Array(
-    Schema.Struct({
-      prompt: Schema.String,
-      reply: Schema.String,
-      asked: Schema.optionalKey(Schema.Array(AskedQuestions)),
-      changes: Schema.OptionFromOptional(WorkflowChanges),
-    }),
+    Schema.Struct({ changes: Schema.OptionFromOptional(WorkflowChanges) }),
   ),
   pendingChat: Schema.OptionFromOptional(PendingChat),
   runs: Schema.Array(RunSummary),
@@ -62,15 +54,9 @@ const loadAutomation = (automationId: string, revision: number) =>
         revision,
         maybeDraft: state.draft,
         maybeSaved: state.saved,
-        conversation: Array.map(
-          state.conversation,
-          ({ prompt, asked = [], reply, changes }, id) => ({
-            id,
-            prompt,
-            asked,
-            reply,
-            maybeChanges: changes,
-          }),
+        maybeLatestChanges: Option.flatMap(
+          Array.last(state.conversation),
+          (exchange) => exchange.changes,
         ),
         maybePendingChat: state.pendingChat,
         runs: state.runs,
@@ -200,74 +186,10 @@ export const LoadExternal = Command.define("LoadExternal", {
   execute: ({ href }) => load(href).pipe(Effect.as(Message.CompletedLoadExternal())),
 });
 
-export const FocusOwnAnswer = Command.define("FocusOwnAnswer", {
-  messages: [Message.CompletedFocusOwnAnswer],
-  execute: Dom.focus(`#${ownAnswerId}`).pipe(
-    Effect.ignore,
-    Effect.as(Message.CompletedFocusOwnAnswer()),
-  ),
-});
-
 export const ApplyTheme = Command.define("ApplyTheme", {
   args: { theme: Theme },
   messages: [Message.CompletedApplyTheme],
   execute: ({ theme }) => applyTheme(theme).pipe(Effect.as(Message.CompletedApplyTheme())),
-});
-
-const CreatedAutomation = Schema.Struct({
-  ...AutomationSummary.fields,
-  pendingChat: Schema.optionalKey(PendingChat),
-});
-
-/** Names and lists an automation from its description, then sends that as its first message. */
-export const CreateAutomation = Command.define("CreateAutomation", {
-  args: { description: Schema.String },
-  messages: [Message.SucceededCreateAutomation, Message.FailedCreateAutomation],
-  execute: ({ description }) =>
-    requestJson("/api/automations", CreatedAutomation, { description }).pipe(
-      Effect.map(({ id, name, pendingChat }) =>
-        Message.SucceededCreateAutomation({
-          automation: { id, name },
-          wasDescriptionSent: pendingChat !== undefined,
-        }),
-      ),
-      Effect.catch((error) =>
-        Effect.succeed(Message.FailedCreateAutomation({ error: errorText(error) })),
-      ),
-      Effect.provide(Http.layer),
-    ),
-});
-
-export const SendMessage = Command.define("SendMessage", {
-  args: { ...requestArgs, message: Schema.String },
-  messages: [Message.SucceededSendMessage, Message.FailedRequest],
-  execute: ({ automationId, revision, message }) =>
-    request(automationId, "/chat", Schema.Struct({ pendingChat: PendingChat }), { message }).pipe(
-      Effect.map((data) =>
-        Message.SucceededSendMessage({
-          revision,
-          sentMessage: message,
-          pendingChat: data.pendingChat,
-        }),
-      ),
-      recoverRequest(revision),
-      Effect.provide(Http.layer),
-    ),
-});
-
-/** Answers the questions the agent is waiting on, which resumes its reply. */
-export const SendAnswers = Command.define("SendAnswers", {
-  args: { ...requestArgs, chatId: Schema.String, answer: QuestionsAnswer },
-  messages: [Message.SucceededSendAnswers, Message.FailedRequest],
-  execute: ({ automationId, revision, chatId, answer }) =>
-    request(automationId, "/answers", Schema.Struct({ pendingChat: PendingChat }), {
-      chatId,
-      answer,
-    }).pipe(
-      Effect.map(({ pendingChat }) => Message.SucceededSendAnswers({ revision, pendingChat })),
-      recoverRequest(revision),
-      Effect.provide(Http.layer),
-    ),
 });
 
 export const SaveDraft = Command.define("SaveDraft", {

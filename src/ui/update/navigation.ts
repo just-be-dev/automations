@@ -16,17 +16,14 @@ import { Entities, Overview, Templates, Traces } from "../page/index.ts";
 import { AppRoute } from "../route.ts";
 import { modifyOpenRun, openingRun, reloadOpenRun } from "./open-run.ts";
 import { fail } from "./studio.ts";
-import * as Dictation from "../dictation/index.ts";
 
 const leaveAutomation = (model: Model, automationId: string): Model =>
   modifyFields(model, {
     automationId: () => automationId,
-    dictation: Dictation.cancel,
     revision: (revision) => revision + 1,
     maybeDraft: () => Option.none(),
     maybeSaved: () => Option.none(),
     maybePendingChat: () => Option.none(),
-    maybeQuestionnaire: () => Option.none(),
     runs: () => [],
     maybeRunPanel: () => Option.none(),
     subjectChoices: () => SubjectChoices.NotNeeded(),
@@ -34,7 +31,7 @@ const leaveAutomation = (model: Model, automationId: string): Model =>
     maybeEventInput: () => Option.none(),
     maybeProgress: () => Option.none(),
     expandedStepIds: () => [],
-    conversation: () => [],
+    maybeLatestChanges: () => Option.none(),
     activity: () => Activity.Working({ notice: "Loading automation…" }),
   });
 

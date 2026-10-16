@@ -14,6 +14,7 @@ import {
   keydown,
   expectHandled,
   expectIgnored,
+  within,
 } from "foldkit/scene";
 import * as Assistant from "./assistant/index.ts";
 import { assistantOf, sessionId, stateOf } from "./assistant/fixtures.ts";
@@ -275,5 +276,174 @@ test("assistant questions accept choices and written answers in the same session
       }),
     ),
     expect(role("region", { name: "Assistant questions" })).not.toExist(),
+  );
+});
+
+test("stopping a turn swaps the send button for stop, and marks the message stopped", () => {
+  const working = modifyFields(root(), {
+    assistant: () =>
+      assistantOf({ status: "working", conversation: [{ id: "turn", prompt: "Draft it" }] }),
+  });
+  scene(
+    { update, view },
+    given(working),
+    expect(role("button", { name: "Send to assistant" })).not.toExist(),
+    click(role("button", { name: "Stop the agent" })),
+    Command.expectExact(
+      Assistant.RequestAssistant({
+        sessionId,
+        sequence: 1,
+        path: "/stop",
+        body: Option.some({}),
+        delay: 0,
+        sentInput: "",
+      }),
+    ),
+    Command.resolve(
+      Assistant.RequestAssistant,
+      Assistant.Message.SucceededRequest({
+        sessionId,
+        sequence: 1,
+        state: stateOf({ conversation: [{ id: "turn", prompt: "Draft it", stopped: true }] }),
+        sentInput: "",
+      }),
+    ),
+    expect(role("button", { name: "Stop the agent" })).not.toExist(),
+    expect(role("button", { name: "Send to assistant" })).toExist(),
+    expect(role("complementary", { name: "Assistant" })).toContainText("Stopped"),
+  );
+});
+
+test("past threads open, archive, and restore from the history view", () => {
+  const otherId = "c3a1e2b4-5d6f-4a7b-8c9d-0e1f2a3b4c5d";
+  const archivedId = "d4b2f3c5-6e7a-4b8c-9d0e-1f2a3b4c5d6e";
+  const threads = [
+    { id: sessionId, title: "Open thread", createdAt: 0, updatedAt: 2, archived: false },
+    {
+      id: otherId,
+      title: "Onboarding email template",
+      createdAt: 0,
+      updatedAt: 1,
+      archived: false,
+    },
+    { id: archivedId, title: "Old idea", createdAt: 0, updatedAt: 0, archived: true },
+  ];
+  scene(
+    { update, view },
+    given(root()),
+    click(role("button", { name: "Past threads" })),
+    Command.expectExact(Assistant.LoadThreads()),
+    Command.resolve(Assistant.LoadThreads, Assistant.Message.SucceededLoadThreads({ threads })),
+    expect(role("list", { name: "Threads" })).toContainText("Onboarding email template"),
+    expect(role("list", { name: "Archived threads" })).not.toExist(),
+    click(role("button", { name: "Show archived (1)" })),
+    expect(role("list", { name: "Archived threads" })).toContainText("Old idea"),
+    click(role("button", { name: "Restore Old idea" })),
+    Command.expectExact(Assistant.ArchiveThread({ sessionId: archivedId, archived: false })),
+    Command.resolve(
+      Assistant.ArchiveThread,
+      Assistant.Message.SucceededArchiveThread({
+        sessionId: archivedId,
+        archived: false,
+        threads: threads.map((thread) => ({ ...thread, archived: false })),
+      }),
+    ),
+    expect(role("list", { name: "Threads" })).toContainText("Old idea"),
+    click(role("button", { name: /Onboarding email template/ })),
+    Command.expectExact(
+      Assistant.RequestAssistant({
+        sessionId: otherId,
+        sequence: 1,
+        path: "",
+        body: Option.none(),
+        delay: 0,
+        sentInput: "",
+      }),
+      Assistant.PersistSession({ sessionId: otherId }),
+    ),
+    Command.resolve(
+      Assistant.RequestAssistant,
+      Assistant.Message.SucceededRequest({
+        sessionId: otherId,
+        sequence: 1,
+        state: {
+          ...stateOf({ conversation: [{ id: "t", prompt: "Make a template", reply: "Done" }] }),
+          sessionId: otherId,
+          title: "Onboarding email template",
+        },
+        sentInput: "",
+      }),
+    ),
+    Command.resolve(Assistant.PersistSession, Assistant.Message.CompletedPersistSession()),
+    expect(role("list", { name: "Threads" })).not.toExist(),
+    expect(role("complementary", { name: "Assistant" })).toContainText("Make a template"),
+  );
+});
+
+test("a new thread opens empty and focuses the composer", () => {
+  const newId = "e5c3a4d6-7f8b-4c9d-8e1f-2a3b4c5d6e7f";
+  const chatting = modifyFields(root(), {
+    assistant: () =>
+      assistantOf({ conversation: [{ id: "t", prompt: "Earlier question", reply: "Answer" }] }),
+  });
+  scene(
+    { update, view },
+    given(chatting),
+    click(role("button", { name: "New thread" })),
+    Command.expectExact(Assistant.CreateThread({ input: "" })),
+    Command.resolve(
+      Assistant.CreateThread,
+      Assistant.Message.CompletedCreateThread({ sessionId: newId, input: "" }),
+    ),
+    Command.expectHas(Assistant.FocusInput()),
+    Command.resolve(Assistant.FocusInput, Assistant.Message.CompletedFocusInput()),
+    Command.resolve(
+      Assistant.RequestAssistant,
+      Assistant.Message.SucceededRequest({
+        sessionId: newId,
+        sequence: 1,
+        state: { ...stateOf(), sessionId: newId },
+        sentInput: "",
+      }),
+    ),
+    expect(role("heading", { name: "What would you like to do?" })).toExist(),
+  );
+});
+
+test("clearing a thread asks first, then erases it in place", () => {
+  const chatting = modifyFields(root(), {
+    assistant: () =>
+      assistantOf({ conversation: [{ id: "t", prompt: "Earlier question", reply: "Answer" }] }),
+  });
+  scene(
+    { update, view },
+    given(chatting),
+    click(role("button", { name: "Clear thread" })),
+    Command.expectNone(),
+    expect(role("alertdialog", { name: "Clear this thread?" })).toExist(),
+    click(role("button", { name: "Cancel" })),
+    expect(role("alertdialog", { name: "Clear this thread?" })).not.toExist(),
+    click(role("button", { name: "Clear thread" })),
+    click(within(role("alertdialog"), role("button", { name: "Clear thread" }))),
+    Command.expectExact(
+      Assistant.RequestAssistant({
+        sessionId,
+        sequence: 1,
+        path: "/clear",
+        body: Option.some({}),
+        delay: 0,
+        sentInput: "",
+      }),
+    ),
+    Command.resolve(
+      Assistant.RequestAssistant,
+      Assistant.Message.SucceededRequest({
+        sessionId,
+        sequence: 1,
+        state: stateOf(),
+        sentInput: "",
+      }),
+    ),
+    expect(role("heading", { name: "What would you like to do?" })).toExist(),
   );
 });

@@ -45,6 +45,7 @@ const automationsLayer = Layer.merge(
       inspectWorkflow: unused,
       overview: () => Effect.succeed({ activeRuns: [] }),
       answer: unused,
+      stopChat: unused,
       templateUses: () => {
         const uses = templateUses[id];
         // Durable Object RPC errors arrive as plain objects.

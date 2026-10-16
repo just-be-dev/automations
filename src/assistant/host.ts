@@ -23,4 +23,10 @@ export interface AssistantHost {
     /** Durable at-least-once delivery; after is a delay in milliseconds. */
     readonly reply: (turnId: string, after?: number) => Effect.Effect<void>;
   };
+  /**
+   * Deletes the session's storage, pi's conversation and its scheduled replies. The host may end
+   * the instance after this runs, so the caller may see the call fail even though the erase
+   * succeeded.
+   */
+  readonly erase: Effect.Effect<void>;
 }

@@ -3,7 +3,7 @@ import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as Layer from "effect/Layer";
-import { AutomationNamer, NamerError } from "../agents/namer/namer.ts";
+import { Namer, NamerError } from "../agents/namer/namer.ts";
 import { AutomationIndex } from "../automation/index.ts";
 import { Automations } from "../automation/service.ts";
 import type { Workflow } from "../workflow/model.ts";
@@ -23,7 +23,7 @@ test("HTTP delegates save, drafts, removal and supplied manual event data withou
   const unused = () => Effect.die("Unexpected operation");
   const services = Layer.mergeAll(
     Layer.succeed(RequestIdentity, { email: undefined }),
-    Layer.succeed(AutomationNamer, { complete: unused }),
+    Layer.succeed(Namer, { complete: unused }),
     Layer.succeed(AutomationIndex, {
       list: Effect.succeed([]),
       create: unused,
@@ -36,6 +36,7 @@ test("HTTP delegates save, drafts, removal and supplied manual event data withou
         inspectWorkflow: unused,
         overview: unused,
         answer: unused,
+        stopChat: unused,
         templateUses: unused,
         chat: unused,
         save: (automationId, origin) =>
@@ -130,7 +131,7 @@ test("creating an automation names it, lists it, and sends its description as th
   const unused = () => Effect.die("Unexpected operation");
   const services = Layer.mergeAll(
     Layer.succeed(RequestIdentity, { email: undefined }),
-    Layer.succeed(AutomationNamer, {
+    Layer.succeed(Namer, {
       complete: () => {
         const reply = replies.shift();
         return reply === undefined
@@ -157,6 +158,7 @@ test("creating an automation names it, lists it, and sends its description as th
         inspectWorkflow: unused,
         overview: unused,
         answer: unused,
+        stopChat: unused,
         templateUses: unused,
         chat: (automationId, message) =>
           id === "order-summaries"
@@ -237,7 +239,7 @@ test("traces come from the planner, or from a run's agent steps, and an unknown 
   const unused = () => Effect.die("Unexpected operation");
   const services = Layer.mergeAll(
     Layer.succeed(RequestIdentity, { email: undefined }),
-    Layer.succeed(AutomationNamer, { complete: unused }),
+    Layer.succeed(Namer, { complete: unused }),
     Layer.succeed(AutomationIndex, {
       list: Effect.succeed([]),
       create: unused,
@@ -250,6 +252,7 @@ test("traces come from the planner, or from a run's agent steps, and an unknown 
         inspectWorkflow: unused,
         overview: unused,
         answer: unused,
+        stopChat: unused,
         templateUses: unused,
         chat: unused,
         save: unused,

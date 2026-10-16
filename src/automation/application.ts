@@ -78,6 +78,7 @@ export const makeAutomation = Effect.fn("Automation.make")(function* () {
     templateUses,
     chat: design.chat,
     answer: design.answer,
+    stopChat: design.stop,
     save: workflows.save,
     setPermissions: design.setPermissions,
     setDraft: design.setDraft,

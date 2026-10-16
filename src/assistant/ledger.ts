@@ -107,6 +107,14 @@ export const makeLedger = (options: {
   });
   const update = (f: (s: StoredSession) => StoredSession) =>
     session.pipe(Effect.flatMap((s) => write("assistant", f(s))));
+  /**
+   * Updates the session only while `turnId` is the turn in progress, so work that finishes after
+   * the person stopped the turn, or after another began, leaves it alone.
+   */
+  const updateTurn = (turnId: string, f: (s: StoredSession) => StoredSession) =>
+    update((s) =>
+      s.turnId !== turnId || s.state.status === "idle" || s.state.status === "failed" ? s : f(s),
+    );
 
   const receipts = storage
     .list({ prefix: "tool:" })
@@ -124,7 +132,13 @@ export const makeLedger = (options: {
     storage
       .get(`tool:${id}`)
       .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.UndefinedOr(Receipt))));
-  const put = (r: Receipt) => write(`tool:${r.id}`, r);
+  /** A receipt with a result is never reopened: a later write keeps the stored result. */
+  const put = (r: Receipt) =>
+    receipt(r.id).pipe(
+      Effect.flatMap((current) =>
+        write(`tool:${r.id}`, current?.result === undefined ? r : { ...r, result: current.result }),
+      ),
+    );
 
   const activity = (r: Receipt, status: ActivityStatus) =>
     update((s) => ({
@@ -157,9 +171,18 @@ export const makeLedger = (options: {
       }),
     );
 
-  /** Records the call's result for pi and its outcome for the person. Run inside a transaction. */
+  /**
+   * Records the call's result for pi and its outcome for the person, unless it already has one,
+   * such as when the person stopped the turn. Run inside a transaction.
+   */
   const finish = (r: Receipt, result: string, status: Exclude<ActivityStatus, "working">) =>
-    put({ ...r, result }).pipe(Effect.andThen(activity(r, status)));
+    receipt(r.id).pipe(
+      Effect.flatMap((current) =>
+        current?.result !== undefined
+          ? Effect.void
+          : put({ ...r, result }).pipe(Effect.andThen(activity(r, status))),
+      ),
+    );
 
   /** Fails every unfinished call of the turn. Run inside a transaction. */
   const failUnfinished = (turnId: string, error: unknown) =>
@@ -192,6 +215,7 @@ export const makeLedger = (options: {
   return {
     session,
     update,
+    updateTurn,
     receipts,
     unfinished,
     receipt,

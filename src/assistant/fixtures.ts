@@ -3,6 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
+import { Namer } from "../agents/namer/namer.ts";
 import { AutomationIndex } from "../automation/index.ts";
 import type { PendingChat } from "../automation/model.ts";
 import { Automations, type AutomationClient } from "../automation/service.ts";
@@ -12,6 +13,7 @@ import { EntityStore, layerMemory } from "../entities/store.ts";
 import type { Workflow } from "../workflow/model.ts";
 import type { AssistantHost } from "./host.ts";
 import { makeAssistantSession } from "./session.ts";
+import { AssistantThreads, layerMemory as threadsMemory } from "./threads.ts";
 
 export const fixtureValue = <A>(value: A | undefined): A => {
   if (value === undefined) throw new Error("Missing fixture value");
@@ -21,6 +23,7 @@ export const fixtureValue = <A>(value: A | undefined): A => {
 /** An in-memory host whose transactions roll back storage and scheduled jobs on failure. */
 export const memoryAssistantHost = () => {
   let data = new Map<string, unknown>();
+  let erased = 0;
   const jobs: Array<{ turnId: string; after?: number }> = [];
   const lock = Semaphore.makeUnsafe(1);
   const host: AssistantHost = {
@@ -52,12 +55,17 @@ export const memoryAssistantHost = () => {
         ),
     },
     jobs: { reply: (turnId, after) => Effect.sync(() => void jobs.push({ turnId, after })) },
+    erase: Effect.sync(() => {
+      data = new Map();
+      jobs.length = 0;
+      erased += 1;
+    }),
   };
-  return { host, jobs };
+  return { host, jobs, erasures: () => erased };
 };
 
 export const assistantFixture = Effect.gen(function* () {
-  const { host, jobs } = memoryAssistantHost();
+  const { host, jobs, erasures } = memoryAssistantHost();
   const entities = yield* Effect.service(EntityStore).pipe(
     Effect.provide(
       layerMemory({
@@ -134,6 +142,9 @@ export const assistantFixture = Effect.gen(function* () {
   const drafts = new Map<string, Workflow>();
   const pending = new Map<string, PendingChat>();
   const submitted = new Set<string>();
+  const stoppedChats: Array<string> = [];
+  // Runs inside the planner's `chat`, before it accepts the message, to interleave other work.
+  let beforeChat: Effect.Effect<unknown, unknown, never> = Effect.void;
   const forbidden = () => Effect.die("Assistant must not save, run, or change permissions");
   const client = (id: string): AutomationClient => ({
     inspectWorkflow: () =>
@@ -146,15 +157,18 @@ export const assistantFixture = Effect.gen(function* () {
         runs: [],
       })),
     chat: (_id, description, requestId) =>
-      Effect.sync(() => {
-        const key = requestId ?? crypto.randomUUID();
-        if (!submitted.has(key)) {
-          submitted.add(key);
-          submissions.push({ id, description, requestId: key });
-          pending.set(id, { id: key, prompt: description, status: "working" });
-        }
-        return { pendingChat: fixtureValue(pending.get(id)) };
-      }),
+      Effect.suspend(() => beforeChat).pipe(
+        Effect.orDie,
+        Effect.map(() => {
+          const key = requestId ?? crypto.randomUUID();
+          if (!submitted.has(key)) {
+            submitted.add(key);
+            submissions.push({ id, description, requestId: key });
+            pending.set(id, { id: key, prompt: description, status: "working" });
+          }
+          return { pendingChat: fixtureValue(pending.get(id)) };
+        }),
+      ),
     answer: (_id, chatId, _given) =>
       Effect.sync(() => {
         const current = fixtureValue(pending.get(id));
@@ -163,6 +177,19 @@ export const assistantFixture = Effect.gen(function* () {
         const next: PendingChat = { id: chatId, prompt: current.prompt, status: "working" };
         pending.set(id, next);
         return { pendingChat: next };
+      }),
+    stopChat: (chatId) =>
+      Effect.sync(() => {
+        stoppedChats.push(chatId);
+        const current = pending.get(id);
+        if (current?.id === chatId && current.status !== "failed")
+          pending.set(id, {
+            id: chatId,
+            prompt: current.prompt,
+            status: "failed",
+            error: "Stopped",
+          });
+        return { pendingChat: pending.get(id) };
       }),
     overview: () => Effect.succeed({ activeRuns: [] }),
     templateUses: () => Effect.succeed({ saved: [], draft: [] }),
@@ -179,7 +206,18 @@ export const assistantFixture = Effect.gen(function* () {
     plannerTrace: forbidden,
     runTrace: forbidden,
   });
+  const threads = yield* Effect.service(AssistantThreads).pipe(Effect.provide(threadsMemory));
+  const titles: Array<string> = [];
   const services = Layer.mergeAll(
+    Layer.succeed(AssistantThreads, threads),
+    Layer.succeed(Namer, {
+      complete: (request) =>
+        Effect.sync(() => {
+          const content = request.messages.at(-1)?.content ?? "";
+          titles.push(content);
+          return "Fixture thread";
+        }),
+    }),
     Layer.succeed(EntityStore, entities),
     Layer.succeed(Changes, changes),
     Layer.succeed(Automations, { get: client }),
@@ -214,5 +252,13 @@ export const assistantFixture = Effect.gen(function* () {
     drafts,
     directory,
     sessionId,
+    threads,
+    titles,
+    stoppedChats,
+    erasures,
+    beforeChat: (effect: Effect.Effect<unknown, unknown, never>) =>
+      Effect.sync(() => {
+        beforeChat = effect;
+      }),
   };
 });

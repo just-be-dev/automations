@@ -6,9 +6,18 @@ import { defineMessageUnion } from "foldkit/message";
 import { modifyFields } from "foldkit/struct";
 import type { PageContext } from "../../assistant/model.ts";
 import { Questionnaire } from "../domain/index.ts";
-import { PersistCollapsed, RequestAssistant, RestoreAssistant } from "./command.ts";
+import {
+  ArchiveThread,
+  CreateThread,
+  FocusInput,
+  LoadThreads,
+  PersistCollapsed,
+  PersistSession,
+  RequestAssistant,
+  RestoreAssistant,
+} from "./command.ts";
 import { Message } from "./message.ts";
-import { type Model, Request } from "./model.ts";
+import { Clearing, type Model, Panel, Request, ThreadList, turnInProgress } from "./model.ts";
 import * as Dictation from "../dictation/index.ts";
 
 export const OutMessage = defineMessageUnion({
@@ -40,6 +49,49 @@ const request = (model: Model, path: string, body: Schema.Json, sentInput = ""):
     ],
   };
 };
+/**
+ * Opens `sessionId` in the chat: the previous thread's state, answers and pending request are
+ * dropped, and a fresh request sequence reads the thread. A late reply for the previous thread
+ * carries its session ID or an older sequence, so it's ignored.
+ */
+const openThread = (model: Model, sessionId: string, input: string): Return => {
+  const sequence = model.sequence + 1;
+  return {
+    model: modifyFields(model, {
+      sessionId: () => sessionId,
+      sequence: () => sequence,
+      request: () => Request.Ready(),
+      maybeState: () => Option.none(),
+      maybeQuestionnaire: () => Option.none(),
+      input: () => input,
+      dictation: Dictation.cancel,
+      panel: () => Panel.Chat(),
+      clearing: () => Clearing.Idle(),
+    }),
+    commands: [
+      RequestAssistant({
+        sessionId,
+        sequence,
+        path: "",
+        body: Option.none(),
+        delay: 0,
+        sentInput: "",
+      }),
+    ],
+  };
+};
+/** Starts a new thread with `input` in the composer, opening the panel if it was collapsed. */
+export const startThread =
+  (input: string) =>
+  (model: Model): Return => ({
+    model: modifyFields(model, { collapsed: () => false }),
+    commands: [
+      CreateThread({ input }),
+      ...(model.collapsed ? [PersistCollapsed({ collapsed: false })] : []),
+    ],
+  });
+const historyOf = (model: Model) =>
+  Panel.guards.History(model.panel) ? Option.some(model.panel) : Option.none();
 export const update =
   (context: PageContext, dirty: boolean) =>
   (model: Model, message: Message): Return =>
@@ -81,6 +133,103 @@ export const update =
         commands: [PersistCollapsed({ collapsed: !model.collapsed })],
       }),
       CompletedPersistCollapsed: () => ({ model }),
+      ClickedNewThread: () => startThread("")(model),
+      CompletedCreateThread: ({ sessionId, input }) => {
+        const opened = openThread(model, sessionId, input);
+        return { model: opened.model, commands: [...(opened.commands ?? []), FocusInput()] };
+      },
+      FailedCreateThread: ({ error }) => ({
+        model: modifyFields(model, { request: () => Request.Failed({ error }) }),
+      }),
+      CompletedFocusInput: () => ({ model }),
+      ClickedHistory: () =>
+        Panel.guards.History(model.panel)
+          ? { model: modifyFields(model, { panel: () => Panel.Chat() }) }
+          : {
+              model: modifyFields(model, {
+                panel: () => Panel.History({ threads: ThreadList.Loading(), showArchived: false }),
+                clearing: () => Clearing.Idle(),
+              }),
+              commands: [LoadThreads()],
+            },
+      SucceededLoadThreads: ({ threads }) => ({
+        model: modifyFields(model, {
+          panel: (panel) =>
+            Panel.guards.History(panel)
+              ? Panel.History({ ...panel, threads: ThreadList.Ready({ threads }) })
+              : panel,
+        }),
+      }),
+      FailedLoadThreads: ({ error }) => ({
+        model: modifyFields(model, {
+          panel: (panel) =>
+            Panel.guards.History(panel)
+              ? Panel.History({ ...panel, threads: ThreadList.Failed({ error }) })
+              : panel,
+        }),
+      }),
+      ClickedShowArchived: () => ({
+        model: modifyFields(model, {
+          panel: (panel) =>
+            Panel.guards.History(panel)
+              ? Panel.History({ ...panel, showArchived: !panel.showArchived })
+              : panel,
+        }),
+      }),
+      ClickedThread: ({ sessionId }) => {
+        if (sessionId === model.sessionId) {
+          return { model: modifyFields(model, { panel: () => Panel.Chat() }) };
+        }
+        const opened = openThread(model, sessionId, "");
+        return {
+          model: opened.model,
+          commands: [...(opened.commands ?? []), PersistSession({ sessionId })],
+        };
+      },
+      CompletedPersistSession: () => ({ model }),
+      ClickedArchiveThread: ({ sessionId, archived }) => ({
+        model,
+        commands: [ArchiveThread({ sessionId, archived })],
+      }),
+      SucceededArchiveThread: ({ sessionId, archived, threads }) => {
+        const listed = modifyFields(model, {
+          panel: (panel) =>
+            Panel.guards.History(panel)
+              ? Panel.History({ ...panel, threads: ThreadList.Ready({ threads }) })
+              : panel,
+        });
+        // Archiving the open thread puts it away, so the panel moves on to a fresh one.
+        return archived && sessionId === model.sessionId
+          ? { model: listed, commands: [CreateThread({ input: "" })] }
+          : { model: listed };
+      },
+      FailedArchiveThread: ({ error }) =>
+        Option.match(historyOf(model), {
+          onNone: () => ({ model }),
+          onSome: (history) => ({
+            model: modifyFields(model, {
+              panel: () => Panel.History({ ...history, threads: ThreadList.Failed({ error }) }),
+            }),
+          }),
+        }),
+      ClickedClearThread: () => ({
+        model: modifyFields(model, { clearing: () => Clearing.Confirming() }),
+      }),
+      ClickedCancelClear: () => ({
+        model: modifyFields(model, { clearing: () => Clearing.Idle() }),
+      }),
+      ClickedConfirmClear: () => {
+        const cleared = request(
+          modifyFields(model, { clearing: () => Clearing.Idle() }),
+          "/clear",
+          {},
+        );
+        return {
+          ...cleared,
+          model: modifyFields(cleared.model, { maybeQuestionnaire: () => Option.none() }),
+        };
+      },
+      ClickedStop: () => (turnInProgress(model) ? request(model, "/stop", {}) : { model }),
       ClickedFollow: () => {
         const nextModel = modifyFields(model, { follow: (value) => !value });
         if (model.follow || model.sessionId === "" || Request.guards.Sending(model.request)) {
@@ -191,6 +340,7 @@ export const update =
         }
         const completed = state.activities.some(
           (activity) =>
+            Option.isSome(model.maybeState) &&
             activity.status === "completed" &&
             !Option.exists(model.maybeState, (previous) =>
               previous.activities.some(
@@ -198,9 +348,12 @@ export const update =
               ),
             ),
         );
+        // A thread just opened shows what it did before; following starts from what it does next.
+        const isFirstRead = Option.isNone(model.maybeState);
         const follow = Array.findLast(
           state.activities,
           (activity) =>
+            !isFirstRead &&
             activity.href !== undefined &&
             trustedHref(activity.href) &&
             !model.seenActivities.includes(activityKey(activity.id, activity.href)),
@@ -226,7 +379,7 @@ export const update =
                 );
           },
           seenActivities: (seen) =>
-            model.follow
+            model.follow || isFirstRead
               ? Array.dedupe([
                   ...seen,
                   ...state.activities.flatMap((activity) =>

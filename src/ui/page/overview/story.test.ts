@@ -272,7 +272,7 @@ test("triggers read as a plain phrase", () => {
   ).toBe("3 days after each employee's start_date at 9:00 (Europe/London)");
 });
 
-test("New automation asks the parent to open the new automation dialog", () => {
+test("New automation asks the parent to start drafting one", () => {
   const clicked = update(loaded([]), Message.ClickedNewAutomation());
   expect(clicked.model).toEqual(loaded([]));
   expect(clicked.commands).toBeUndefined();

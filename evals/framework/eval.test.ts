@@ -207,6 +207,7 @@ describe("the evals in evals/", () => {
       "namer",
       "planner",
       "progress",
+      "thread-namer",
     ]);
     for (const each of evals) {
       expect(each.suite.caseNames.length).toBeGreaterThan(0);

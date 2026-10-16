@@ -40,7 +40,7 @@ This is a single-tenant Cloudflare application. [Development and operations](doc
            ▼                         │
 ┌────────────────────────────────────┴────────────────────────────────────┐
 │ AutomationAgent         StudioAssistant           ChangeCoordinator     │
-│ one per automation      one per owner + session   one, named "studio"   │
+│ one per automation      one per owner + thread    one, named "studio"   │
 │ drafts, runs, journal   conversation, receipts    proposals, receipts   │
 └───────────────────────────────────┬─────────────────────────────────────┘
                                     ▼
@@ -150,7 +150,7 @@ Each automation's Durable Object holds its draft, saved workflow, chat exchanges
 
 ### Creation names the automation, then sends the first message
 
-`POST /api/automations` runs in the Api Worker. [A fast model](src/agents/namer/namer.ts) names the automation from its description, falling back to the description's opening words, so creation never fails on naming. [Creation](src/automation/creation.ts) claims a slug ID in the directory, then sends the description as the first chat message. If that send fails, the automation stays listed without a pending chat.
+The studio designs automations only through [the studio assistant](#the-studio-assistant-proposes-it-never-applies): **New automation** opens a fresh assistant thread, whose `draft_automation` tool lists the automation and sends the planner its first message, and the studio page shows the draft without a chat of its own. `POST /api/automations` remains for API clients and the demo reset. It runs in the Api Worker. [A fast model](src/agents/namer/namer.ts) names the automation from its description, falling back to the description's opening words, so creation never fails on naming. [Creation](src/automation/creation.ts) claims a slug ID in the directory, then sends the description as the first chat message. If that send fails, the automation stays listed without a pending chat.
 
 ### Conversation produces a draft, not a running program
 
@@ -383,9 +383,10 @@ Callbacks are delivered at least once. Agent Activities reuse a pi request ID wi
 ```diagram
 ┌─────────────────────────────────────────────────────────────────────────┐
 │ Browser assistant panel · outside the page lifecycle                    │
-│ session UUID in localStorage · own request sequence · polls while busy  │
+│ open thread's UUID in localStorage · own request sequence · polls       │
+│ history of threads · new · clear · archive · stop                       │
 └────────────────────────────────────┬────────────────────────────────────┘
-                                     │ /api/assistant/:sessionId
+                                     │ /api/assistant[/:sessionId]
                                      │ GET · chat · confirmation · answers
                                      ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
@@ -417,11 +418,11 @@ Callbacks are delivered at least once. Agent Activities reuse a pi request ID wi
 └──────────────┘  └─────────────────┘  └──────────────────┘  └──────────────────┘
 ```
 
-[The studio assistant](src/assistant/session.ts) is one agent per person and browser session, separate from every automation's planner conversation. It has four tools:
+[The studio assistant](src/assistant/session.ts) is one agent per person and thread, separate from every automation's planner conversation. A person can start new threads, reopen past ones, archive them, clear one in place, or stop a turn; a D1 table lists each person's threads, because Durable Objects can't be listed, and a fast model titles each thread from its first message. It has four tools:
 
 - **`read_studio`** reads the catalog, entities, the directory, or one automation's draft and runs. It writes no receipt.
 - **`propose_change`** prepares a change proposal and parks until the person confirms or declines it.
-- **`draft_automation`** delegates design to an automation's planner through `Automations.chat`. It creates a directory entry for a new automation, and relays the planner's questions as its own.
+- **`draft_automation`** delegates design to an automation's planner through `Automations.chat`: a new automation, or the one the person has open. It creates a directory entry for a new automation, relays the planner's questions as its own, and returns the planner's reply with the draft.
 - **`ask_question`** asks the person a structured question and parks until they answer.
 
 It never saves or runs a workflow, and it never applies a change itself.
@@ -467,6 +468,8 @@ It never saves or runs a workflow, and it never applies a change itself.
 Every cross-service effect uses the stable request ID `<sessionId>:<callId>`. `Changes.prepare` and `Automations.chat` both deduplicate on it, so a redelivered tool call does not prepare a second proposal or send a second chat. On cold start the session opens pi with its tools installed, then resumes. A replayed tool call finds its receipt and either returns the stored result or parks again.
 
 A confirmation is recorded before `Changes.decide` runs. If the object restarts in between, the next `reply` finishes the decision. Free text is never approval.
+
+Stopping writes the turn's end first: decided changes are settled, waiting proposals cancelled, open receipts finished as stopped, and the turn set idle in one transaction. Only then does it stop a delegated planner (`Automations.stopChat`) and abort pi, so anything that finishes late finds the turn over and writes nothing. Clearing stops the turn, then erases the object like removing an automation does. [Studio assistant](docs/assistant.md) traces both.
 
 ## Every data change goes through one coordinator
 
@@ -567,7 +570,7 @@ An approval task's DM has **Approve** and **Reject** buttons. [The interactivity
 | Planner, assistant, agent steps     | `@cf/moonshotai/kimi-k2.7-code`                      |
 | Progress phrases                    | `@cf/cloudflare/clef-flash`                          |
 | Decide steps, by the step's `model` | `@cf/cloudflare/clef-flash` or `@cf/cloudflare/clef` |
-| Naming new automations              | `@cf/meta/llama-3.1-8b-instruct-fp8`                 |
+| Naming automations and threads      | `@cf/meta/llama-3.1-8b-instruct-fp8`                 |
 | Dictation                           | `@cf/deepgram/nova-3`                                |
 
 ## Browser state and server state have separate lifecycles
@@ -576,7 +579,7 @@ An approval task's DM has **Approve** and **Reject** buttons. [The interactivity
 
 Routes preserve the open automation and run in the URL. Page changes increment a revision so old requests and polls cannot overwrite the new page; the open run and the overview keep their own counters. Polling is driven by Commands and stops when there is nothing in flight.
 
-The global assistant sits outside the page lifecycle and uses its own request sequence. Follow-along navigates to the assistant's latest activity link, but never over dirty forms or an unsent planner message. Navigating by hand turns follow-along off.
+The global assistant sits outside the page lifecycle and uses its own request sequence. Follow-along navigates to the assistant's latest activity link, but never over dirty forms or an unsent message. Navigating by hand turns follow-along off.
 
 The draft marks what the latest reply changed that isn't saved yet: it compares the reply's recorded changes with the saved version, so saving clears the marks and a reload keeps them. Steps the reply added or changed get a box and a badge, old values are struck through, the rest is dimmed, and one line names removed steps and other changes.
 

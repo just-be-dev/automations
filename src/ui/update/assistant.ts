@@ -11,14 +11,13 @@ import {
   toOverviewMessage,
   toTemplatesMessage,
 } from "../message.ts";
-import { type Model, messageInputOf, Page } from "../model.ts";
+import { type Model, Page } from "../model.ts";
 import { LoadTypes, LoadEntities } from "../page/entities/command.ts";
 import { LoadCatalog, LoadUsage } from "../page/templates/command.ts";
 import { LoadOverview } from "../page/overview/command.ts";
 import { automationHref, entitiesHref, runHref, templatesHref, tracesHref } from "../route.ts";
 
 export const dirtyForms = (model: Model) =>
-  (model.newAutomationDialog.isOpen && model.newAutomation.description.trim() !== "") ||
   Page.match(model.page, {
     Overview: () => false,
     Run: () => false,
@@ -31,7 +30,6 @@ export const dirtyForms = (model: Model) =>
     Templates: ({ templates }) =>
       templates.editor._tag !== "Closed" || templates.activity._tag === "Working",
   });
-export const dirtyPage = (model: Model) => dirtyForms(model) || messageInputOf(model).trim() !== "";
 export const pageHref = (model: Model) =>
   Page.match(model.page, {
     Overview: () => "/",
@@ -100,10 +98,9 @@ export const refreshResources = (model: Model): Update.Return<Model, Message> =>
           [LoadOverview({ session: overview.session, poll: overview.poll })],
           toOverviewMessage,
         ),
-      Studio: () =>
-        dirtyPage(model)
-          ? []
-          : [LoadAutomation({ automationId: model.automationId, revision: model.revision })],
+      Studio: () => [
+        LoadAutomation({ automationId: model.automationId, revision: model.revision }),
+      ],
       Run: () => [],
       Traces: () => [],
       Entities: ({ entities }) =>
@@ -131,24 +128,30 @@ export const refreshResources = (model: Model): Update.Return<Model, Message> =>
     }),
   ],
 });
+const assistantFold = {
+  read: (model: Model) => Option.some(model.assistant),
+  write: (model: Model, nextAssistant: Assistant.Model) =>
+    modifyFields(model, { assistant: () => nextAssistant }),
+  toParentMessage: toAssistantMessage,
+  foldOutMessage:
+    (outMessage: Assistant.OutMessage) =>
+    (model: Model): Update.Return<Model, Message> =>
+      Assistant.OutMessage.match(outMessage, {
+        UpdatedResources: () => refreshResources(model),
+        RequestedFollow: ({ href, completed }) => {
+          const refreshed = completed ? refreshResources(model) : { model };
+          return {
+            model: modifyFields(refreshed.model, { maybeFollowHref: () => Option.some(href) }),
+            commands: [...(refreshed.commands ?? []), NavigateInternal({ url: href })],
+          };
+        },
+      }),
+};
 export const foldAssistant = (model: Model, message: Assistant.Message) =>
   Update.foldChild({
-    update: Assistant.update(pageContext(model), dirtyPage(model)),
-    read: (model: Model) => Option.some(model.assistant),
-    write: (model: Model, nextAssistant: Assistant.Model) =>
-      modifyFields(model, { assistant: () => nextAssistant }),
-    toParentMessage: toAssistantMessage,
-    foldOutMessage:
-      (outMessage: Assistant.OutMessage) =>
-      (model: Model): Update.Return<Model, Message> =>
-        Assistant.OutMessage.match(outMessage, {
-          UpdatedResources: () => refreshResources(model),
-          RequestedFollow: ({ href, completed }) => {
-            const refreshed = completed ? refreshResources(model) : { model };
-            return {
-              model: modifyFields(refreshed.model, { maybeFollowHref: () => Option.some(href) }),
-              commands: [...(refreshed.commands ?? []), NavigateInternal({ url: href })],
-            };
-          },
-        }),
+    ...assistantFold,
+    update: Assistant.update(pageContext(model), dirtyForms(model)),
   })(model, message);
+/** Opens a fresh studio agent thread with `input` waiting in its composer. */
+export const startAssistantThread = (model: Model, input: string) =>
+  Update.foldChildStep({ ...assistantFold, update: Assistant.startThread(input) })(model);

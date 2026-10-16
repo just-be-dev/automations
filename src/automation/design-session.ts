@@ -21,7 +21,13 @@ import { diffWorkflows, isUnchanged } from "../workflow/changes.ts";
 import type { Permissions, Workflow } from "../workflow/model.ts";
 import { AutomationHost } from "./host.ts";
 import { AutomationIndex } from "./index.ts";
-import { AutomationError, Exchange, type PendingChat, StoredPendingChat } from "./model.ts";
+import {
+  AutomationError,
+  Exchange,
+  type PendingChat,
+  STOPPED_CHAT,
+  StoredPendingChat,
+} from "./model.ts";
 import { makePlanning } from "./planning.ts";
 import type { WorkflowStore } from "./workflow-store.ts";
 
@@ -329,6 +335,40 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
     return { pendingChat: pending };
   });
 
+  /**
+   * Stops the planner's answer to `chatId`: the message is marked stopped, its working copy and
+   * questions are dropped, and the pi turn is aborted, so the draft stays as it was. A delivery
+   * still running then finds nothing pending and writes nothing. Stopping a message that isn't
+   * being answered changes nothing.
+   */
+  const stop = Effect.fn("Automation.stop")(function* (chatId: string) {
+    const stopped = yield* storage
+      .transaction(
+        Effect.gen(function* () {
+          const pending = yield* readPendingChat;
+          if (pending === undefined || !isWorking(pending, chatId)) {
+            return false;
+          }
+          const failed: StoredPendingChat = {
+            id: chatId,
+            prompt: pending.prompt,
+            status: "failed",
+            error: STOPPED_CHAT,
+          };
+          yield* storage.put("pendingChat", failed);
+          yield* storage.delete("plan");
+          return true;
+        }),
+      )
+      .pipe(Effect.orDie);
+    if (stopped) {
+      // Storage already says the turn is over, so a failed abort only leaves pi to finish unread.
+      yield* pi.abort.pipe(Effect.ignore({ log: "Warn", message: "Couldn't abort the planner" }));
+    }
+    const pending = yield* readPendingChat;
+    return { pendingChat: pending === undefined ? undefined : yield* present(pending) };
+  });
+
   /** Sets permissions over the planner's suggestions. Saving applies them. */
   const setPermissions = Effect.fn("Automation.setPermissions")(function* (
     permissions: Permissions,
@@ -399,5 +439,5 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
     return yield* pi.transcript();
   });
 
-  return { inspect, chat, answer, setPermissions, setDraft, planReply, plannerTrace };
+  return { inspect, chat, answer, stop, setPermissions, setDraft, planReply, plannerTrace };
 });

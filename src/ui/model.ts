@@ -1,12 +1,10 @@
 /** Holds the shared app state for designing automations and following runs across pages and panels.
- * Keeps unsent messages, pending questions, and request freshness tied to their current context. */
+ * Keeps request freshness tied to the current page. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { defineTaggedUnion } from "foldkit/schema";
-import * as Dialog from "@/components/ui/dialog";
 import {
-  AskedQuestions,
   isUnchanged,
   PendingChat,
   Run,
@@ -18,31 +16,17 @@ import {
 } from "../workflow.ts";
 import { Role } from "../entities.ts";
 import { SubjectOption } from "./api.ts";
-import { EventInput, Questionnaire, TaskAnswer } from "./domain/index.ts";
+import { EventInput, TaskAnswer } from "./domain/index.ts";
 import { Entities, Overview, Templates, Traces } from "./page/index.ts";
 import { ShortcutModifier } from "./platform.ts";
 import { Theme } from "./theme.ts";
 import * as Assistant from "./assistant/index.ts";
-import * as Dictation from "./dictation/index.ts";
 
 export const Activity = defineTaggedUnion({
   Ready: { notice: Schema.String },
   Working: { notice: Schema.String },
   Failed: { error: Schema.String },
 });
-
-/**
- * One chat turn: the message, the questions the agent asked on the way, its Markdown reply, and
- * what the reply changed in the draft.
- */
-export const Exchange = Schema.Struct({
-  id: Schema.Int,
-  prompt: Schema.String,
-  asked: Schema.Array(AskedQuestions),
-  reply: Schema.String,
-  maybeChanges: Schema.Option(WorkflowChanges),
-});
-export type Exchange = typeof Exchange.Type;
 
 export const WorkflowDisplay = Schema.Literals(["Steps", "Json"]);
 export type WorkflowDisplay = typeof WorkflowDisplay.Type;
@@ -65,18 +49,6 @@ export const listedName = (directory: Directory, automationId: string) =>
     Array.findFirst(listedAutomations(directory), (automation) => automation.id === automationId),
     (automation) => automation.name,
   );
-
-/** What the new automation dialog says the automation should do, and whether it's being created. */
-export const NewAutomation = defineTaggedUnion({
-  Editing: { description: Schema.String, maybeError: Schema.Option(Schema.String) },
-  Creating: { description: Schema.String },
-});
-export type NewAutomation = typeof NewAutomation.Type;
-
-export const blankNewAutomation = NewAutomation.Editing({
-  description: "",
-  maybeError: Option.none(),
-});
 
 export const RoleChoices = defineTaggedUnion({
   Loading: {},
@@ -170,29 +142,23 @@ export type Page = typeof Page.Type;
 
 export const Model = Schema.Struct({
   assistant: Assistant.Model,
-  dictation: Dictation.Model,
   maybeFollowHref: Schema.Option(Schema.String),
-  plannerHistoryOpen: Schema.Boolean,
   maybeNavigationNotice: Schema.Option(Schema.String),
   page: Page,
   automationId: Schema.String,
   directory: Directory,
-  newAutomationDialog: Dialog.Model,
-  newAutomation: NewAutomation,
   roles: RoleChoices,
   /** Connections the registry simulates but this deployment really connects, such as `"email"` or `"slack"`. */
   liveConnections: Schema.Array(Schema.String),
   /** Local development (`GET /api/dev`), where waits can be resumed early. False until it says so. */
   isLocalDevelopment: Schema.Boolean,
   revision: Schema.Int,
-  /** Each automation's unsent message, so the composer never carries one into another automation. */
-  messageInputs: Schema.Record(Schema.String, Schema.String),
-  conversation: Schema.Array(Exchange),
+  /** What the planner's latest reply changed in the draft, as its exchange recorded it. */
+  maybeLatestChanges: Schema.Option(WorkflowChanges),
   maybeDraft: Schema.Option(Workflow),
   maybeSaved: Schema.Option(Workflow),
+  /** The planner's reply in progress, which the studio agent started and relays questions for. */
   maybePendingChat: Schema.Option(PendingChat),
-  /** The answers given so far to the questions the agent is waiting on. */
-  maybeQuestionnaire: Schema.Option(Questionnaire.Questionnaire),
   runs: Schema.Array(RunSummary),
   /** The run open beside the overview or the studio. Changing pages closes it. */
   maybeRunPanel: Schema.Option(OpenRun),
@@ -211,52 +177,16 @@ export const Model = Schema.Struct({
 });
 export type Model = typeof Model.Type;
 
-/** The questions the agent is waiting on, with the answers given so far. */
-export const openQuestionnaire = (model: Model) =>
-  Option.flatMap(model.maybePendingChat, (pending) =>
-    pending.status !== "asking"
-      ? Option.none()
-      : Array.match(pending.questions, {
-          onEmpty: () => Option.none(),
-          onNonEmpty: (questions) =>
-            Option.some({
-              questions,
-              questionnaire: Option.getOrElse(
-                Option.filter(
-                  model.maybeQuestionnaire,
-                  (questionnaire) => questionnaire.chatId === pending.id,
-                ),
-                () => Questionnaire.start(pending.id, questions),
-              ),
-            }),
-        }),
-  );
-
 /**
  * What the agent's latest reply changed in the draft that isn't saved yet. Saving clears it, and so
  * does a reply that changes nothing, since only the latest reply counts.
  */
 export const replyChanges = (model: Model): Option.Option<WorkflowChanges> =>
-  Option.flatMap(Array.last(model.conversation), (exchange) =>
-    Option.filter(
-      Option.flatMap(exchange.maybeChanges, (changes) =>
-        Option.map(model.maybeDraft, (draft) =>
-          unsavedChanges(changes, Option.getOrUndefined(model.maybeSaved), draft),
-        ),
+  Option.filter(
+    Option.flatMap(model.maybeLatestChanges, (changes) =>
+      Option.map(model.maybeDraft, (draft) =>
+        unsavedChanges(changes, Option.getOrUndefined(model.maybeSaved), draft),
       ),
-      (changes) => !isUnchanged(changes),
     ),
+    (changes) => !isUnchanged(changes),
   );
-
-/** The open automation's unsent message. */
-export const messageInputOf = (model: Model) => model.messageInputs[model.automationId] ?? "";
-
-/** Changes the open automation's unsent message, dropping it once empty. */
-export const modifyMessageInput = (model: Model, f: (value: string) => string): Model => {
-  const { [model.automationId]: current = "", ...others } = model.messageInputs;
-  const next = f(current);
-  return {
-    ...model,
-    messageInputs: next === "" ? others : { ...others, [model.automationId]: next },
-  };
-};

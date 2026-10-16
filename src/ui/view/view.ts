@@ -1,4 +1,4 @@
-/** Arranges the application shell around the selected page, shared navigation, run preview, and creation dialog. */
+/** Arranges the application shell around the selected page, shared navigation, run preview, and the studio agent. */
 import * as Option from "effect/Option";
 import type { Document, HtmlBuilder } from "foldkit/html";
 import { Monitor, Moon, Sun } from "lucide";
@@ -16,8 +16,6 @@ import {
 import { listedName, type Model, Page } from "../model.ts";
 import { Entities, Overview, Templates, Traces } from "../page/index.ts";
 import { nextTheme, type Theme } from "../theme.ts";
-import { conversationView } from "./conversation.ts";
-import { newAutomationDialogView } from "./new-automation.ts";
 import { runPageView, runPanelView } from "./run.ts";
 import { sidebarView } from "./sidebar.ts";
 import { workflowPanelView } from "./studio.ts";
@@ -56,7 +54,6 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
           ),
         ],
       ),
-      newAutomationDialogView(model, h),
     ],
   ),
 });
@@ -114,30 +111,10 @@ const pageView = (model: Model, h: HtmlBuilder<Message>) =>
     Studio: () =>
       h.main(
         [componentName("page"), h.Class("flex min-w-0 flex-1 flex-col lg:min-h-0")],
-        [workflowPanelView(model, h), plannerHistoryView(model, h)],
+        [workflowPanelView(model, h)],
       ),
     Run: ({ openRun }) => runPageView(model, openRun, h),
   });
-
-const plannerHistoryView = (model: Model, h: HtmlBuilder<Message>) =>
-  h.details(
-    [
-      componentName("planner-history"),
-      h.Class("shrink-0 border-t [&[open]]:max-h-[60vh] [&[open]]:overflow-y-auto"),
-      h.Open(
-        model.plannerHistoryOpen ||
-          Option.exists(model.maybePendingChat, (pending) => pending.status === "asking"),
-      ),
-      h.OnToggle((isOpen) => Message.ToggledPlannerHistory({ isOpen })),
-    ],
-    [
-      h.summary(
-        [h.Class("cursor-pointer p-3 text-sm font-medium")],
-        ["Automation conversation and planner"],
-      ),
-      conversationView(model, h),
-    ],
-  );
 
 const headerView = (model: Model, h: HtmlBuilder<Message>) =>
   h.header(

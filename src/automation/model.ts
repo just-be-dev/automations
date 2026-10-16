@@ -35,6 +35,9 @@ const FailedChat = Schema.Struct({
   error: Schema.String,
 });
 
+/** The error of a pending chat the person stopped, by stopping the assistant turn that sent it. */
+export const STOPPED_CHAT = "Stopped";
+
 /** A design message waiting for a reply, or the last one the planner couldn't answer, as stored. */
 export const StoredPendingChat = Schema.Union([WorkingChat, FailedChat]);
 export type StoredPendingChat = typeof StoredPendingChat.Type;

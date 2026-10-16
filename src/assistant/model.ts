@@ -17,6 +17,8 @@ export const AssistantExchange = Schema.Struct({
   id: Schema.String,
   prompt: Schema.String,
   reply: Schema.optionalKey(Schema.String),
+  /** The person stopped the turn before it answered. */
+  stopped: Schema.optionalKey(Schema.Boolean),
 });
 export const AssistantActivity = Schema.Struct({
   id: Schema.String,
@@ -28,6 +30,8 @@ export type AssistantActivity = typeof AssistantActivity.Type;
 
 export const AssistantState = Schema.Struct({
   sessionId: Schema.String,
+  /** Named from the first message once the first turn starts; the thread directory mirrors it. */
+  title: Schema.optionalKey(Schema.String),
   conversation: Schema.Array(AssistantExchange),
   status: Schema.Literals(["idle", "working", "confirming", "asking", "failed"]),
   activities: Schema.Array(AssistantActivity),
@@ -38,3 +42,14 @@ export const AssistantState = Schema.Struct({
   error: Schema.optionalKey(Schema.String),
 });
 export type AssistantState = typeof AssistantState.Type;
+
+/** One of a person's studio agent threads, as the history view lists it. */
+export const AssistantThread = Schema.Struct({
+  id: Schema.String,
+  /** Missing until the first reply names the thread, and again once it's cleared. */
+  title: Schema.optionalKey(Schema.String),
+  createdAt: Schema.Finite,
+  updatedAt: Schema.Finite,
+  archived: Schema.Boolean,
+});
+export type AssistantThread = typeof AssistantThread.Type;

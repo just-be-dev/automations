@@ -24,6 +24,7 @@ export const automationsLayer = (namespace: Effect.Success<typeof Automation>) =
             templateUses: () => remote(stub.templateUses()),
             chat: (...args) => remote(stub.chat(...args)),
             answer: (...args) => remote(stub.answer(...args)),
+            stopChat: (...args) => remote(stub.stopChat(...args)),
             save: (...args) => remote(stub.save(...args)),
             setPermissions: (...args) => remote(stub.setPermissions(...args)),
             setDraft: (...args) => remote(stub.setDraft(...args)),

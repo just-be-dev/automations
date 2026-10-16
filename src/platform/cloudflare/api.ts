@@ -15,7 +15,7 @@ import {
   SlackWorkspace,
 } from "../../channels/slack-approvals.ts";
 import { makeSlackWebWorkspace } from "../../channels/slack-workspace.ts";
-import { AutomationNamer } from "../../agents/namer/namer.ts";
+import { Namer } from "../../agents/namer/namer.ts";
 import { LiveConnections } from "../../connections/live.ts";
 import { LocalDevelopment } from "../../automation/local-development.ts";
 import { Automations } from "../../automation/service.ts";
@@ -26,6 +26,7 @@ import { localDevelopment } from "./local-development.ts";
 import Automation from "./automation.ts";
 import { automationsLayer } from "./automations.ts";
 import { AutomationIndexD1 } from "./automation-index-d1.ts";
+import { AssistantThreadsD1 } from "./assistant-threads-d1.ts";
 import { EntityStoreD1 } from "./entity-store-d1.ts";
 import { workersAiNamer } from "./workers-ai.ts";
 import StudioAssistant, { assistantsLayer } from "./assistant.ts";
@@ -53,6 +54,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const changeNamespace = yield* ChangeCoordinator;
     const ai = yield* Cloudflare.Workers.AI();
     const index = yield* AutomationIndexD1;
+    const threads = yield* AssistantThreadsD1;
     const entities = yield* EntityStoreD1;
     const events = yield* EventsQueue;
     // The Automation objects this Worker hosts send with the same credentials; see automation.ts.
@@ -85,9 +87,10 @@ export default class Api extends Cloudflare.Worker<Api>()(
         ),
       ),
     ).pipe(Layer.provideMerge(Layer.merge(entities, automations)));
-    const namer = Layer.effect(AutomationNamer, Effect.map(ai.raw, workersAiNamer));
+    const namer = Layer.effect(Namer, Effect.map(ai.raw, workersAiNamer));
     const services = Layer.mergeAll(
       index,
+      threads,
       events,
       subscribers,
       accessIdentity(localUser),

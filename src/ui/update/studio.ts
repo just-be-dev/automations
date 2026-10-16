@@ -1,47 +1,27 @@
-/** Guides chat submission and pending replies and prepares subject choices for the saved automation's runs. */
+/** Follows the planner's reply in progress and prepares subject choices for the saved automation's runs. */
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import type { Update } from "foldkit";
 import { modifyFields } from "foldkit/struct";
-import { type PendingChat, subjectType, type Workflow } from "../../workflow.ts";
-import { LoadAutomations, LoadSubjects, PollAutomation, SendMessage } from "../command.ts";
-import { maxMessageLength } from "../constant.ts";
-import { AutomationId } from "../domain/index.ts";
+import { type PendingChat, STOPPED_CHAT, subjectType, type Workflow } from "../../workflow.ts";
+import { LoadAutomations, LoadSubjects, PollAutomation } from "../command.ts";
 import type { Message } from "../message.ts";
-import { Activity, type Model, modifyMessageInput, SubjectChoices } from "../model.ts";
+import { Activity, type Model, SubjectChoices } from "../model.ts";
 
 export const fail = (model: Model, error: string) => ({
   model: modifyFields(model, { activity: () => Activity.Failed({ error }) }),
 });
 
-export const thinking = Activity.Working({ notice: "The agent is thinking…" });
-
-/** Sends `message` to the open automation's agent, unless it's busy or the message won't do. */
-export const sendMessage = (model: Model, message: string): Update.Return<Model, Message> => {
-  if (Activity.guards.Working(model.activity)) {
-    return { model };
-  }
-  if (!AutomationId.isValid(model.automationId)) {
-    return fail(model, "Use an alphanumeric automation ID");
-  }
-  if (!message.trim() || message.length > maxMessageLength) {
-    return fail(model, "Message must be 1–10,000 characters");
-  }
-  return {
-    model: modifyFields(model, {
-      activity: () => Activity.Working({ notice: "Sending message…" }),
-    }),
-    commands: [
-      SendMessage({ automationId: model.automationId.trim(), revision: model.revision, message }),
-    ],
-  };
-};
+/** What the planner is doing while it drafts, as the server last described it. */
+export const drafting = (model: Model) =>
+  Activity.Working({ notice: Option.getOrElse(model.maybeProgress, () => "Thinking…") });
 
 export const isAnswering = (pending: PendingChat) => pending.status === "working";
 
 // People using the studio don't build software, so a failed reply never shows the technical error.
 // `GET /api/automations/:id` still returns it for debugging.
-const unfinishedReply = "The agent couldn't finish its reply. Send your message again to retry.";
+const unfinishedReply =
+  "The planner couldn't finish this draft. Ask the studio agent to try again.";
 
 export const loadedAutomation = (
   model: Model,
@@ -65,22 +45,29 @@ export const loadedAutomation = (
     onSome: (pending) =>
       Match.value(pending).pipe(
         Match.discriminatorsExhaustive("status")({
+          // The person answers in the studio agent's panel, so keep watching for the planner to resume.
           asking: () => ({
             model: modifyFields(model, {
-              activity: () => Activity.Ready({ notice: "The agent is waiting for your answers." }),
+              activity: () =>
+                Activity.Ready({ notice: "The studio agent is waiting for your answers." }),
             }),
-          }),
-          working: () => ({
-            model: modifyFields(model, { activity: () => thinking }),
             commands: [
               PollAutomation({ automationId: model.automationId.trim(), revision: model.revision }),
             ],
           }),
-          failed: ({ prompt }) => ({
-            model: modifyFields(
-              modifyMessageInput(model, (value) => (value === "" ? prompt : value)),
-              { activity: () => Activity.Failed({ error: unfinishedReply }) },
-            ),
+          working: () => ({
+            model: modifyFields(model, { activity: () => drafting(model) }),
+            commands: [
+              PollAutomation({ automationId: model.automationId.trim(), revision: model.revision }),
+            ],
+          }),
+          failed: ({ error }) => ({
+            model: modifyFields(model, {
+              activity: () =>
+                error === STOPPED_CHAT
+                  ? Activity.Ready({ notice: "The planner was stopped. The draft is unchanged." })
+                  : Activity.Failed({ error: unfinishedReply }),
+            }),
           }),
         }),
       ),

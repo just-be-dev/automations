@@ -143,6 +143,7 @@ const harness = () => {
       return PiAgent.of({
         createConversation: Effect.succeed(7),
         instruct: () => Effect.void,
+        abort: Effect.void,
         liveAnswer: Effect.succeed(undefined),
         transcript: (conversation) =>
           Effect.sync(() => {

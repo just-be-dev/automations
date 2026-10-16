@@ -1,6 +1,6 @@
 import * as Schema from "effect/Schema";
 import { defineMessageUnion } from "foldkit/message";
-import { AssistantState } from "../../assistant/model.ts";
+import { AssistantState, AssistantThread } from "../../assistant/model.ts";
 import * as Dictation from "../dictation/index.ts";
 
 export const Message = defineMessageUnion({
@@ -9,6 +9,27 @@ export const Message = defineMessageUnion({
   FailedRestoreAssistant: { error: Schema.String },
   ClickedCollapse: {},
   CompletedPersistCollapsed: {},
+  ClickedNewThread: {},
+  CompletedCreateThread: { sessionId: Schema.String, input: Schema.String },
+  FailedCreateThread: { error: Schema.String },
+  CompletedFocusInput: {},
+  ClickedHistory: {},
+  SucceededLoadThreads: { threads: Schema.Array(AssistantThread) },
+  FailedLoadThreads: { error: Schema.String },
+  ClickedShowArchived: {},
+  ClickedThread: { sessionId: Schema.String },
+  CompletedPersistSession: {},
+  ClickedArchiveThread: { sessionId: Schema.String, archived: Schema.Boolean },
+  SucceededArchiveThread: {
+    sessionId: Schema.String,
+    archived: Schema.Boolean,
+    threads: Schema.Array(AssistantThread),
+  },
+  FailedArchiveThread: { error: Schema.String },
+  ClickedClearThread: {},
+  ClickedCancelClear: {},
+  ClickedConfirmClear: {},
+  ClickedStop: {},
   ClickedFollow: {},
   ClickedRetry: {},
   UpdatedInput: { value: Schema.String },

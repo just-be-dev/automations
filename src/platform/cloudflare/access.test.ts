@@ -4,7 +4,7 @@ import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
-import { AutomationNamer } from "../../agents/namer/namer.ts";
+import { Namer } from "../../agents/namer/namer.ts";
 import { AutomationIndex } from "../../automation/index.ts";
 import { Automations } from "../../automation/service.ts";
 import { layerMemory } from "../../entities/store.ts";
@@ -17,7 +17,7 @@ const respondersFor = async (localUser: Option.Option<string>) => {
   const unused = () => Effect.die("Unexpected operation");
   const services = Layer.mergeAll(
     layerMemory({}),
-    Layer.succeed(AutomationNamer, { complete: unused }),
+    Layer.succeed(Namer, { complete: unused }),
     Layer.succeed(AutomationIndex, {
       list: Effect.succeed([]),
       create: unused,
@@ -30,6 +30,7 @@ const respondersFor = async (localUser: Option.Option<string>) => {
         inspectWorkflow: unused,
         overview: unused,
         answer: unused,
+        stopChat: unused,
         templateUses: unused,
         chat: unused,
         save: unused,

@@ -25,6 +25,7 @@ test("fan-out attempts every automation before retrying; entity commands decode 
         templateUses: unused,
         chat: unused,
         answer: unused,
+        stopChat: unused,
         save: unused,
         setPermissions: unused,
         setDraft: unused,

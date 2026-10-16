@@ -17,6 +17,7 @@ const studio = (local: boolean | undefined) => {
       inspectWorkflow: unused,
       overview: unused,
       answer: unused,
+      stopChat: unused,
       templateUses: unused,
       chat: unused,
       save: unused,
