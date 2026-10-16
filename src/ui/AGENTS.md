@@ -55,7 +55,7 @@ Tailwind classes don't say which view drew an element, so every named view marks
 - Use an attribute, not a class. Foldkit keeps only the last `h.Class` on an element, so a name added in its own `h.Class` would silently drop the element's styles, and a class invites styling.
 - `data-component` is for finding views while debugging. Don't style against it or query it in tests; Scene tests use accessible locators. foldcn components keep their own `data-slot`, which their styles read.
 
-Upstream paths below are relative to [the Foldkit repository at `foldkit@0.165.0`](https://github.com/foldkit/foldkit/tree/foldkit@0.165.0), not this project:
+Upstream paths below are relative to [the Foldkit repository at `foldkit@0.168.0`](https://github.com/foldkit/foldkit/tree/foldkit@0.168.0), not this project:
 
 - `examples/`: runnable examples for idiomatic patterns.
 - `packages/foldkit/src/`: framework source and API signatures.
@@ -65,7 +65,7 @@ Read https://foldkit.dev/ai/overview.md and https://foldkit.dev/llms.txt for onl
 
 ## After a Foldkit upgrade
 
-The conventions below are adapted from the upstream `FOLDKIT.md` for Foldkit **0.165.0**. Whenever Foldkit is updated, refresh them in the same change:
+The conventions below are adapted from the upstream `FOLDKIT.md` for Foldkit **0.168.0**. Whenever Foldkit is updated, refresh them in the same change:
 
 1. Determine the installed version from `node_modules/foldkit/package.json`.
 2. Fetch `packages/create-foldkit-app/templates/base/FOLDKIT.md` from the matching `foldkit@<version>` tag: `https://raw.githubusercontent.com/foldkit/foldkit/foldkit@<version>/packages/create-foldkit-app/templates/base/FOLDKIT.md`. For a canary version, use the full source commit named by its version instead of a release tag.
@@ -142,9 +142,11 @@ For DOM operations (focus, scroll, modals, scroll lock), Foldkit ships a `Dom` m
 
 ### File Organization
 
-The invariant: keep the runtime boot separate from the pure definitions. `src/entry.ts` calls `Runtime.makeApplication` and `Runtime.run`, and `index.html` references it. The definitions (Model, Messages, init, update, view, Commands) never call `Runtime.run`, so they stay importable from tests without booting a runtime as a side effect. Never call `Runtime.run` from `main.ts`.
+Keep the runtime boot separate from the pure definitions. `src/entry.ts` calls `Runtime.makeApplication`, then `Runtime.run` for a client-rendered app or `Runtime.hydrate` for an SSR or SSG app. A client-rendered app references that entry from `index.html`. An SSR or SSG app names it in `ssr.clientEntry` in `vite.config.ts`, imports CSS from it, and exports `renderDocument` from `src/entry.server.ts` to produce the complete document. Its source tree has no `index.html`.
 
 For a small app the definitions all fit in one `src/main.ts`. Split a unit into its own file when it has _both_ a distinct reason to change _and_ a name you'd give it unprompted: the pure domain core into `timer.ts` or `domain.ts`, the view into `view.ts` (or a `components/` directory), a Command's owned resource into its own module. Split on that revealed seam, not on line count alone. A file that has grown large is _evidence_ a seam has formed, so treat its size as a prompt to re-check for one. Two splits are forced: extract Messages to `message.ts` when Commands need the constructors (this breaks the cycle between `command.ts` and `main.ts`), and colocate Commands with the update that returns them. Exemplars: counter and stopwatch are a single `main.ts`; kanban splits `domain` / `command` / `message` / `model`; typing-game splits views by page.
+
+The definitions (Model, Messages, init, update, view, Commands) never call `Runtime.run` or `Runtime.hydrate`, so tests and server entries can import them without booting a browser runtime. Keep both calls out of `main.ts`.
 
 Use uppercase section headers (`// MODEL`, `// MESSAGE`, `// INIT`, `// UPDATE`, `// COMMAND`, `// VIEW`) for wayfinding.
 
@@ -192,6 +194,8 @@ Messages are verb-first past-tense. Common prefixes: `Clicked*`, `Updated*` (inp
 ## Debugging
 
 This project ships with `@foldkit/devtools-mcp` pre-wired. When the dev server is running and the app is open in a browser, `foldkit_*` MCP tools let you inspect Model, Message history, and time-travel. Reach for them before adding `console.log` whenever the question is about state or Message flow.
+
+Treat those tools as privileged access to the application. They can return Models, Message payloads, and Command and Mount arguments to the agent. Keep credentials and private data out of browser state. Use Effect `Redacted` for sensitive values the browser must temporarily hold, and set `devToolsMcpPort: false` in the Foldkit Vite plugin options when an agent should not inspect the running application.
 
 ## Going Deeper
 

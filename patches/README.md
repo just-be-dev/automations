@@ -6,13 +6,13 @@ Every patch needs an entry here. Inside the patched code, mark the change with a
 
 ## Foldkit DevTools MCP reconnect loop under `alchemy dev`
 
-Patches `@foldkit/vite-plugin@0.26.0` and `@foldkit/devtools-mcp@0.24.0`.
+Patches `@foldkit/vite-plugin@0.27.1` and `@foldkit/devtools-mcp@0.24.1`. Rechecked against `alchemy@2.0.0-beta.83`: neither upstream fix has landed.
 
 **Symptom.** Under `alchemy dev`, every agent session's Foldkit DevTools MCP server connected to the relay and disconnected many times per second. The MCP tools were unusable, and the dev server log filled with `MCP client connected` and `MCP client disconnected` lines.
 
 **Cause.** Two upstream behaviors combine:
 
-1. `@foldkit/vite-plugin` hosts its MCP relay at `/__foldkit/devtools-mcp` on Vite's own `httpServer`. Alchemy's Cloudflare Vite integration (`handleWebSocket` in `@alchemy.run/cloudflare-runtime`, `src/vite/websockets.ts`) adds its own `upgrade` listener to the same server. That listener forwards every upgrade whose `sec-websocket-protocol` doesn't start with `vite` to workerd. The worker answers with a non-101 response, so Alchemy destroys the socket Foldkit has already accepted. The client sees the connection open and then close with code 1006 about 20 ms later.
+1. `@foldkit/vite-plugin` hosts its MCP relay at `/__foldkit/devtools-mcp` on Vite's own `httpServer`. Alchemy's Cloudflare Vite integration (`handleWebSocket` in `@alchemy.run/cloudflare-runtime`, `src/vite/websockets.ts`) adds its own `upgrade` listener to the same server. That listener forwards every upgrade whose `sec-websocket-protocol` doesn't start with `vite` to workerd. The worker answers with a non-101 response, which Alchemy writes onto the socket Foldkit has already accepted and then closes it. Before beta.82 Alchemy destroyed the socket instead; the result is the same. The client sees the connection open and then close with code 1006 about 20 ms later.
 2. `@foldkit/devtools-mcp` only backs off when an open fails. When a socket opens and then closes, it reconnects immediately, so (1) turns into a tight loop.
 
 **Patches.**
