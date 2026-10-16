@@ -6,9 +6,9 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { agentOutput, agentPrompt } from "../../src/workflow/agent-step.ts";
-import { ExecutionValues } from "../../src/workflow/execution.ts";
 import { AgentStep, ValueType } from "../../src/workflow/model.ts";
 import type { Call } from "../framework/call.ts";
+import { RunState, values } from "../fixtures.ts";
 import { openPi } from "../framework/models.ts";
 
 export const AgentInput = Schema.Struct({
@@ -17,7 +17,7 @@ export const AgentInput = Schema.Struct({
   instruction: Schema.String,
   /** The fields the step asks for, by name; without them the step records text. */
   fields: Schema.optionalKey(Schema.Record(Schema.String, ValueType)),
-  state: ExecutionValues,
+  ...RunState,
 });
 export type AgentInput = typeof AgentInput.Type;
 
@@ -49,7 +49,7 @@ export const agent: Call<AgentInput, AgentOutput> = {
   name: "agent",
   input: AgentInput,
   output: AgentOutput,
-  timeout: "2 minutes",
+  timeout: "90 seconds",
   run: (input) =>
     Effect.gen(function* () {
       const step = yield* stepOf(input);
@@ -57,7 +57,7 @@ export const agent: Call<AgentInput, AgentOutput> = {
       const conversation = yield* pi.createConversation;
       const answer = yield* pi.prompt({
         conversation,
-        text: agentPrompt(step, step.instruction, input.state),
+        text: agentPrompt(step, step.instruction, values(input)),
       });
       const recorded = yield* agentOutput(step, answer).pipe(Effect.result);
       return recorded._tag === "Success"

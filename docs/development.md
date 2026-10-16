@@ -39,33 +39,49 @@ EVAL_PLANNER_MODEL=@cf/… mise run eval planner agent assistant           # try
 mise run check                                                           # typecheck, lint, tests, format, then the evals
 ```
 
-An eval is a file, `evals/<name>.eval.ts`, that holds only cases and assertions. Each case gives an input and checks by name, written like tests with `expect` from `bun:test`; checks in `every` apply to every case, and `judged` asks an LLM judge for what code can't check, such as whether a reply reads plainly:
+An eval has two parts: the test and its dataset. The test, `evals/<name>.eval.ts`, names the LLM call, the `minimum` it must reach, the checks in `every` that apply to every case, and the kinds of check a case can ask for. Checks are written like tests with `expect` from `bun:test`, and `judged` asks an LLM judge for what code can't check, such as whether a reply reads plainly:
 
 ```ts
 export default defineEval({
   call: decide,
   minimum: 0.9,
   every: { "answers with a decision": (output) => expect(output.problem).toBeUndefined() },
-  cases: {
-    ticket: {
-      input: {
-        question: "Which team should handle this ticket?",
-        options: { billing: "…", technical: "…" },
-        state,
-      },
-      checks: { "picks billing": (output) => expect(output.choice).toBe("billing") },
+  checks: {
+    choice: {
+      value: Expected,
+      check: (expected) => (output) => expectMatch(output.choice, expected, "choice"),
     },
   },
 });
 ```
 
+The dataset, `evals/datasets/<name>.yaml`, holds the cases. Each gives the call's input, and checks by name, each one kind of check with its value, or a list of them that must all hold:
+
+```yaml
+# yaml-language-server: $schema=./decide.schema.json
+cases:
+  ticket:
+    input:
+      question: Which team should handle this ticket?
+      options: { billing: Charges and refunds, technical: Bugs and outages }
+      subject: { type: ticket, id: t-12, data: { text: My card was charged twice. } }
+    checks:
+      picks billing: { choice: billing }
+```
+
+The eval's Effect Schemas decide what a dataset may hold: its call's input, and each check kind's `value`. Every run decodes the dataset strictly, so a misspelt key fails the run instead of skipping a check. Every `mise run eval`, `--list` included, first writes the same rules as a JSON Schema beside each dataset (`<name>.schema.json`, ignored by git), which editors with the YAML language server use to check and complete it. Run `mise run eval --list` to refresh them after changing a check kind or a call's input. YAML anchors (`&ada`, `*ada`) and merge keys (`<<: *case`) share values within a dataset.
+
+Datasets can't hold `expect` matchers, so values a case expects are written in a small language (`evals/framework/expected.ts`). A plain value must be equal, `{ $includes: … }` asks for at least these keys, items, or text, `{ $matches: /source/flags }` for a regular expression, `{ $oneOf: [ … ] }` for any of several values, and `{ $type: string }` for any value of a type. Quote YAML text that holds ` #`, or it becomes a comment.
+
 - `evals/calls/` holds one call per LLM call site: it runs the production code for an input (`planDraft` with the real tools, the namer, a step's prompt) and returns what the checks read, with helpers for reading it.
-- `evals/framework/` runs them. In Bun: `cli.ts` is `mise run eval`, which finds every `*.eval.ts` itself; `client.ts` starts the Evals Worker and sends it each case's input; `eval.ts` defines and scores evals and runs their checks; `report.ts` prints and saves results. In the Worker (`worker.ts`, its own stack in `stack.ts`): `models.ts` gives the calls the Workers AI binding and opens pi on in-memory storage, and `judge.ts` is the judge (`EVAL_JUDGE_MODEL` changes its model, the planner's by default). Each call's input and output have Schemas, which decode them on both sides of the Worker.
-- `evals/fixtures.ts` holds what the evals work with: a People Ops entity store, a new hire, and drafts for the planner to edit.
+- `evals/framework/` runs them. In Bun: `cli.ts` is `mise run eval`, which finds every `*.eval.ts` itself and loads its dataset; `client.ts` starts the Evals Worker and sends it each case's input; `eval.ts` defines evals, decodes their datasets, scores them, and runs their checks; `expected.ts` matches the values datasets expect; `report.ts` prints and saves results. In the Worker (`worker.ts`, its own stack in `stack.ts`): `models.ts` gives the calls the Workers AI binding and opens pi on in-memory storage, and `judge.ts` is the judge (`EVAL_JUDGE_MODEL` changes its model, the planner's by default). Each call's input and output have Schemas, which decode them on both sides of the Worker.
+- `evals/fixtures.ts` holds what the calls work with whatever the dataset: the People Ops entity store the planner designs for, and the run an agent or decide step's input describes. The records and drafts a case uses are in its dataset.
 
 Models vary between runs, so use `--trials` before trusting a change. The report lists failed checks and compares each case with the last saved run in `evals/results/` (ignored by git).
 
-Each eval has a `minimum`: the share of its checks that must pass across every case and trial. Below it, the run fails, so a prompt or model change that makes things worse fails `mise run eval` and `mise run check`. Keep each minimum a little under what the models reach, and raise it as they improve. The evals stay out of `mise run test`, which has to be fast and give the same answer every time; `evals/fixtures.test.ts` and `evals/framework/eval.test.ts` check the fixtures and the framework there without a model. Run `mise run check` before merging, and the affected evals whenever you change a prompt, the planner's tools, or a model.
+Every eval's trials share one queue, `--concurrency` (4) at a time, and the ones the last run found slowest start first, so a run takes about as long as its slowest trial rather than the sum of its evals. Each eval's result prints as soon as its last trial finishes. Each call's `timeout` is about twice its slowest successful trial, so a call that hangs doesn't hold up the run; raise it only when the saved results show slower trials that succeed. The Evals Worker rebuilds when a file it imports changes, which drops the calls in flight, so don't edit `evals/` or `src/` during a run.
+
+Each eval has a `minimum`: the share of its checks that must pass across every case and trial. It lives in the test, not the dataset, so a dataset can't lower the bar. Below it, the run fails, so a prompt or model change that makes things worse fails `mise run eval` and `mise run check`. Keep each minimum a little under what the models reach, and raise it as they improve. The evals stay out of `mise run test`, which has to be fast and give the same answer every time; `evals/fixtures.test.ts` and `evals/framework/eval.test.ts` check the fixtures, the datasets, and the framework there without a model. Run `mise run check` before merging, and the affected evals whenever you change a prompt, the planner's tools, or a model.
 
 ## Live demo
 

@@ -7,16 +7,16 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { workersAiClassifier } from "../../src/platform/cloudflare/workers-ai.ts";
 import { decideRequest, decision } from "../../src/workflow/agent-step.ts";
-import { ExecutionValues } from "../../src/workflow/execution.ts";
 import { DecideStep, DecisionModel } from "../../src/workflow/model.ts";
 import type { Call } from "../framework/call.ts";
+import { RunState, values } from "../fixtures.ts";
 import { WorkersAi } from "../framework/models.ts";
 
 export const DecideInput = Schema.Struct({
   question: Schema.String,
   /** Descriptions by option ID. */
   options: Schema.Record(Schema.String, Schema.String),
-  state: ExecutionValues,
+  ...RunState,
   /** The step's model; `clef-flash` when left out, as the planner chooses for simple routing. */
   model: Schema.optionalKey(DecisionModel),
 });
@@ -50,13 +50,13 @@ export const decide: Call<DecideInput, DecideOutput> = {
   name: "decide",
   input: DecideInput,
   output: DecideOutput,
-  timeout: "30 seconds",
+  timeout: "15 seconds",
   run: (input) =>
     Effect.gen(function* () {
       const step = yield* stepOf(input);
       const { binding } = yield* WorkersAi;
       const raw = yield* workersAiClassifier(binding).classify(
-        decideRequest(step, step.question, input.state),
+        decideRequest(step, step.question, values(input)),
       );
       const decided = yield* decision(raw).pipe(Effect.result);
       return decided._tag === "Success"

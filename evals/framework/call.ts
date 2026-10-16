@@ -13,7 +13,10 @@ export interface Call<I, O> {
   readonly name: string;
   readonly input: Schema.Codec<I, unknown>;
   readonly output: Schema.Codec<O, unknown>;
-  /** How long one trial may take. */
+  /**
+   * How long one trial may take. A call that hangs uses all of it, so keep it near twice the
+   * slowest trial that succeeded in recent runs (`evals/results/`), not far above.
+   */
   readonly timeout: Duration.Input;
   readonly run: (input: I) => Effect.Effect<O, { readonly message: string }, WorkersAi>;
 }

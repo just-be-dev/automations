@@ -3,6 +3,7 @@ node_modules/
 .wrangler/
 dist/
 evals/results/
+evals/datasets/*.schema.json
 
 # Local secrets and settings (Slack credentials and the email sender for alchemy dev and deploys)
 .env

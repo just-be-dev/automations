@@ -12,9 +12,11 @@ import * as Schema from "effect/Schema";
 import {
   checkPassRate,
   evalPassed,
-  loadEvals,
+  loadEvalDefinitions,
   matchingCases,
-  runEval,
+  runEvals,
+  withDatasets,
+  writeDatasetSchemas,
   type EvalResult,
 } from "./eval.ts";
 import * as Client from "./client.ts";
@@ -28,8 +30,10 @@ import { latestRun, percent, printResult, saveRun } from "./report.ts";
  *   mise run eval [eval ...] [--case <name part>] --list
  *   mise run eval -- --help
  *
- * Runs every `evals/*.eval.ts` when none is named. Each run is saved to `evals/results/`, and the
- * report compares each case with the latest saved run. The run fails when an eval passes fewer of
+ * Runs every `evals/*.eval.ts` when none is named, on the cases in its `evals/datasets/<name>.yaml`.
+ * Every run, `--list` included, first writes each dataset's JSON Schema beside it for editors.
+ * Every eval's trials share one queue, `--concurrency` at a time, slowest first. Each run is
+ * saved to `evals/results/`, and the report compares each case with the latest saved run. The run fails when an eval passes fewer of
  * its checks than its minimum. `--list` prints the evals and cases that would run, and calls no
  * model.
  */
@@ -50,7 +54,7 @@ const options = {
     Argument.withDescription("Evals to run, by file name without .eval.ts; every eval when none"),
   ),
   trials: positive("trials", 1, "Times to run each case"),
-  concurrency: positive("concurrency", 4, "Cases to run at once"),
+  concurrency: positive("concurrency", 4, "Trials to run at once, across every eval"),
   case: Flag.String("case").pipe(
     Flag.optional,
     Flag.withDescription("Only run cases whose name contains this text"),
@@ -78,7 +82,10 @@ const program = Effect.fn("Evals.run")(function* (
 ) {
   const positionals = input.names;
   const filter = Option.getOrUndefined(input.case);
-  const evals = yield* loadEvals;
+  // The schemas come first, so an editor can point out what's wrong with a dataset that won't load.
+  const definitions = yield* loadEvalDefinitions;
+  yield* writeDatasetSchemas(definitions);
+  const evals = yield* withDatasets(definitions);
   const unknown = positionals.filter((name) => !evals.some((each) => each.name === name));
   if (unknown.length > 0) {
     return yield* new UnknownEvals({
@@ -89,11 +96,11 @@ const program = Effect.fn("Evals.run")(function* (
   const chosen = evals.filter(
     (each) =>
       (positionals.length === 0 || positionals.includes(each.name)) &&
-      matchingCases(each.eval, filter).length > 0,
+      matchingCases(each.suite, filter).length > 0,
   );
 
   if (input.list) {
-    for (const { name, eval: target } of chosen) {
+    for (const { name, suite: target } of chosen) {
       const cases = matchingCases(target, filter);
       yield* Console.log(
         `${name} (${cases.length} ${cases.length === 1 ? "case" : "cases"}, minimum ${percent(target.minimum)})`,
@@ -106,21 +113,34 @@ const program = Effect.fn("Evals.run")(function* (
   const { trials, concurrency } = input;
   const previous = yield* latestRun;
   const startedAt = new Date().toISOString();
-  const results = yield* Effect.forEach(chosen, ({ name, eval: target }) =>
-    Effect.gen(function* () {
-      yield* Console.log(`Running ${name}…`);
-      const result = yield* runEval(name, target, {
-        trials,
-        concurrency,
-        ...(filter === undefined ? {} : { filter }),
-      });
-      yield* printResult(
+  const previousCase = (name: string, caseName: string) =>
+    previous?.evals
+      .find((each) => each.name === name)
+      ?.cases.find((each) => each.name === caseName);
+  const jobs = chosen.reduce(
+    (sum, { suite }) => sum + matchingCases(suite, filter).length * trials,
+    0,
+  );
+  yield* Console.log(
+    `Running ${jobs} ${jobs === 1 ? "trial" : "trials"} of ${chosen.length} ${chosen.length === 1 ? "eval" : "evals"}, ${concurrency} at a time…`,
+  );
+  const results = yield* runEvals(chosen, {
+    trials,
+    concurrency,
+    ...(filter === undefined ? {} : { filter }),
+    // The last run's mean time for the case, when it has one.
+    estimate: (name, caseName) => {
+      const times = previousCase(name, caseName)?.trials.map((trial) => trial.millis) ?? [];
+      return times.length === 0
+        ? undefined
+        : times.reduce((sum, millis) => sum + millis, 0) / times.length;
+    },
+    onEvalDone: (result) =>
+      printResult(
         result,
-        previous?.evals.find((other) => other.name === name),
-      );
-      return result;
-    }),
-  ).pipe(Effect.provide(Client.layer));
+        previous?.evals.find((other) => other.name === result.name),
+      ),
+  }).pipe(Effect.provide(Client.layer));
 
   if (input.save) {
     const file = yield* saveRun({ startedAt, trials, evals: results });

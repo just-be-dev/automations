@@ -1,7 +1,12 @@
+/** The studio assistant reads the studio, proposes changes, and hands drafts to the planner. */
+
 import { expect } from "bun:test";
+import * as Schema from "effect/Schema";
+import { AssistantActivity } from "../src/assistant/model.ts";
+import { actionTemplates, flattenSteps } from "../src/workflow/model.ts";
 import { assistant } from "./calls/assistant.ts";
 import { defineEval } from "./framework/eval.ts";
-import { actionTemplates, flattenSteps } from "../src/workflow/model.ts";
+import { Expected, ExpectedText, expectMatch, expectText } from "./framework/expected.ts";
 
 export default defineEval({
   call: assistant,
@@ -10,50 +15,44 @@ export default defineEval({
     "finishes the turn": (output) => expect(output.state.status).toBe("idle"),
     "reads before editing": (output) => expect(output.toolCalls).toContain("read_studio"),
   },
-  cases: {
-    "template-then-draft": {
-      input: {
-        message:
-          "Create an onboarding email template named onboarding_email with description 'Welcome new employees', subject Welcome and body 'Glad you are here'. No slots needed. Then draft a manual automation that emails employee sam@example.com using onboarding_email. Do not save or start it.",
-        approve: true,
-      },
-      checks: {
-        "creates the requested template": (output) =>
-          expect(
-            output.changes.some(
-              (c) =>
-                c.kind === "putTemplate" &&
-                c.template.name === "onboarding_email" &&
-                c.template.description === "Welcome new employees",
-            ),
-          ).toBe(true),
-        "passes exact template name to planner": (output) =>
-          expect(output.descriptions.join("\n")).toContain("onboarding_email"),
-        "planner uses template": (output) =>
-          expect(
-            output.workflows
-              .flatMap((w) => flattenSteps(w.steps))
-              .flatMap((step) =>
-                step.kind === "action" ? actionTemplates(step).map((t) => t.use) : [],
-              ),
-          ).toContain("onboarding_email"),
-        "activities complete from outcomes": (output) =>
-          expect(
-            output.state.activities.filter((a) => a.status === "completed").length,
-          ).toBeGreaterThanOrEqual(2),
-      },
+  checks: {
+    /** The changes it wrote, each as it was applied. */
+    changes: {
+      value: Expected,
+      check: (expected) => (output) => expectMatch(output.changes, expected, "changes"),
     },
-    cancellation: {
-      input: {
-        message:
-          "Create a template named simple_welcome, description 'A friendly greeting', subject Welcome, body Hello, no slots. If I cancel do not try again.",
-        approve: false,
-      },
-      checks: {
-        "does not write after cancellation": (output) => expect(output.changes).toEqual([]),
-        "reports cancellation": (output) =>
-          expect(output.state.activities.some((a) => a.status === "cancelled")).toBe(true),
-      },
+    /** What it asked the planner to draft, every request together. */
+    delegated: {
+      value: ExpectedText,
+      check: (expected) => (output) =>
+        expectText(output.descriptions.join("\n"), expected, "what it asked for"),
+    },
+    /** The names of the templates the drafted workflows use. */
+    templatesUsed: {
+      value: Expected,
+      check: (expected) => (output) =>
+        expectMatch(
+          output.workflows
+            .flatMap((workflow) => flattenSteps(workflow.steps))
+            .flatMap((step) =>
+              step.kind === "action" ? actionTemplates(step).map((use) => use.use) : [],
+            ),
+          expected,
+          "templates used",
+        ),
+    },
+    /** At least this many of its activities end with this status. */
+    activities: {
+      value: Schema.Struct({
+        status: AssistantActivity.fields.status,
+        atLeast: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+      }),
+      check:
+        ({ status, atLeast }) =>
+        (output) =>
+          expect(
+            output.state.activities.filter((activity) => activity.status === status).length,
+          ).toBeGreaterThanOrEqual(atLeast),
     },
   },
 });

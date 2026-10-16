@@ -1,0 +1,41 @@
+# yaml-language-server: $schema=./assistant.schema.json
+# The assistant runs over the fixture studio in src/assistant/fixtures.ts. `approve` is how the
+# person answers every confirmation it asks for.
+cases:
+  template-then-draft:
+    input:
+      message: >-
+        Create an onboarding email template named onboarding_email with description 'Welcome new
+        employees', subject Welcome and body 'Glad you are here'. No slots needed. Then draft a
+        manual automation that emails employee sam@example.com using onboarding_email. Do not save
+        or start it.
+      approve: true
+    checks:
+      creates the requested template:
+        changes:
+          $includes:
+            - $includes:
+                kind: putTemplate
+                template:
+                  $includes:
+                    name: onboarding_email
+                    description: Welcome new employees
+      passes exact template name to planner:
+        delegated: onboarding_email
+      planner uses template:
+        templatesUsed:
+          $includes: [onboarding_email]
+      activities complete from outcomes:
+        activities: { status: completed, atLeast: 2 }
+
+  cancellation:
+    input:
+      message: >-
+        Create a template named simple_welcome, description 'A friendly greeting', subject Welcome,
+        body Hello, no slots. If I cancel do not try again.
+      approve: false
+    checks:
+      does not write after cancellation:
+        changes: []
+      reports cancellation:
+        activities: { status: cancelled, atLeast: 1 }

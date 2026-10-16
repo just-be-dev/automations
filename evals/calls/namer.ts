@@ -23,7 +23,7 @@ export const namer: Call<string, NamerOutput> = {
   name: "namer",
   input: Schema.String,
   output: NamerOutput,
-  timeout: "20 seconds",
+  timeout: "10 seconds",
   run: (description) =>
     Effect.gen(function* () {
       const { binding } = yield* WorkersAi;

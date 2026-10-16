@@ -1,10 +1,14 @@
-/** What the evals work with: a People Ops team's entity store, its people, and drafts to edit. */
+/**
+ * What the calls work with whatever the dataset: a People Ops team's entity store, and the run a
+ * step's input describes. The cases, and the records and drafts they use, are in `datasets/`.
+ */
 
-import type { Subject } from "../src/entities/model.ts";
+import * as Schema from "effect/Schema";
+import { Subject } from "../src/entities/model.ts";
+import { Event } from "../src/events/model.ts";
 import type { Catalog } from "../src/workflow/catalog.ts";
-import { RunId } from "../src/workflow/run.ts";
 import type { ExecutionValues } from "../src/workflow/execution.ts";
-import type { Workflow } from "../src/workflow/model.ts";
+import { RunId } from "../src/workflow/run.ts";
 
 export const catalog: Catalog = {
   types: [
@@ -83,73 +87,24 @@ export const catalog: Catalog = {
   ],
 };
 
-/** The same store before anyone has defined a role. */
-export const catalogWithoutRoles: Catalog = { ...catalog, roles: [] };
-
-export const ada: Subject = {
-  type: "employee",
-  id: "ada",
-  data: {
-    name: "Ada Lovelace",
-    email: "ada@example.com",
-    role: "Senior Backend Developer",
-    team: "Payments",
-    start_date: "2026-10-05",
-    manager: "grace",
-  },
+/** What an agent or decide step's run holds when the step starts. */
+export const RunState = {
+  /** The run's subject; it has none when left out. */
+  subject: Schema.optionalKey(Schema.NullOr(Subject)),
+  /** The event that started the run, if one did. */
+  event: Schema.optionalKey(Event),
+  /** Earlier steps' records, by step ID. */
+  steps: Schema.optionalKey(Schema.Record(Schema.String, Schema.Json)),
 };
 
-export const values = (
-  subject: Subject | null,
-  steps: ExecutionValues["steps"] = {},
-): ExecutionValues => ({ runId: RunId.make("eval"), subject, steps });
-
-/** A draft that welcomes each hire on their start date, which the person set to run on its own. */
-export const welcomeDraft: Workflow = {
-  name: "Welcome new hires",
-  trigger: {
-    kind: "date",
-    entity: "employee",
-    on: "employee.start_date",
-    time: "09:00",
-    timezone: "Europe/London",
-  },
-  steps: [
-    {
-      id: "welcome",
-      title: "Send the welcome email",
-      kind: "action",
-      use: "email.send",
-      with: { to: "{{employee}}" },
-      template: { use: "welcome_general", with: { hire: "{{employee}}" } },
-    },
-  ],
-  // The person changed this from People Ops approving each email.
-  permissions: { "email.send": "auto" },
-};
-
-/** A draft that tells the manager, waits for the start date, then welcomes the hire. */
-export const headsUpDraft: Workflow = {
-  name: "Prepare for new hires",
-  trigger: { kind: "entity", entity: "employee" },
-  steps: [
-    {
-      id: "heads_up",
-      title: "Give the manager a heads-up",
-      kind: "action",
-      use: "slack.sendMessage",
-      with: { to: "{{employee.manager}}" },
-      template: { use: "manager_heads_up", with: { hire: "{{employee}}" } },
-    },
-    { id: "start", title: "Wait for the start date", kind: "wait", until: "employee.start_date" },
-    {
-      id: "welcome",
-      title: "Send the welcome email",
-      kind: "action",
-      use: "email.send",
-      with: { to: "{{employee}}" },
-      template: { use: "welcome_general", with: { hire: "{{employee}}" } },
-    },
-  ],
-  permissions: { "slack.sendMessage": { ask: "people_ops" }, "email.send": { ask: "people_ops" } },
-};
+/** The interpreter's values for a run in `RunState`. */
+export const values = (state: {
+  readonly subject?: Subject | null;
+  readonly event?: Event;
+  readonly steps?: ExecutionValues["steps"];
+}): ExecutionValues => ({
+  runId: RunId.make("eval"),
+  subject: state.subject ?? null,
+  ...(state.event === undefined ? {} : { event: state.event }),
+  steps: state.steps ?? {},
+});

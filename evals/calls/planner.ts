@@ -39,8 +39,14 @@ const Catalog = Schema.Struct({
 export const PlannerInput = Schema.Struct({
   message: Schema.String,
   draft: Schema.optionalKey(Workflow),
-  /** The People Ops store in `fixtures.ts` unless given. */
-  catalog: Schema.optionalKey(Catalog),
+  /** Replaces parts of the People Ops store in `fixtures.ts`, such as `roles: []` for none. */
+  catalog: Schema.optionalKey(
+    Schema.Struct({
+      types: Schema.optionalKey(Catalog.fields.types),
+      templates: Schema.optionalKey(Catalog.fields.templates),
+      roles: Schema.optionalKey(Catalog.fields.roles),
+    }),
+  ),
 });
 export type PlannerInput = typeof PlannerInput.Type;
 
@@ -70,10 +76,10 @@ export const planner: Call<PlannerInput, PlannerOutput> = {
   name: "planner",
   input: PlannerInput,
   output: PlannerOutput,
-  timeout: "8 minutes",
+  timeout: "6 minutes",
   run: (input) =>
     Effect.gen(function* () {
-      const store = input.catalog ?? catalog;
+      const store = { ...catalog, ...input.catalog };
       const plan = yield* Ref.make<Plan>(planOf(input.draft));
       const calls = yield* Ref.make<ReadonlyArray<string>>([]);
       const requests = yield* Ref.make<ReadonlyArray<string>>([]);

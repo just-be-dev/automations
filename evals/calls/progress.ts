@@ -21,7 +21,7 @@ export const progress: Call<string, ProgressOutput> = {
   name: "progress",
   input: Schema.String,
   output: ProgressOutput,
-  timeout: "30 seconds",
+  timeout: "10 seconds",
   run: (reasoning) =>
     Effect.gen(function* () {
       const { binding } = yield* WorkersAi;

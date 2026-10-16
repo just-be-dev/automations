@@ -2,12 +2,11 @@
 
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
 import { templateProblems } from "../src/entities/templates.ts";
 import { checkWorkflow } from "../src/workflow/catalog.ts";
-import { Workflow } from "../src/workflow/model.ts";
-import { loadEvals } from "./framework/eval.ts";
-import { catalog, headsUpDraft, welcomeDraft } from "./fixtures.ts";
+import { catalog } from "./fixtures.ts";
+import { datasetPath, readDataset } from "./framework/eval.ts";
+import planner from "./planner.eval.ts";
 
 test("templates fit the entity types", () => {
   expect(
@@ -15,23 +14,17 @@ test("templates fit the entity types", () => {
   ).toEqual([]);
 });
 
-test("the drafts the planner edits check against the catalog", () => {
-  for (const draft of [welcomeDraft, headsUpDraft]) {
-    Effect.runSync(checkWorkflow(catalog, Schema.decodeSync(Workflow)(draft)));
-  }
-});
-
-test("every eval loads and has cases", async () => {
-  const evals = await Effect.runPromise(loadEvals);
-  expect(evals.map((each) => each.name)).toEqual([
-    "agent",
-    "assistant",
-    "decide",
-    "namer",
-    "planner",
-    "progress",
-  ]);
-  for (const each of evals) {
-    expect(each.eval.caseNames.length).toBeGreaterThan(0);
+test("the drafts the planner edits check against its catalog", async () => {
+  const dataset = await Effect.runPromise(
+    readDataset(datasetPath("planner")).pipe(Effect.flatMap((raw) => planner.decode(raw))),
+  );
+  const drafts = Object.entries(dataset.cases).flatMap(([name, { input }]) =>
+    input.draft === undefined
+      ? []
+      : [{ name, draft: input.draft, store: { ...catalog, ...input.catalog } }],
+  );
+  expect(drafts.length).toBeGreaterThan(0);
+  for (const { draft, store } of drafts) {
+    Effect.runSync(checkWorkflow(store, draft));
   }
 });

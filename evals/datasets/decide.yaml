@@ -1,0 +1,105 @@
+# yaml-language-server: $schema=./decide.schema.json
+# Each case is a decide step's question and options, and the run it decides for. Steps use
+# clef-flash unless `model` names clef.
+cases:
+  event-payload:
+    input:
+      question: Which team should handle the triggering event?
+      options: { billing: Charges and refunds, technical: Outages and bugs }
+      event:
+        id: ticket-81
+        name: ticket.opened
+        data: { message: My invoice charged me twice. Please refund the extra charge. }
+        depth: 0
+    checks:
+      routes from the event without a subject: { choice: billing }
+
+  role-engineer:
+    input:
+      question: Which welcome fits this hire?
+      options: &welcomes
+        engineer: Software engineers and other people who write code
+        sales: Account executives and other sales roles
+        general: Everyone else
+      subject: &ada
+        type: employee
+        id: ada
+        data:
+          name: Ada Lovelace
+          email: ada@example.com
+          role: Senior Backend Developer
+          team: Payments
+          start_date: "2026-10-05"
+          manager: grace
+    checks:
+      picks engineer: { choice: engineer }
+
+  role-sales:
+    input:
+      question: Which welcome fits this hire?
+      options: *welcomes
+      subject:
+        type: employee
+        id: ada
+        data:
+          name: Ada Lovelace
+          email: ada@example.com
+          role: Sales Development Representative
+          team: Payments
+          start_date: "2026-10-05"
+          manager: grace
+    checks:
+      picks sales: { choice: sales }
+
+  ticket:
+    input:
+      question: Which team should handle this ticket?
+      options:
+        billing: Charges, invoices, refunds
+        technical: Bugs, outages, and how-to questions
+        other: Anything else
+      subject:
+        type: ticket
+        id: t-12
+        data: { text: "Hello, my card was charged twice for October. Can you fix this?" }
+    checks:
+      picks billing: { choice: billing }
+
+  earlier-step:
+    input: &promotion
+      question: What did the manager decide about the promotion?
+      options:
+        proceed: Go ahead with the promotion now
+        postpone: Do it later
+        cancel: Don't promote
+      subject: *ada
+      steps:
+        review:
+          approved: true
+          values: { comments: "Fine by me, but let's hold off until after the quarter closes." }
+          timedOut: false
+    checks:
+      picks postpone: { choice: postpone }
+
+  threshold:
+    input: &renewal
+      question: How carefully should legal review this renewal?
+      options:
+        light: Contracts worth under $50,000 a year
+        full: Contracts worth $50,000 a year or more
+      subject:
+        type: contract
+        id: c-7
+        data: { title: Acme hosting, owner: ada, ends_on: "2026-12-31", value: 250000 }
+    checks:
+      picks full: { choice: full }
+
+  earlier-step-clef:
+    input: { <<: *promotion, model: clef }
+    checks:
+      picks postpone: { choice: postpone }
+
+  threshold-clef:
+    input: { <<: *renewal, model: clef }
+    checks:
+      picks full: { choice: full }

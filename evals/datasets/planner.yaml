@@ -1,0 +1,280 @@
+# yaml-language-server: $schema=./planner.schema.json
+# Each case is one chat message to the planner, over the People Ops store in evals/fixtures.ts
+# unless `catalog` replaces part of it, and the draft it edits, if any.
+cases:
+  event-relay:
+    input:
+      message: >-
+        When the event order.paid arrives, emit order.fulfilled with exactly the same JSON payload.
+        No entity subject is needed. Allow this event publication automatically.
+    checks:
+      drafts a workflow: { drafts: true }
+      gets it right the first time: { retried: false }
+      listens for the named event:
+        trigger: { kind: event, event: order.paid }
+      passes the payload through unchanged:
+        steps:
+          use: events.emit
+          some:
+            $includes:
+              with: { name: order.fulfilled, data: "{{event.data}}" }
+      publication is authorized:
+        permissions: { $includes: { events.emit: auto } }
+
+  entity-created-event:
+    input:
+      message: >-
+        Listen specifically for entity.created events about employee records. Publish
+        onboarding.started with the creation event's payload. Allow this publication automatically;
+        don't start this on updates or by hand.
+    checks:
+      drafts a workflow: { drafts: true }
+      gets it right the first time: { retried: false }
+      uses a creation-only event trigger:
+        trigger: { $includes: { kind: event, event: entity.created, subject: employee } }
+      emits the handoff:
+        steps:
+          use: events.emit
+          some: { $includes: { with: { $includes: { name: onboarding.started } } } }
+
+  slack-mention:
+    input:
+      message: >-
+        When someone asks our bot for help in Slack, have an agent summarize what they asked and
+        email the summary to ops@example.com. Send it without asking anyone.
+    checks:
+      drafts a workflow: { drafts: true }
+      gets it right the first time: { retried: false }
+      starts from a Slack mention:
+        trigger: { $includes: { kind: event, event: slack.mention } }
+      reads what they wrote:
+        steps: { mentions: event.data.text }
+      sends the email:
+        steps: { use: email.send, count: 1 }
+
+  onboarding:
+    input:
+      message: >-
+        When a new employee is added, email them a welcome on their start date and give their
+        manager a heads-up on Slack a few days before.
+    checks:
+      drafts a workflow: { drafts: true }
+      gets it right the first time: { retried: false }
+      starts from employees:
+        trigger: { $includes: { entity: employee } }
+      welcomes with the general template:
+        templates: { use: email.send, include: [welcome_general] }
+      gives the heads-up with its template:
+        templates: { use: slack.sendMessage, include: [manager_heads_up] }
+      People Ops approves the email:
+        permissions: { $includes: { email.send: { ask: people_ops } } }
+      People Ops approves the Slack message:
+        permissions: { $includes: { slack.sendMessage: { ask: people_ops } } }
+      does what was asked:
+        judge:
+          reads: exchange
+          criterion: >-
+            The workflow emails each new employee a welcome on their start date, and messages their
+            manager on Slack a few days before that date.
+
+  welcome-by-role:
+    input:
+      message: >-
+        When someone new joins, email them the right welcome on their start date: engineers get the
+        engineering welcome, everyone else the general one.
+    checks:
+      drafts a workflow: { drafts: true }
+      gets it right the first time: { retried: false }
+      one email action matches on who the hire is:
+        steps:
+          use: email.send
+          count: 1
+          some: { $includes: { match: { $type: object } } }
+      uses both welcome templates:
+        templates: { use: email.send, include: [welcome_engineer, welcome_general] }
+
+  weekly-schedule:
+    input:
+      message: >-
+        Every Monday at 9am London time, post a reminder in #team on Slack to update the roadmap.
+    checks:
+      drafts a workflow: { drafts: true }
+      gets it right the first time: { retried: false }
+      runs at 9:00 every Monday in London:
+        trigger:
+          kind: schedule
+          cron: { $matches: '/^0 9 \* \* (1|MON|mon)$/' }
+          timezone: Europe/London
+      "posts in #team":
+        steps:
+          use: slack.sendMessage
+          some: { $includes: { with: { $includes: { to: "#team" } } } }
+
+  contract-renewal:
+    input:
+      message: >-
+        A week before a contract ends, ask its owner whether we should renew it. If they say yes,
+        send them the renewal reminder email; if not, let legal know in #legal on Slack.
+    checks:
+      drafts a workflow: { drafts: true }
+      gets it right the first time: { retried: false }
+      starts a week before the contract ends:
+        trigger:
+          $includes:
+            kind: date
+            entity: contract
+            on: contract.ends_on
+            offset: { $matches: "/^-(1 week|7 days)$/" }
+      asks the owner:
+        steps:
+          kind: human
+          some: { $includes: { assignee: contract.owner } }
+      branches on the owner's answer:
+        branchesOn: human
+      emails the renewal reminder:
+        templates: { use: email.send, include: [renewal_reminder] }
+      tells legal on Slack:
+        steps: { use: slack.sendMessage }
+
+  asks-for-url:
+    input:
+      message: When a new employee is added, send their details to our HR system's webhook.
+    checks:
+      doesn't invent a webhook:
+        steps: { use: http.post, count: 0 }
+      asks for the URL:
+        judge:
+          reads: said
+          criterion: >-
+            The assistant asks the person for the web address (URL) of the HR system's webhook, in
+            a question or in its reply.
+
+  asks-for-time-zone:
+    input:
+      message: "Every weekday at 8am, post a reminder in #standup to share your updates."
+    checks:
+      asks for the time zone:
+        judge:
+          reads: said
+          criterion: >-
+            The assistant asks the person which time zone 8am is in, in a question or in its reply,
+            or says which time zone it assumed and invites them to change it.
+
+  keeps-permissions:
+    input:
+      message: Also give their manager a heads-up on Slack.
+      # Welcomes each hire on their start date.
+      draft:
+        name: Welcome new hires
+        trigger:
+          kind: date
+          entity: employee
+          on: employee.start_date
+          time: "09:00"
+          timezone: Europe/London
+        steps:
+          - id: welcome
+            title: Send the welcome email
+            kind: action
+            use: email.send
+            with: { to: "{{employee}}" }
+            template: { use: welcome_general, with: { hire: "{{employee}}" } }
+        # The person changed this from People Ops approving each email.
+        permissions: { email.send: auto }
+    checks:
+      drafts a workflow: { drafts: true }
+      gets it right the first time: { retried: false }
+      keeps the welcome:
+        steps: { ids: [welcome] }
+      keeps the email running on its own:
+        permissions: { $includes: { email.send: auto } }
+      messages the manager:
+        steps: { use: slack.sendMessage, mentions: employee.manager }
+
+  removes-a-step:
+    input:
+      message: We don't need the Slack heads-up anymore, take it out.
+      # Tells the manager, waits for the start date, then welcomes the hire.
+      draft: &heads-up
+        name: Prepare for new hires
+        trigger: { kind: entity, entity: employee }
+        steps:
+          - id: heads_up
+            title: Give the manager a heads-up
+            kind: action
+            use: slack.sendMessage
+            with: { to: "{{employee.manager}}" }
+            template: { use: manager_heads_up, with: { hire: "{{employee}}" } }
+          - id: start
+            title: Wait for the start date
+            kind: wait
+            until: employee.start_date
+          - id: welcome
+            title: Send the welcome email
+            kind: action
+            use: email.send
+            with: { to: "{{employee}}" }
+            template: { use: welcome_general, with: { hire: "{{employee}}" } }
+        permissions:
+          slack.sendMessage: { ask: people_ops }
+          email.send: { ask: people_ops }
+    checks:
+      drafts a workflow: { drafts: true }
+      gets it right the first time: { retried: false }
+      removes the Slack message:
+        steps: { use: slack.sendMessage, count: 0 }
+      keeps the rest:
+        steps: { ids: [start, welcome] }
+
+  no-roles:
+    input:
+      message: When a new employee is added, email them the general welcome on their start date.
+      # Nobody has defined a role yet.
+      catalog: { roles: [] }
+    checks:
+      drafts a workflow: { drafts: true }
+      gets it right the first time: { retried: false }
+      sends the email on its own:
+        permissions: { $includes: { email.send: auto } }
+      explains there's no approval:
+        judge:
+          reads: reply
+          criterion: >-
+            The reply tells the person the email will go out without anyone approving it, or
+            suggests adding a role so someone can approve it first.
+
+  intro-meeting:
+    input:
+      message: >-
+        When someone joins, have their manager book a 30-minute intro with them in their first
+        week. Suggest a time so the manager just has to confirm.
+    checks:
+      drafts a workflow: { drafts: true }
+      gets it right the first time: { retried: false }
+      asks the manager, and tells them:
+        steps:
+          kind: human
+          some: { $includes: { assignee: employee.manager, notify: { $type: string } } }
+      proposes a time the manager can keep:
+        steps:
+          kind: human
+          mentions: { $matches: '/"default":"[^"]*\{\{steps\./' }
+      finds and books a time:
+        - steps: { use: calendar.findTimes }
+        - steps: { use: calendar.createEvent }
+      finds times on its own:
+        permissions: { $includes: { calendar.findTimes: auto } }
+
+  just-a-question:
+    input:
+      draft: *heads-up
+      message: What happens if the start date changes after the heads-up went out?
+    checks:
+      leaves the draft as it is: { drafts: false }
+      answers the question:
+        judge:
+          reads: exchange
+          criterion: >-
+            The reply answers what happens when the start date changes after the heads-up was sent,
+            given the workflow. It may offer to change the workflow but doesn't claim to have
+            changed it.

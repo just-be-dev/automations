@@ -22,7 +22,7 @@ Most modules open with a comment saying what they own.
 - `src/ai/`: the `PiAgent` conversation contract and traces, the shared `ask_question` tool with its `AnswerHub`, and the clef `Classifier` that picks progress phrases and makes decide steps' decisions (`classifier.ts`).
 - `src/ui/`: the Foldkit browser app.
 - `src/workflow.ts`, `src/entities.ts`, `src/connections.ts`: re-exports that keep the UI's imports. Backend code imports the owning modules.
-- `evals/`: evals of every LLM call against the real models. See `docs/development.md#evals`.
+- `evals/`: evals of every LLM call against the real models: the tests in `<name>.eval.ts`, and their cases in `datasets/<name>.yaml`. See `docs/development.md#evals`.
 - `demo/`: `mise run demo:reset`, which brings a local studio to the live demo's state through the HTTP API, with its seed (`seed.ts`) and fallback workflow (`onboarding.json`). See `docs/development.md#live-demo`. Keep the seed's type and templates in step with the migrations; `demo/seed.test.ts` checks them.
 - `migrations/`: D1 migrations, applied in numeric order on deploy and under `alchemy dev`.
 
@@ -70,7 +70,7 @@ Most modules open with a comment saying what they own.
 ## Docs and evals
 
 - Keep `docs/workflow-dsl.md` in step with the DSL, and `docs/workflow-engine.md` and `docs/assistant.md` with the code paths they diagram. Code calls `{{ref}}` text a template string; stored approved wording is a template. Keep the two apart in names and docs.
-- An `<name>.eval.ts` holds only cases and checks. Keep the framework out of it. A new LLM call needs a route in `evals/framework/worker.ts`.
+- An `<name>.eval.ts` holds only the call, its `minimum`, and its checks: those in `every` and the kinds a case can ask for. Its cases go in `evals/datasets/<name>.yaml`. Keep the framework out of both. A new LLM call needs a route in `evals/framework/worker.ts`.
 - Don't lower an eval's `minimum` to make a run pass. When you change a prompt, the planner's instructions, or a model, run the affected evals with `--trials` before and after, and add a case for behavior you rely on.
 
 ## Verify before finishing

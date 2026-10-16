@@ -1,0 +1,97 @@
+# yaml-language-server: $schema=./agent.schema.json
+# Each case is an agent step, with its instruction as the run sends it, and the run it works in.
+cases:
+  event-payload:
+    input:
+      title: Read the upgrade event
+      instruction: Extract the requested plan and seat count from the triggering event's payload.
+      fields: { plan: text, seats: number }
+      event:
+        id: upgrade-81
+        name: subscription.upgrade
+        data: { message: Move us to Team and add 17 seats. }
+        depth: 0
+    checks:
+      reads the event without a subject:
+        result: { plan: { $matches: /team/i }, seats: 17 }
+
+  date-arithmetic:
+    input:
+      title: Work out the check-in date
+      instruction: >-
+        Work out the date of Ada Lovelace's first-week check-in: the fifth working day (Monday to
+        Friday) after her start date.
+      fields: { checkin_date: date }
+      # She starts on Monday 2026-10-05.
+      subject: &ada
+        type: employee
+        id: ada
+        data:
+          name: Ada Lovelace
+          email: ada@example.com
+          role: Senior Backend Developer
+          team: Payments
+          start_date: "2026-10-05"
+          manager: grace
+    checks:
+      counts five working days:
+        result: { checkin_date: "2026-10-12" }
+
+  earlier-step-records:
+    input:
+      title: Choose a morning slot
+      instruction: >-
+        From the open times find_times found, pick the earliest one that starts before noon UTC.
+      fields: { time: datetime }
+      subject: *ada
+      steps:
+        find_times:
+          times: ["2026-10-06T13:00:00Z", "2026-10-07T09:30:00Z", "2026-10-07T15:00:00Z"]
+    checks:
+      picks 2026-10-07 09:30 UTC:
+        result:
+          time: { $matches: '/^2026-10-07T09:30(:00)?(\.0+)?(Z|\+00:00)$/' }
+
+  extraction:
+    input:
+      title: Read the upgrade request
+      instruction: >-
+        Read the customer's message and pull out the plan they want, the date it should start, and
+        how many seats they're adding.
+      fields: { plan: text, starts_on: date, seats: number }
+      subject:
+        type: ticket
+        id: t-81
+        data:
+          from: jo@acme.example
+          text: >-
+            Hi! We'd like to move to the Team plan from March 3rd next year (2027), and add 12
+            seats while we're at it. Thanks, Jo
+    checks:
+      reads the plan, date, and seats:
+        result: { plan: { $matches: /team/i }, starts_on: "2027-03-03", seats: 12 }
+
+  yes-or-no:
+    input:
+      title: Check whether she needs a dev laptop
+      instruction: Does Ada Lovelace's role involve writing code?
+      fields: { writes_code: boolean }
+      subject: *ada
+    checks:
+      says yes:
+        result: { writes_code: true }
+
+  writing:
+    input:
+      title: Write a welcome note
+      instruction: >-
+        Write a two-sentence welcome note for Ada Lovelace, who joins the Payments team on
+        2026-10-05 and reports to Grace Hopper.
+      subject: *ada
+    checks:
+      mentions her manager:
+        result: { $includes: Grace }
+      is the note itself:
+        judge: >-
+          The answer is the welcome note itself, ready to send, about two sentences long. It isn't
+          a description of a note, a set of options, or a claim that it was sent.
