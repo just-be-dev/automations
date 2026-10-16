@@ -1,23 +1,16 @@
 # Automations studio
 
-**Describe the process. Review the plan. Let it run.**
+This project is an experiment in exploring how to make repeatable, agent driven automations a transparent and trustworthy process. I've taken some opinionated technology decisions (like the usage of the [cafe stack](https://github.com/just-be-dev/cafe-stack)). That said, this is _not_ a production quality codebase and not all of the decisions herein should be considered a representation of how I would build software.
 
-Automations studio turns a conversation into a workflow you can inspect, refine, and run. Coordinate the repetitive work around people and records: welcome a new hire, ask for approval, schedule a meeting, wait a few days, and follow up. Keep people involved where judgment matters, without making them chase every handoff.
+## Build repeatable automations through conversation
 
-![A conversation in Automations studio describing and refining a new-hire automation, beside its rendered workflow with parallel preparation, approved welcome templates, People Ops approval, and a three-day follow-up.](docs/images/first-week.png)
+1. Describe to the assistant agent a process that you'd like to automate and watch while it builds you a workflow.
+2. Review what permissions it would need, what services it touches, and what actions would be taken. Iterate on it as needed.
+3. Start by hand, react to a record changing, run on a schedule, or start relative to a date. Watch each run’s results and answer its open tasks in the studio.
 
-_Describe the process, refine it in chat, and review the resulting workflow. “Launch a great first week” is a scripted local demo in the real studio UI; Calendar is simulated, and so are Email and Slack unless you connect [Email](docs/email.md) or [Slack](docs/slack.md)._
+## The Demo Scenario
 
-## From a description to a running process
-
-1. **Describe what should happen.** Start a new automation with a goal, not a step-by-step specification. The planner drafts the workflow and asks questions when it needs a choice.
-2. **Review the steps and permissions.** See what the workflow reads, which messages it will send, and where it waits for a person. Refine it in conversation. Choose which operations run automatically and which need a role’s approval.
-3. **Save a version you trust.** Drafting does not change a running process. Runs use the saved version, so you can keep designing without changing work already in flight.
-4. **Run it and follow along.** Start by hand, react to a record changing, run on a schedule, or start relative to a date. Watch each run’s results and answer its open tasks in the studio.
-
-## A first week that does not fall through the cracks
-
-The workflow above starts with a request like this:
+The workflow starts with a request like this:
 
 > Can you set up onboarding for new hires? They should get a welcome email and 30 minutes with their manager. Three days after they start, ask the manager how it's going.
 

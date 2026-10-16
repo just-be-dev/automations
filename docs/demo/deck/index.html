@@ -1583,6 +1583,124 @@
         margin: 0 0 8px;
       }
 
+      /* About the speaker */
+      .d-about-name {
+        position: absolute;
+        left: 72px;
+        top: 262px;
+        width: 640px;
+        margin: 0;
+        font-size: 76px;
+        line-height: 1.08;
+        font-weight: 500;
+        letter-spacing: -0.025em;
+      }
+      .d-about-role {
+        position: absolute;
+        left: 72px;
+        top: 460px;
+        width: 640px;
+        margin: 0;
+        font-size: 30px;
+        line-height: 1.4;
+        color: var(--g11);
+      }
+      .d-about-role b {
+        color: var(--accent);
+        font-weight: 500;
+      }
+      .d-career {
+        position: absolute;
+        left: 830px;
+        top: 168px;
+        width: 700px;
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .d-career .d-career-label {
+        font: 22px/1 var(--mono);
+        color: var(--g10);
+        margin-bottom: 18px;
+        padding: 0;
+        border-bottom: 0;
+      }
+      .d-career li {
+        padding: 22px 0;
+        border-bottom: 1px solid var(--g4);
+      }
+      .d-career li:last-child {
+        border-bottom: 0;
+      }
+      .d-career h3 {
+        margin: 0 0 6px;
+        font-size: 32px;
+        font-weight: 500;
+        letter-spacing: -0.01em;
+      }
+      .d-career p {
+        margin: 0;
+        font-size: 24px;
+        line-height: 1.4;
+        color: var(--g11);
+      }
+      .d-logo {
+        display: block;
+        width: 74px;
+        height: 74px;
+      }
+
+      /* Modes of working with an agent */
+      .d-modes {
+        position: absolute;
+        left: 72px;
+        top: 216px;
+        width: 1458px;
+        height: 612px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 36px;
+      }
+      .d-modes .d-act {
+        display: flex;
+        flex-direction: column;
+      }
+      .d-mode-kicker {
+        margin-top: 30px;
+        font: 22px/1 var(--mono);
+        color: var(--g10);
+      }
+      .d-modes .d-act h3 {
+        margin: 12px 0 14px;
+      }
+      .d-mode-trust {
+        margin-top: auto;
+        padding-top: 26px;
+        border-top: 1px solid var(--g4);
+        font-size: 26px;
+        line-height: 1.4;
+      }
+      .d-mode-trust b {
+        display: block;
+        margin-bottom: 4px;
+        color: var(--accent);
+        font-weight: 500;
+        font-size: 22px;
+      }
+
+      /* Demo */
+      .d-demo-title {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        max-width: none;
+        margin: 0;
+        font-size: 160px;
+        font-weight: 500;
+        letter-spacing: -0.03em;
+      }
+
       /* Navigation and notes, outside the slide canvas */
       .deck-nav {
         position: fixed;
@@ -1822,6 +1940,28 @@
           <rect x="6.9" y="8" width="2.6" height="6" rx="1.3" fill="#e01e5a" />
         </symbol>
 
+        <symbol id="i-steer" viewBox="0 0 16 16">
+          <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.3" />
+          <circle cx="8" cy="8" r="1.6" fill="none" stroke="currentColor" stroke-width="1.3" />
+          <path
+            d="M2.2 7.2c1.9-.6 3.8-.9 5.8-.9s3.9.3 5.8.9M7 9.4L4.6 13.3M9 9.4l2.4 3.9"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+            stroke-linecap="round"
+          />
+        </symbol>
+        <symbol id="i-people" viewBox="0 0 16 16">
+          <circle cx="5.5" cy="5.5" r="2.2" fill="none" stroke="currentColor" stroke-width="1.3" />
+          <circle cx="11" cy="6" r="1.8" fill="none" stroke="currentColor" stroke-width="1.3" />
+          <path
+            d="M1.5 13.5c.5-2.3 2-3.6 4-3.6s3.5 1.3 4 3.6M10 10c1.9-.3 3.7.8 4.3 3.5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.3"
+            stroke-linecap="round"
+          />
+        </symbol>
         <symbol id="i-diff" viewBox="0 0 16 16">
           <rect
             x="2"
@@ -1987,7 +2127,98 @@
           marks what we&#x27;re building before the demo.
         </aside>
       </section>
-      <section class="slide d-setup" id="slide-2" data-slide="2">
+      <section class="slide d-about" id="slide-2" data-slide="2">
+        <h1 class="d-about-name">Hi, I’m<br /><span class="d-accent">Justin Bennett</span></h1>
+        <p class="d-about-role">Technical director of applied AI engineering at <b>Norm.ai</b></p>
+        <ul class="d-career">
+          <li class="d-career-label">Previously</li>
+          <li>
+            <h3>Oxide Computer Company</h3>
+            <p>Rack-scale computers for running your own cloud</p>
+          </li>
+          <li>
+            <h3>Membrane</h3>
+            <p>Co-founder of a durable execution startup</p>
+          </li>
+          <li>
+            <h3>Artsy</h3>
+            <p>The online marketplace for art</p>
+          </li>
+          <li>
+            <h3>Discovery</h3>
+            <p>Frontend architect for HGTV, Food Network and Travel Channel</p>
+          </li>
+        </ul>
+        <aside class="notes">
+          I&#x27;m Justin Bennett, technical director of applied AI engineering at Norm.ai. Before
+          that I was at Oxide Computer Company, co-founded Membrane, a durable execution startup,
+          worked at Artsy, and was a frontend architect at Discovery on HGTV, Food Network and
+          Travel Channel.
+        </aside>
+      </section>
+      <section class="slide d-dark" id="slide-3" data-slide="3">
+        <h2 class="d-dark-title">Outside of work</h2>
+        <div class="d-cols">
+          <div class="d-col">
+            <img
+              class="d-logo"
+              alt="devtools.fm"
+              src="data:image/webp;base64,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"
+            />
+            <h3>devtools.fm</h3>
+            <p>A podcast about developer tools and the people who build them.</p>
+          </div>
+          <div class="d-col">
+            <span class="d-tile"
+              ><svg class="d-ico"><use href="#i-people" /></svg
+            ></span>
+            <h3>Side Project Saturday</h3>
+            <p>A Saturday morning meetup for working on side projects together.</p>
+          </div>
+        </div>
+        <aside class="notes">
+          Outside of work, I host devtools.fm, a podcast about developer tools, and I run Side
+          Project Saturday, a Saturday morning meetup.
+        </aside>
+      </section>
+      <section class="slide d-modes-slide" id="slide-4" data-slide="4">
+        <h2 class="d-page-title">Two ways to work with an agent</h2>
+        <div class="d-modes">
+          <div class="d-act">
+            <span class="d-tile light"
+              ><svg class="d-ico"><use href="#i-steer" /></svg
+            ></span>
+            <div class="d-mode-kicker">01</div>
+            <h3>You’re the driver</h3>
+            <p>You watch what the agent is doing and steer it as it goes.</p>
+            <div class="d-mode-trust">
+              <b>Trust</b>You’re there for every step, so you can stop a mistake before it lands.
+            </div>
+          </div>
+          <div class="d-act">
+            <span class="d-tile light"
+              ><svg class="d-ico"><use href="#i-agent" /></svg
+            ></span>
+            <div class="d-mode-kicker">02</div>
+            <h3>The agent works on its own</h3>
+            <p>
+              It takes care of tasks with minimal supervision, and asks for approval only when it
+              has to.
+            </p>
+            <div class="d-mode-trust">
+              <b>Trust</b>You aren’t watching when it acts, so you have to trust it before it
+              starts.
+            </div>
+          </div>
+        </div>
+        <aside class="notes">
+          There are two ways people work with agents. In the first, you&#x27;re the driver: you
+          watch what&#x27;s happening and actively steer. In the second, the agent is autonomous
+          with minimal supervision. It may ask for approval when it has to, but otherwise it takes
+          care of the task on its own. Those two modes need very different kinds of trust.
+        </aside>
+      </section>
+      <section class="slide d-setup" id="slide-5" data-slide="5">
         <h2 class="d-page-title">Let’s consider an automation task</h2>
         <div class="d-bubble">
           When someone new joins, welcome them on Slack, send our welcome email, and book 30 minutes
@@ -2015,7 +2246,7 @@
           company. Watch where each approach lets you catch that.
         </aside>
       </section>
-      <section class="slide d-section" id="slide-3" data-slide="3">
+      <section class="slide d-section" id="slide-6" data-slide="6">
         <h1 class="d-section-title">Act one: agent delegation</h1>
         <div class="d-thumbs">
           <div class="d-mockbox d-thumb">
@@ -2124,7 +2355,7 @@
           actions and keeps an audit log. The question is when you learn what it&#x27;s going to do.
         </aside>
       </section>
-      <section class="slide d-frame" id="slide-4" data-slide="4">
+      <section class="slide d-frame" id="slide-7" data-slide="7">
         <div class="d-meta"><span class="d-num">01</span></div>
         <h2 class="d-title">Describe the job</h2>
         <p class="d-caption">
@@ -2164,7 +2395,7 @@
           about to do.
         </aside>
       </section>
-      <section class="slide d-frame" id="slide-5" data-slide="5">
+      <section class="slide d-frame" id="slide-8" data-slide="8">
         <div class="d-meta"><span class="d-num">02</span></div>
         <h2 class="d-title">Set what it may do</h2>
         <p class="d-caption">
@@ -2258,7 +2489,7 @@
           says.
         </aside>
       </section>
-      <section class="slide d-frame" id="slide-6" data-slide="6">
+      <section class="slide d-frame" id="slide-9" data-slide="9">
         <div class="d-meta"><span class="d-num">03</span></div>
         <h2 class="d-title">Turn it on and test it</h2>
         <p class="d-caption">The routine shows the agent’s general instructions.</p>
@@ -2312,7 +2543,7 @@
           test.
         </aside>
       </section>
-      <section class="slide d-frame" id="slide-7" data-slide="7">
+      <section class="slide d-frame" id="slide-10" data-slide="10">
         <div class="d-meta"><span class="d-num">04</span></div>
         <h2 class="d-title">It asks along the way</h2>
         <p class="d-caption">Approvals arrive one action at a time during the run.</p>
@@ -2350,7 +2581,7 @@
           without knowing what came before it or what comes next.
         </aside>
       </section>
-      <section class="slide d-frame" id="slide-8" data-slide="8">
+      <section class="slide d-frame" id="slide-11" data-slide="11">
         <div class="d-meta"><span class="d-num">05</span></div>
         <h2 class="d-title">Check the log afterwards</h2>
         <p class="d-caption">
@@ -2414,7 +2645,7 @@
           change one thing without moving something else.
         </aside>
       </section>
-      <section class="slide d-dark" id="slide-9" data-slide="9">
+      <section class="slide d-dark" id="slide-12" data-slide="12">
         <h2 class="d-dark-title">You grant trust before the run and check the work after it.</h2>
         <div class="d-cols">
           <div class="d-col">
@@ -2438,7 +2669,7 @@
           decided again.
         </aside>
       </section>
-      <section class="slide d-section" id="slide-10" data-slide="10">
+      <section class="slide d-section" id="slide-13" data-slide="13">
         <h1 class="d-section-title">Act two: agent-built workflow</h1>
         <div class="d-thumbs">
           <div class="d-mockbox d-thumb">
@@ -2643,7 +2874,7 @@
           it by talking, and only then run it.
         </aside>
       </section>
-      <section class="slide d-frame" id="slide-11" data-slide="11">
+      <section class="slide d-frame" id="slide-14" data-slide="14">
         <div class="d-meta"><span class="d-num">01</span></div>
         <h2 class="d-title">Describe the job</h2>
         <p class="d-caption">
@@ -2695,7 +2926,7 @@
           next.
         </aside>
       </section>
-      <section class="slide d-frame" id="slide-12" data-slide="12">
+      <section class="slide d-frame" id="slide-15" data-slide="15">
         <div class="d-meta"><span class="d-num">02</span></div>
         <h2 class="d-title">Review before run</h2>
         <p class="d-caption">
@@ -2808,7 +3039,7 @@
           agent in act one did. Here you can see it before it reaches anyone.
         </aside>
       </section>
-      <section class="slide d-frame" id="slide-13" data-slide="13">
+      <section class="slide d-frame" id="slide-16" data-slide="16">
         <div class="d-meta"><span class="d-num">03</span></div>
         <h2 class="d-title">Update through chat</h2>
         <p class="d-caption">
@@ -2887,10 +3118,8 @@
           moved.
         </aside>
       </section>
-      <section class="slide d-frame" id="slide-14" data-slide="14">
-        <div class="d-meta">
-          <span class="d-num">04</span><span class="d-pill ok">Works today</span>
-        </div>
+      <section class="slide d-frame" id="slide-17" data-slide="17">
+        <div class="d-meta"><span class="d-num">04</span></div>
         <h2 class="d-title">Permissions attach to the plan</h2>
         <p class="d-caption">
           Only the permissions the workflow uses are shown, each tied to its step in the workflow.
@@ -2961,7 +3190,7 @@
           steps. Asking People Ops about email means they approve this specific message.
         </aside>
       </section>
-      <section class="slide d-frame" id="slide-15" data-slide="15">
+      <section class="slide d-frame" id="slide-18" data-slide="18">
         <div class="d-meta"><span class="d-num">05</span></div>
         <h2 class="d-title">Run it on a real record</h2>
         <p class="d-caption">
@@ -3024,7 +3253,7 @@
           flight.
         </aside>
       </section>
-      <section class="slide d-frame" id="slide-16" data-slide="16">
+      <section class="slide d-frame" id="slide-19" data-slide="19">
         <div class="d-meta"><span class="d-num">06</span></div>
         <h2 class="d-title">Approve in Slack</h2>
         <p class="d-caption">
@@ -3068,7 +3297,7 @@
           the whole plan behind it.
         </aside>
       </section>
-      <section class="slide d-frame" id="slide-17" data-slide="17">
+      <section class="slide d-frame" id="slide-20" data-slide="20">
         <div class="d-meta"><span class="d-num">07</span></div>
         <h2 class="d-title">The results match the plan</h2>
         <p class="d-caption">
@@ -3120,7 +3349,7 @@
           engineering welcome email in Ada&#x27;s inbox.
         </aside>
       </section>
-      <section class="slide d-frame" id="slide-18" data-slide="18">
+      <section class="slide d-frame" id="slide-21" data-slide="21">
         <div class="d-meta"><span class="d-num">08</span></div>
         <h2 class="d-title">Come back to one step</h2>
         <p class="d-caption">
@@ -3160,7 +3389,7 @@
           it sent.
         </aside>
       </section>
-      <section class="slide d-frame" id="slide-19" data-slide="19">
+      <section class="slide d-frame" id="slide-22" data-slide="22">
         <div class="d-meta"><span class="d-num">09</span></div>
         <h2 class="d-title">The manager checks in</h2>
         <p class="d-caption">
@@ -3200,7 +3429,7 @@
           manager&#x27;s answers live on the run for whoever comes back later.
         </aside>
       </section>
-      <section class="slide d-dark" id="slide-20" data-slide="20">
+      <section class="slide d-dark" id="slide-23" data-slide="23">
         <h2 class="d-dark-title">You trust the run because you read the plan first.</h2>
         <div class="d-cols">
           <div class="d-col">
@@ -3223,7 +3452,7 @@
           conversation edits that plan rather than steering a black box.
         </aside>
       </section>
-      <section class="slide d-compare" id="slide-21" data-slide="21">
+      <section class="slide d-compare" id="slide-24" data-slide="24">
         <h2 class="d-page-title">How the two approaches compare</h2>
         <table class="d-table">
           <thead>
@@ -3272,7 +3501,7 @@
           runs.
         </aside>
       </section>
-      <section class="slide d-dark d-close" id="slide-22" data-slide="22">
+      <section class="slide d-dark d-close" id="slide-25" data-slide="25">
         <h2 class="d-dark-title">Agents and workflows aren’t mutually exclusive.</h2>
         <div class="d-steps">
           <div class="d-step">
@@ -3308,6 +3537,9 @@
           workflows can invoke agents. The goal is to give people confidence that they understand
           what actions will be performed on their behalf.
         </aside>
+      </section>
+      <section class="slide d-dark" id="slide-26" data-slide="26">
+        <h1 class="d-demo-title">Demo</h1>
       </section>
     </div>
     <nav class="deck-nav">
