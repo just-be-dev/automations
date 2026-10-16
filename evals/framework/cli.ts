@@ -1,10 +1,14 @@
 /** Selects and runs eval trials, compares saved results, and fails suites below their minimum. */
 
 import * as BunRuntime from "@effect/platform-bun/BunRuntime";
+import * as BunServices from "@effect/platform-bun/BunServices";
+import * as Argument from "effect/cli/Argument";
+import * as Command from "effect/cli/Command";
+import * as Flag from "effect/cli/Flag";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { parseArgs } from "node:util";
 import {
   checkPassRate,
   evalPassed,
@@ -22,6 +26,7 @@ import { latestRun, percent, printResult, saveRun } from "./report.ts";
  *
  *   mise run eval [eval ...] [--trials 3] [--concurrency 4] [--case <name part>] [--no-save]
  *   mise run eval [eval ...] [--case <name part>] --list
+ *   mise run eval -- --help
  *
  * Runs every `evals/*.eval.ts` when none is named. Each run is saved to `evals/results/`, and the
  * report compares each case with the latest saved run. The run fails when an eval passes fewer of
@@ -29,17 +34,36 @@ import { latestRun, percent, printResult, saveRun } from "./report.ts";
  * model.
  */
 
-const { values: flags, positionals } = parseArgs({
-  args: Bun.argv.slice(2),
-  allowPositionals: true,
-  options: {
-    trials: { type: "string", default: "1" },
-    concurrency: { type: "string", default: "4" },
-    case: { type: "string" },
-    "no-save": { type: "boolean", default: false },
-    list: { type: "boolean", default: false },
-  },
-});
+const positive = (name: string, fallback: number, description: string) =>
+  Flag.Int(name).pipe(
+    Flag.filter(
+      (value) => value >= 1,
+      (value) => `--${name} must be at least 1, got ${value}`,
+    ),
+    Flag.withDefault(fallback),
+    Flag.withDescription(description),
+  );
+
+const options = {
+  names: Argument.String("eval").pipe(
+    Argument.variadic(),
+    Argument.withDescription("Evals to run, by file name without .eval.ts; every eval when none"),
+  ),
+  trials: positive("trials", 1, "Times to run each case"),
+  concurrency: positive("concurrency", 4, "Cases to run at once"),
+  case: Flag.String("case").pipe(
+    Flag.optional,
+    Flag.withDescription("Only run cases whose name contains this text"),
+  ),
+  save: Flag.Boolean("save").pipe(
+    Flag.withDefault(true),
+    Flag.withDescription("Save the run to evals/results/ (--no-save to skip)"),
+  ),
+  list: Flag.Boolean("list").pipe(
+    Flag.withDefault(false),
+    Flag.withDescription("Print the evals and cases that would run, without calling a model"),
+  ),
+};
 
 class UnknownEvals extends Schema.TaggedError<UnknownEvals>()("UnknownEvals", {
   message: Schema.String,
@@ -49,7 +73,11 @@ class BelowMinimum extends Schema.TaggedError<BelowMinimum>()("BelowMinimum", {
   message: Schema.String,
 }) {}
 
-const program = Effect.gen(function* () {
+const program = Effect.fn("Evals.run")(function* (
+  input: Command.Command.Config.Infer<typeof options>,
+) {
+  const positionals = input.names;
+  const filter = Option.getOrUndefined(input.case);
   const evals = yield* loadEvals;
   const unknown = positionals.filter((name) => !evals.some((each) => each.name === name));
   if (unknown.length > 0) {
@@ -61,12 +89,12 @@ const program = Effect.gen(function* () {
   const chosen = evals.filter(
     (each) =>
       (positionals.length === 0 || positionals.includes(each.name)) &&
-      matchingCases(each.eval, flags.case).length > 0,
+      matchingCases(each.eval, filter).length > 0,
   );
 
-  if (flags.list) {
+  if (input.list) {
     for (const { name, eval: target } of chosen) {
-      const cases = matchingCases(target, flags.case);
+      const cases = matchingCases(target, filter);
       yield* Console.log(
         `${name} (${cases.length} ${cases.length === 1 ? "case" : "cases"}, minimum ${percent(target.minimum)})`,
       );
@@ -75,8 +103,7 @@ const program = Effect.gen(function* () {
     return;
   }
 
-  const trials = Math.max(1, Number(flags.trials) || 1);
-  const concurrency = Math.max(1, Number(flags.concurrency) || 1);
+  const { trials, concurrency } = input;
   const previous = yield* latestRun;
   const startedAt = new Date().toISOString();
   const results = yield* Effect.forEach(chosen, ({ name, eval: target }) =>
@@ -85,7 +112,7 @@ const program = Effect.gen(function* () {
       const result = yield* runEval(name, target, {
         trials,
         concurrency,
-        ...(flags.case === undefined ? {} : { filter: flags.case }),
+        ...(filter === undefined ? {} : { filter }),
       });
       yield* printResult(
         result,
@@ -95,7 +122,7 @@ const program = Effect.gen(function* () {
     }),
   ).pipe(Effect.provide(Client.layer));
 
-  if (!flags["no-save"]) {
+  if (input.save) {
     const file = yield* saveRun({ startedAt, trials, evals: results });
     yield* Console.log(`\nSaved ${file}`);
   }
@@ -108,4 +135,11 @@ const program = Effect.gen(function* () {
   }
 });
 
-program.pipe(BunRuntime.runMain);
+Command.make("eval", options, program).pipe(
+  Command.withDescription(
+    "Run the evals against Workers AI and report how often each check passed",
+  ),
+  Command.run({ version: "0.0.0" }),
+  Effect.provide(BunServices.layer),
+  BunRuntime.runMain,
+);

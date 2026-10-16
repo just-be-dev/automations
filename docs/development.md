@@ -34,6 +34,7 @@ The tests script every model. The evals in `evals/` call the real ones, on Worke
 mise run eval                                                            # every eval
 mise run eval planner --case onboarding --trials 3                       # one eval, matching cases, three tries each
 mise run eval --list                                                     # the evals and their cases, without running them
+mise run eval -- --help                                                  # every flag (mise keeps a bare --help)
 EVAL_PLANNER_MODEL=@cf/… mise run eval planner agent assistant           # try another model for pi
 mise run check                                                           # typecheck, lint, tests, format, then the evals
 ```

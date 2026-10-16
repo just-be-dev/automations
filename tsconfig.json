@@ -50,6 +50,10 @@
               "src/automation/runs.ts"
             ],
             "options": { "allowedUnstableApis": ["effect/workflow"] }
+          },
+          {
+            "include": ["evals/framework/cli.ts"],
+            "options": { "allowedUnstableApis": ["effect/cli"] }
           }
         ]
       }
