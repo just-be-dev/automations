@@ -10,19 +10,21 @@ export const workersAiTranscription = (ai: Ai) =>
   Transcription.of({
     connect: Effect.fn("Transcription.connect")(function* (sampleRate: number) {
       // NOTE: the generated Nova-3 input type describes batch audio, not its WebSocket parameters.
+      // Over a WebSocket every parameter must be a string: Workers AI answers 400 to numbers and
+      // booleans ("invalid type: integer `1`, expected a string").
       const response = yield* Effect.tryPromise({
         try: async () => {
           const result: unknown = await Reflect.apply(ai.run, ai, [
             TRANSCRIPTION_MODEL,
             {
               encoding: "linear16",
-              sample_rate: sampleRate,
-              channels: 1,
+              sample_rate: String(sampleRate),
+              channels: "1",
               language: "en-US",
-              interim_results: true,
-              smart_format: true,
-              punctuate: true,
-              mip_opt_out: true,
+              interim_results: "true",
+              smart_format: "true",
+              punctuate: "true",
+              mip_opt_out: "true",
             },
             { websocket: true },
           ]);
@@ -35,7 +37,10 @@ export const workersAiTranscription = (ai: Ai) =>
       );
       const upstream = response.webSocket;
       if (response.status !== 101 || upstream === null) {
-        return yield* new TranscriptionError({ message: "Nova-3 did not accept the connection" });
+        const body = yield* Effect.promise(() => response.text().catch(() => ""));
+        return yield* new TranscriptionError({
+          message: `Nova-3 did not accept the connection (${response.status}): ${body.slice(0, 500)}`,
+        });
       }
       return yield* Effect.sync(() => {
         const pair = new WebSocketPair();
