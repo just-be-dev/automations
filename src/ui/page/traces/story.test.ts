@@ -74,3 +74,14 @@ test("refreshing keeps the trace on screen until the new one arrives", () => {
     ),
   );
 });
+
+test("open entries survive a refresh and close when another conversation opens", () => {
+  const opened = update(plannerOpen, Message.ToggledEntry({ id: "3/reasoning", isOpen: true }));
+  const both = update(opened.model, Message.ToggledEntry({ id: "1", isOpen: true }));
+  expect(both.model.openEntries).toEqual(["3/reasoning", "1"]);
+  const closed = update(both.model, Message.ToggledEntry({ id: "3/reasoning", isOpen: false }));
+  expect(closed.model.openEntries).toEqual(["1"]);
+  const refreshed = update(closed.model, Message.ClickedRefresh());
+  expect(refreshed.model.openEntries).toEqual(["1"]);
+  expect(reflectUrl(refreshed.model, firstRun).model.openEntries).toEqual([]);
+});

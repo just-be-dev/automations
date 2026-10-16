@@ -1,4 +1,5 @@
 /** Refreshes the trace debugger's data while keeping the current conversation visible until its replacement arrives. */
+import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import type { Update } from "foldkit";
 import { modifyFields } from "foldkit/struct";
@@ -34,6 +35,14 @@ export const update = (model: Model, message: Message) =>
         ],
       };
     },
+    ToggledEntry: ({ id, isOpen }) => ({
+      model: modifyFields(model, {
+        openEntries: (ids) => {
+          const others = Array.filter(ids, (open) => open !== id);
+          return isOpen ? Array.append(others, id) : others;
+        },
+      }),
+    }),
     SucceededLoadAutomations: ({ automations }) => ({
       model: modifyFields(model, { automations: () => Automations.Ready({ automations }) }),
     }),

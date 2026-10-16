@@ -47,6 +47,7 @@ export const init = (maybeSource: Option.Option<Source>): UpdateReturn => ({
     runs: runsFor(maybeSource),
     trace: traceFor(maybeSource),
     load: 0,
+    openEntries: [],
   }),
   commands: [LoadAutomations(), ...loadRuns(maybeSource), ...loadTrace(maybeSource, 0)],
 });
@@ -64,6 +65,7 @@ export const reflectUrl = (model: Model, maybeSource: Option.Option<Source>): Up
       runs: (runs) => (isSameAutomation ? runs : runsFor(maybeSource)),
       trace: () => traceFor(maybeSource),
       load: () => load,
+      openEntries: () => [],
     }),
     commands: [...(isSameAutomation ? [] : loadRuns(maybeSource)), ...loadTrace(maybeSource, load)],
   };

@@ -1,4 +1,4 @@
-/** Tracks the selected planner or run conversation, available sources, and trace loading and refresh state. */
+/** Tracks the selected planner or run conversation, available sources, trace loading and refresh state, and which entries are open. */
 import * as Equivalence from "effect/Equivalence";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -52,6 +52,8 @@ export const Model = Schema.Struct({
   automations: Automations,
   runs: Runs,
   trace: TraceState,
+  /** The trace entries whose details are open. A refresh keeps them; opening another conversation closes them. */
+  openEntries: Schema.Array(Schema.String),
   /** Each selection or refresh loads anew and drops the replies of older loads. */
   load: Schema.Int,
 });

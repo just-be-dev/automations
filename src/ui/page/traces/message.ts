@@ -1,4 +1,4 @@
-/** Describes debugger refreshes and the results of loading automation, run, and conversation data. */
+/** Describes debugger refreshes, opened and closed trace entries, and the results of loading automation, run, and conversation data. */
 import * as Schema from "effect/Schema";
 import { defineMessageUnion } from "foldkit/message";
 import { Trace } from "../../../ai/trace.ts";
@@ -7,6 +7,7 @@ import { ListedAutomation } from "./model.ts";
 
 export const Message = defineMessageUnion({
   ClickedRefresh: {},
+  ToggledEntry: { id: Schema.String, isOpen: Schema.Boolean },
   SucceededLoadAutomations: { automations: Schema.Array(ListedAutomation) },
   FailedLoadAutomations: { error: Schema.String },
   SucceededLoadRuns: { automationId: Schema.String, runs: Schema.Array(RunSummary) },

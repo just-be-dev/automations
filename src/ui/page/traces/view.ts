@@ -1,17 +1,33 @@
-/** Presents agent conversations for debugging, including instructions, reasoning, tool activity, and token usage. */
+/** Presents agent conversations for debugging as a trace: instructions, prompts, reasoning, tool activity, and token usage. */
 import * as Array from "effect/Array";
 import * as Match from "effect/Match";
 import * as Option from "effect/Option";
 import { Submodel } from "foldkit";
-import type { Html, HtmlBuilder } from "foldkit/html";
-import { Activity, CircleAlert, ExternalLink, LoaderCircle, RefreshCw } from "lucide";
+import type { Attribute, Html, HtmlBuilder } from "foldkit/html";
+import {
+  Activity,
+  Bot,
+  Brain,
+  CircleAlert,
+  CornerDownRight,
+  ExternalLink,
+  type IconNode,
+  Layers,
+  LoaderCircle,
+  RefreshCw,
+  RotateCcw,
+  ScrollText,
+  User,
+  Wrench,
+} from "lucide";
 import { button, buttonClass } from "@/components/ui/button";
 import { Empty } from "@/components/ui/empty";
+import { Trace, type TraceStatus } from "@/components/ui/trace";
 import { componentName } from "@/lib/component";
 import { formatTime, plural, runDotClass, runStatusLabel } from "@/lib/format";
 import { icon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
-import type { Trace, TraceEvent, TraceToolCall } from "../../../ai/trace.ts";
+import type { Trace as AgentTrace, TraceEvent } from "../../../ai/trace.ts";
 import type { RunSummary } from "../../../workflow.ts";
 import { automationHref, runHref, tracesHref } from "../../route.ts";
 import { Message } from "./message.ts";
@@ -195,8 +211,8 @@ const traceDetailView = (model: Model, h: HtmlBuilder<Message>) =>
               [h.Class("flex items-center gap-2 text-sm text-destructive")],
               [icon(h, CircleAlert, "size-4"), `Couldn't load the trace: ${error}`],
             ),
-          Ready: ({ trace }) => traceView(source, trace, h),
-          Refreshing: ({ trace }) => traceView(source, trace, h),
+          Ready: ({ trace }) => traceView(source, trace, model.openEntries, h),
+          Refreshing: ({ trace }) => traceView(source, trace, model.openEntries, h),
         }),
       ],
     }),
@@ -226,9 +242,19 @@ const noSourceView = (h: HtmlBuilder<Message>) =>
   );
 
 const loadingView = (h: HtmlBuilder<Message>) =>
-  h.p(
-    [componentName("loading"), h.Class(cn(noteClass, "flex items-center gap-2"))],
-    [icon(h, LoaderCircle, "size-4 animate-spin"), "Loading trace…"],
+  Trace(
+    { attributes: [componentName("loading")] },
+    [
+      Trace.line(
+        { status: "running" },
+        [
+          Trace.icon({}, [icon(h, LoaderCircle, "size-4 animate-spin")], h),
+          Trace.title({}, ["Loading trace…"], h),
+        ],
+        h,
+      ),
+    ],
+    h,
   );
 
 const sourceTitle = (source: Source) =>
@@ -292,14 +318,19 @@ const traceHeaderView = (source: Source, trace: TraceState, h: HtmlBuilder<Messa
 
 type Answer = Extract<TraceEvent, { readonly _tag: "Answer" }>;
 
-const answersOf = (trace: Trace): ReadonlyArray<Answer> =>
+const answersOf = (trace: AgentTrace): ReadonlyArray<Answer> =>
   Array.filter(trace.events, (event): event is Answer => event._tag === "Answer");
 
 const tokens = (count: number) => count.toLocaleString("en-US");
 
 const costText = (cost: number) => (cost === 0 ? "" : ` · $${cost.toFixed(4)}`);
 
-const traceView = (source: Source, trace: Trace, h: HtmlBuilder<Message>) =>
+const traceView = (
+  source: Source,
+  trace: AgentTrace,
+  openEntries: ReadonlyArray<string>,
+  h: HtmlBuilder<Message>,
+) =>
   Array.match(trace.events, {
     onEmpty: () =>
       h.p(
@@ -323,15 +354,16 @@ const traceView = (source: Source, trace: Trace, h: HtmlBuilder<Message>) =>
                 ),
               ]
             : []),
-          h.ol(
-            [h.Class("flex flex-col gap-3")],
-            Array.map(events, (event) => eventView(event, h)),
+          Trace(
+            { attributes: [h.AriaLabel("Conversation")] },
+            Array.map(events, (event) => traceEventView(event, openEntries, h)),
+            h,
           ),
         ],
       ),
   });
 
-const traceSummaryView = (trace: Trace, h: HtmlBuilder<Message>) => {
+const traceSummaryView = (trace: AgentTrace, h: HtmlBuilder<Message>) => {
   const answers = answersOf(trace);
   const sum = (read: (answer: Answer) => number) =>
     Array.reduce(answers, 0, (total, answer) => total + read(answer));
@@ -352,38 +384,16 @@ const traceSummaryView = (trace: Trace, h: HtmlBuilder<Message>) => {
   );
 };
 
-const eventCardView = (
-  id: string,
-  tone: string,
-  children: ReadonlyArray<Html>,
-  h: HtmlBuilder<Message>,
-) =>
-  h.keyed("li")(
-    id,
-    [componentName("trace-event"), h.Class(cn(cardClass, "flex flex-col gap-2 px-4 py-3", tone))],
-    children,
-  );
-
-const eventHeadingView = (
-  label: string,
-  meta: ReadonlyArray<string>,
-  maybeAt: Option.Option<number>,
-  h: HtmlBuilder<Message>,
-) =>
-  h.div(
-    [h.Class("flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1")],
-    [
-      h.span([h.Class("text-xs font-semibold tracking-tight")], [label]),
-      h.span(
-        [h.Class(metaClass)],
-        [
-          [...meta, ...Option.match(maybeAt, { onNone: () => [], onSome: (at) => [timeText(at)] })]
-            .filter((part) => part !== "")
-            .join(" · "),
-        ],
-      ),
-    ],
-  );
+/** One line of the trace. With details, the line is a button that shows them beneath it. */
+type Entry = Readonly<{
+  id: string;
+  icon: IconNode;
+  title: string;
+  description: string;
+  status?: TraceStatus;
+  isCode?: boolean;
+  details: ReadonlyArray<Html>;
+}>;
 
 const timeText = (at: number) =>
   new Date(at).toLocaleTimeString("en-US", {
@@ -392,134 +402,175 @@ const timeText = (at: number) =>
     second: "2-digit",
   });
 
+const failedWhen = (isFailed: boolean): TraceStatus | undefined => (isFailed ? "error" : undefined);
+
+const preview = (text: string) => text.replace(/\s+/g, " ").trim();
+
 const textView = (text: string, h: HtmlBuilder<Message>) => h.pre([h.Class(preClass)], [text]);
 
-const disclosureView = (summary: string, text: string, h: HtmlBuilder<Message>) =>
-  h.details(
-    [componentName("trace-disclosure"), h.Class("group")],
-    [
-      h.summary(
-        [h.Class("cursor-pointer text-xs text-sand-11 select-none hover:text-foreground")],
-        [summary],
-      ),
-      h.pre([h.Class(cn(preClass, "mt-2"))], [text]),
-    ],
+const detailsMetaView = (parts: ReadonlyArray<string>, h: HtmlBuilder<Message>) =>
+  h.p([h.Class(metaClass)], [Array.filter(parts, (part) => part !== "").join(" · ")]);
+
+/** Each event's lines share one keyed wrapper that adds no box, so the trace spaces every line alike. */
+const traceEventView = (
+  event: TraceEvent,
+  openEntries: ReadonlyArray<string>,
+  h: HtmlBuilder<Message>,
+) =>
+  h.keyed("div")(
+    event.id,
+    [componentName("trace-event"), h.Class("contents")],
+    Array.map(entriesOf(event, h), (entry) => traceEntryView(entry, openEntries, h)),
   );
 
-const eventView = (event: TraceEvent, h: HtmlBuilder<Message>): Html =>
+const traceEntryView = (
+  entry: Entry,
+  openEntries: ReadonlyArray<string>,
+  h: HtmlBuilder<Message>,
+) => {
+  const line = (attributes: ReadonlyArray<Attribute<Message>>) =>
+    Trace.line(
+      { status: entry.status, attributes },
+      [
+        Trace.icon({}, [icon(h, entry.icon)], h),
+        Trace.title(
+          { className: entry.isCode ? "font-mono text-[12px]" : undefined },
+          [entry.title],
+          h,
+        ),
+        entry.description === "" ? h.empty : Trace.description({}, [entry.description], h),
+      ],
+      h,
+    );
+  return Array.match(entry.details, {
+    onEmpty: () => line([componentName("trace-entry")]),
+    onNonEmpty: (details) =>
+      Trace.collapsible(
+        {
+          id: `trace-entry-${entry.id}`,
+          isOpen: Array.contains(openEntries, entry.id),
+          onToggle: (isOpen) => Message.ToggledEntry({ id: entry.id, isOpen }),
+          contentClass: "flex flex-col gap-2",
+          attributes: [componentName("trace-entry")],
+        },
+        { trigger: [line([])], content: details },
+        h,
+      ),
+  });
+};
+
+const entriesOf = (event: TraceEvent, h: HtmlBuilder<Message>): ReadonlyArray<Entry> =>
   Match.value(event).pipe(
     Match.tagsExhaustive({
-      Instructions: ({ id, at, text, toolsAdded, toolsRemoved }) =>
-        eventCardView(
+      Instructions: ({ id, at, text, toolsAdded, toolsRemoved }) => [
+        {
           id,
-          "bg-sidebar shadow-none",
-          [
-            eventHeadingView(
-              "System prompt",
-              [
-                Array.isReadonlyArrayNonEmpty(toolsAdded) ? `+ ${toolsAdded.join(", ")}` : "",
-                Array.isReadonlyArrayNonEmpty(toolsRemoved) ? `− ${toolsRemoved.join(", ")}` : "",
-              ],
-              Option.some(at),
-              h,
-            ),
-            text === ""
-              ? h.empty
-              : disclosureView(
-                  `Instructions · ${plural(text.length, "character", "characters")}`,
-                  text,
-                  h,
-                ),
+          icon: ScrollText,
+          title: text === "" ? "Tools changed" : "System prompt",
+          description: timeText(at),
+          details: [
+            ...(Array.isReadonlyArrayNonEmpty(toolsAdded) ||
+            Array.isReadonlyArrayNonEmpty(toolsRemoved)
+              ? [
+                  detailsMetaView(
+                    [
+                      Array.isReadonlyArrayNonEmpty(toolsAdded)
+                        ? `Added ${toolsAdded.join(", ")}`
+                        : "",
+                      Array.isReadonlyArrayNonEmpty(toolsRemoved)
+                        ? `Removed ${toolsRemoved.join(", ")}`
+                        : "",
+                    ],
+                    h,
+                  ),
+                ]
+              : []),
+            ...(text === "" ? [] : [textView(text, h)]),
           ],
-          h,
-        ),
-      Prompt: ({ id, at, text }) =>
-        eventCardView(
+        },
+      ],
+      Prompt: ({ id, at, text }) => [
+        {
           id,
-          "",
-          [eventHeadingView("Prompt", [], Option.some(at), h), textView(text, h)],
-          h,
-        ),
-      Answer: (answer) => answerView(answer, h),
-      ToolResult: ({ id, at, toolName, toolCallId, text, isError }) =>
-        eventCardView(
+          icon: User,
+          title: preview(text),
+          description: timeText(at),
+          details: [textView(text, h)],
+        },
+      ],
+      Answer: (answer) => answerEntries(answer, h),
+      ToolResult: ({ id, at, toolName, toolCallId, text, isError }) => [
+        {
           id,
-          isError ? "ring-1 ring-destructive/40" : "",
-          [
-            eventHeadingView(
-              isError ? `${toolName} failed` : `${toolName} result`,
-              [toolCallId],
-              Option.some(at),
-              h,
-            ),
-            textView(text, h),
-          ],
-          h,
-        ),
-      Reset: ({ id, text }) => markerView(id, "Context reset", text, h),
-      Compaction: ({ id, text }) => markerView(id, "Earlier entries summarized", text, h),
+          icon: CornerDownRight,
+          title: `${toolName} ${isError ? "failed" : "returned"}: ${preview(text)}`,
+          description: timeText(at),
+          status: failedWhen(isError),
+          isCode: true,
+          details: [detailsMetaView([`Call ${toolCallId}`], h), textView(text, h)],
+        },
+      ],
+      Reset: ({ id, text }) => [
+        {
+          id,
+          icon: RotateCcw,
+          title: "Context reset",
+          description: "",
+          details: text === "" ? [] : [detailsMetaView(["Carried forward"], h), textView(text, h)],
+        },
+      ],
+      Compaction: ({ id, text }) => [
+        {
+          id,
+          icon: Layers,
+          title: "Earlier entries summarized",
+          description: "",
+          details: text === "" ? [] : [textView(text, h)],
+        },
+      ],
     }),
   );
 
-const markerView = (id: string, label: string, text: string, h: HtmlBuilder<Message>) =>
-  h.keyed("li")(
-    id,
-    [componentName("trace-marker"), h.Class("flex flex-col gap-2 py-1")],
-    [
-      h.div(
-        [h.Class("flex items-center gap-3")],
-        [
-          h.span([h.Class("h-px flex-1 bg-border")]),
-          h.span([h.Class(labelClass)], [label]),
-          h.span([h.Class("h-px flex-1 bg-border")]),
-        ],
-      ),
-      text === "" ? h.empty : disclosureView("Carried forward", text, h),
-    ],
-  );
-
-const answerView = (answer: Answer, h: HtmlBuilder<Message>) =>
-  eventCardView(
-    answer.id,
-    answer.error === undefined ? "" : "ring-1 ring-destructive/40",
-    [
-      eventHeadingView(
-        "Model response",
+/** A model response becomes its reasoning, its reply with the model and usage, and one line per tool call. */
+const answerEntries = (answer: Answer, h: HtmlBuilder<Message>): ReadonlyArray<Entry> => [
+  ...(answer.thinking === ""
+    ? []
+    : [
+        {
+          id: `${answer.id}/reasoning`,
+          icon: Brain,
+          title: "Reasoning",
+          description: plural(answer.thinking.length, "character", "characters"),
+          details: [textView(answer.thinking, h)],
+        },
+      ]),
+  {
+    id: `${answer.id}/reply`,
+    icon: Bot,
+    title: answer.text === "" ? "Model response" : preview(answer.text),
+    description: timeText(answer.at),
+    status: failedWhen(answer.error !== undefined),
+    details: [
+      detailsMetaView(
         [
           answer.model,
           answer.stopReason,
-          `${tokens(answer.usage.input)} in · ${tokens(answer.usage.output)} out${costText(answer.usage.cost)}`,
+          `${tokens(answer.usage.input)} in · ${tokens(answer.usage.output)} out · ${tokens(answer.usage.cacheRead)} cached${costText(answer.usage.cost)}`,
         ],
-        Option.some(answer.at),
         h,
       ),
-      answer.thinking === ""
-        ? h.empty
-        : disclosureView(
-            `Reasoning · ${plural(answer.thinking.length, "character", "characters")}`,
-            answer.thinking,
-            h,
-          ),
-      answer.text === "" ? h.empty : textView(answer.text, h),
-      ...Array.map(answer.toolCalls, (call) => toolCallView(call, h)),
-      answer.error === undefined
-        ? h.empty
-        : h.p([h.Class("text-xs text-destructive")], [answer.error]),
+      ...(answer.text === "" ? [] : [textView(answer.text, h)]),
+      ...(answer.error === undefined
+        ? []
+        : [h.p([h.Class("text-xs text-destructive")], [answer.error])]),
     ],
-    h,
-  );
-
-const toolCallView = (call: TraceToolCall, h: HtmlBuilder<Message>) =>
-  h.div(
-    [componentName("tool-call"), h.Class("flex flex-col gap-1.5 rounded-[8px] border px-3 py-2")],
-    [
-      h.div(
-        [h.Class("flex items-baseline justify-between gap-3")],
-        [
-          h.span([h.Class("font-mono text-[12px] font-medium")], [`${call.name}()`]),
-          h.span([h.Class(metaClass)], [call.id]),
-        ],
-      ),
-      h.pre([h.Class(preClass)], [call.arguments]),
-    ],
-  );
+  },
+  ...Array.map(answer.toolCalls, (call): Entry => ({
+    id: `${answer.id}/call/${call.id}`,
+    icon: Wrench,
+    title: `${call.name}(${preview(call.arguments)})`,
+    description: "",
+    isCode: true,
+    details: [detailsMetaView([`Call ${call.id}`], h), textView(call.arguments, h)],
+  })),
+];
