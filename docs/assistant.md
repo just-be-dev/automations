@@ -138,7 +138,7 @@ The browser polls `GET /api/assistant/:sessionId` every second while the status 
 - `draft_automation` hands design to the planner; see below.
 - `ask_question` is the shared [ask-question tool](../src/ai/ask-question/tool.ts): 1–4 questions with 2–4 options each, checked before anything is shown.
 
-The last three call `start` first. It stores `tool:<callId>` with the turn ID, or returns the receipt already stored for that call. A turn has at most one unfinished tool. The assistant uses these tools directly, not the entity MCP.
+The last three call `start` first. [The ledger](../src/assistant/ledger.ts), which owns the `assistant` record and the receipts, stores `tool:<callId>` with the turn ID, or returns the receipt already stored for that call. A turn has at most one unfinished tool. The assistant uses these tools directly, not the entity MCP.
 
 ## Questions and confirmations park the turn, not the object
 
@@ -176,6 +176,8 @@ A parking tool stores what it waits for in its receipt and in `AssistantState` (
 `confirm` and `answer` reject a call that is no longer current (`Stale confirmation`, `Stale proposal`, `Stale questions`, `Stale question call`). `answer` checks the answers with `answerProblem`. Each records the decision or answer and calls `jobs.reply` in one transaction. A second, different decision for the same proposal fails with `Decision already recorded`.
 
 After a restart, pi replays the unfinished call with the same ID and the tool returns the result stored in `tool:<callId>` instead of acting again. Free text is never approval: `chat` is refused while a turn is `confirming` or `asking`, so only the confirmation route decides a proposal. Answers to planner questions are not delivered through the hub; the next reply forwards them (see below).
+
+Receipts live in the object's storage, not in pi-durable, even though pi already stores each tool call's intent and replays it. pi only runs while something has it open, and nothing wakes it from outside: the `assistantReply` callback reopens it. So a decision or answer must commit in the same transaction as the reply job that acts on it, and pi commits through its own SQLite transaction, which can't take the job. A receipt is also what the confirmation and answer routes and the UI read, and what tells a replayed `draft_automation` which planner it already started. pi's durability covers the conversation; the receipts cover what the world outside pi has said to a waiting call. The planner keeps its questions and answers in `plan` for the same reason.
 
 ## Proposed changes go through the tenant's ChangeCoordinator
 

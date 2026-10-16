@@ -18,7 +18,8 @@ export const fixtureValue = <A>(value: A | undefined): A => {
   return value;
 };
 
-export const assistantFixture = Effect.gen(function* () {
+/** An in-memory host whose transactions roll back storage and scheduled jobs on failure. */
+export const memoryAssistantHost = () => {
   let data = new Map<string, unknown>();
   const jobs: Array<{ turnId: string; after?: number }> = [];
   const lock = Semaphore.makeUnsafe(1);
@@ -52,6 +53,11 @@ export const assistantFixture = Effect.gen(function* () {
     },
     jobs: { reply: (turnId, after) => Effect.sync(() => void jobs.push({ turnId, after })) },
   };
+  return { host, jobs };
+};
+
+export const assistantFixture = Effect.gen(function* () {
+  const { host, jobs } = memoryAssistantHost();
   const entities = yield* Effect.service(EntityStore).pipe(
     Effect.provide(
       layerMemory({
