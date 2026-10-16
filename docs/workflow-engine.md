@@ -1,13 +1,13 @@
 # Workflow engine
 
-Agents write a workflow, the DSL holds it, and an interpreter runs a saved snapshot of it. One `AutomationAgent` Durable Object per automation hosts the planner, the saved workflow, and the interpreter; only naming a new automation runs in the Api Worker. [The architecture overview](../ARCHITECTURE.md) explains how the parts fit together, and [the Workflow DSL reference](workflow-dsl.md) defines every field. This page shows how the parts connect.
+Agents write a workflow, the DSL holds it, and an interpreter runs a saved snapshot of it. One `AutomationAgent` Durable Object per automation hosts the planner, the saved workflow, and the interpreter. The studio agent ([the assistant](assistant.md)) hands each design request to it. [The architecture overview](../ARCHITECTURE.md) explains how the parts fit together, and [the Workflow DSL reference](workflow-dsl.md) defines every field. This page shows how the parts connect.
 
 ## Every hand-off is checked against the catalog
 
 ```diagram
 ┌───────────────────┐        ┌───────────────────┐        ┌───────────────────┐
 │ Generation        │        │ DSL               │        │ Execution         │
-│ namer titles it;  │ draft  │ Workflow: name,   │ saved  │ beginRun starts a │
+│ studio agent asks;│ draft  │ Workflow: name,   │ saved  │ beginRun starts a │
 │ planner edits a   │───────▶│ trigger, steps,   │───────▶│ run; the          │
 │ working copy      │        │ permissions       │        │ interpreter       │
 │ through pi tools  │        │                   │        │ replays its walk  │
@@ -23,7 +23,7 @@ Agents write a workflow, the DSL holds it, and an interpreter runs a saved snaps
                          └───────────────────────────┘
 ```
 
-[`checkWorkflow`](../src/workflow/catalog.ts) runs at four points: when the planner calls [`check_workflow`](../src/agents/planner/tools.ts), when [`planDraft`](../src/agents/planner/planner.ts) settles its answer, on [save](../src/automation/workflow-store.ts), and when [a run starts](../src/automation/runs.ts). The tool, save, and run start each read the current catalog, so a type, template, or role that changed since the last check is caught at the next one. `planDraft` checks against the catalog read when the reply started, the same one its instructions describe, and skips the check when the working copy didn't change.
+[`checkWorkflow`](../src/workflow/catalog.ts) runs at five points: when the planner calls [`check_workflow`](../src/agents/planner/tools.ts), when [`planDraft`](../src/agents/planner/planner.ts) settles its answer, when [`setDraft`](../src/automation/design-session.ts) replaces the draft (`PUT /:id/draft`), on [save](../src/automation/workflow-store.ts), and when [a run starts](../src/automation/runs.ts). The tool, `setDraft`, save, and run start each read the current catalog, so a type, template, or role that changed since the last check is caught at the next one. `planDraft` checks against the catalog read when the reply started, the same one its instructions describe, and skips the check when the working copy didn't change.
 
 ## Agents generate the workflow
 
@@ -31,19 +31,21 @@ Agents write a workflow, the DSL holds it, and an interpreter runs a saved snaps
 
 ```diagram
 ┌────────────────────────────────┐
-│ createAutomation               │ ◀── POST /api/automations
-│ nameAutomation: namer model,   │
-│ 5 s limit, else opening words  │
-│ listNewAutomation(name)        │
+│ studio agent: draft_automation │
+│ new: ID from its name,         │
+│ index.recordIfMissing          │
 └───────────────┬────────────────┘
-                │ chat(id, description)
+                │ Automations.chat(id, description,
+                │   <sessionId>:<receiptId>)
                 ▼
-┌────────────────────────────────┐ ◀── POST /:id/chat, or the
-│ chat: one transaction stores   │     assistant through
-│ pendingChat and schedules      │     Automations.chat
-│ planReply                      │
-└───────────────┬────────────────┘
-                │ planReply callback {automationId, chatId}
+┌────────────────────────────────┐ ◀── API clients: POST /:id/chat,
+│ chat: one transaction stores   │     or POST /api/automations
+│ pendingChat (+ chatRequest:    │     (createAutomation)
+│ <requestId>) and schedules     │
+│ planReply                      │ ◀── stopChat(chatId): pendingChat
+└───────────────┬────────────────┘     failed "Stopped", drop plan,
+                │ planReply callback   then abort pi
+                │ {automationId, chatId}
                 ▼
 ┌────────────────────────────────┐
 │ planning.start: "plan" holds   │
@@ -80,8 +82,9 @@ Agents write a workflow, the DSL holds it, and an interpreter runs a saved snaps
      AutomationIndex.record, best effort
 ```
 
-- [`createAutomation`](../src/automation/creation.ts) runs in the Api Worker. [`nameAutomation`](../src/agents/namer/namer.ts) never fails: a slow, failed, or empty answer falls back to the description's opening words. The description becomes the first chat message.
-- [`chat`](../src/automation/design-session.ts) only stores `pendingChat` and schedules `planReply`; while questions are open it answers them instead. The reply runs later in the object's alarm, so a reload mid-answer loses nothing.
+- The studio designs only through the studio agent. Its [`draft_automation`](../src/assistant/session.ts) tool names a new automation itself, derives the ID from the name with a random suffix, lists it with `recordIfMissing`, and sends the description as the first chat message. For API clients and the demo, [`createAutomation`](../src/automation/creation.ts) does the same in the Api Worker, named by [`nameAutomation`](../src/agents/namer/namer.ts), which never fails: a slow, failed, or empty answer falls back to the description's opening words. The namer otherwise only titles assistant threads.
+- [`chat`](../src/automation/design-session.ts) only stores `pendingChat` and schedules `planReply`; while questions are open it answers them instead. The reply runs later in the object's alarm, so a reload mid-answer loses nothing. A message is 1–10,000 characters, and one sent while another is still being answered is refused. With a request ID, which the studio agent always passes, the chat ID is that ID and the request is stored as `chatRequest:<requestId>` in the same transaction, so sending it again returns the same `pendingChat`.
+- `stop` (`stopChat`) ends a reply in storage first: one transaction marks `pendingChat` failed with `Stopped` and deletes `plan`. Only then does it abort pi, ignoring a failure, so a `planReply` delivered later finds nothing pending and writes nothing. The studio agent calls it when its turn is stopped, including a stop that lands while the message is still on its way.
 - [`planDraft`](../src/agents/planner/planner.ts) sets the instructions, generated from the catalog, as the root pi conversation's system prompt on every turn. pi resends them only when they change.
 - [The tools](../src/agents/planner/tools.ts) edit [the `Plan`](../src/agents/planner/plan.ts) stored under `plan`. Each step lives once in `stepsById`, and container steps name their children by ID. Every edit sets or replaces by ID, so a call pi reruns after a restart changes nothing more.
 - Settling compares the working copy with where it started (`samePlan`) before assembling it. `assemblePlan` reports missing, repeated, and unplaced steps before `decodeWorkflow` and `checkWorkflow` run. pi failures are not retried.
@@ -91,10 +94,10 @@ Agents write a workflow, the DSL holds it, and an interpreter runs a saved snaps
 ### Questions park the turn without holding the object
 
 ```diagram
-Studio        design-session.ts          planning.ts            pi root turn
+Caller        design-session.ts          planning.ts            pi root turn
                                          + AnswerHub              (planner)
   │                   │                       │                       │
-  │ POST /:id/chat    │                       │                       │
+  │ chat              │                       │                       │
   │──────────────────▶│                       │                       │
   │                   │ tx: pendingChat +     │                       │
   │                   │ planReply job         │                       │
@@ -114,10 +117,10 @@ Studio        design-session.ts          planning.ts            pi root turn
   │                   │◀──────────────────────│                       │
   │                   │ returns, writes       │                       │
   │                   │ nothing               │                       │
-  │ poll → asking     │                       │                       │
+  │ inspect → asking  │                       │                       │
   │◀──────────────────│                       │                       │
   │                   │                       │                       │
-  │ POST /:id/answers │                       │                       │
+  │ answer            │                       │                       │
   │──────────────────▶│                       │                       │
   │                   │ tx: recordAnswer +    │                       │
   │                   │ planReply job         │                       │
@@ -132,6 +135,8 @@ Studio        design-session.ts          planning.ts            pi root turn
   │                   │ settle → draft +      │                       │
   │                   │ exchange with asked   │                       │
 ```
+
+The caller is the studio agent, which reads the planner's questions with `inspectWorkflow`, asks them as its own, and passes the person's answers back with `answer`, all over Durable Object RPC. API clients do the same with `POST /:id/chat`, `GET /:id` and `POST /:id/answers`.
 
 [`ask_question`](../src/ai/ask-question/tool.ts) checks every question (`questionnaireProblems`) before showing any, then calls the host's `Ask`. [`planning.ts`](../src/automation/planning.ts) stores the questions in `plan` under pi's call ID and tells [`AnswerHub`](../src/ai/ask-question/answer-hub.ts) the turn has parked. `planReply` races the turn against that signal and returns without writing: callbacks run one at a time, and a parked turn may wait for days.
 
@@ -238,7 +243,7 @@ Answering stores the answer and schedules `planReply` in one transaction, then w
 
 ### Saving fixes what runs
 
-[`save`](../src/automation/workflow-store.ts) checks the draft and refuses a timed trigger that already matches more than 50 subjects. It stores `saved` and books or cancels the `tick` job in one transaction, subscribes the automation to its trigger's entity type, then updates the directory, best effort. Runs read only `saved`.
+[`save`](../src/automation/workflow-store.ts) checks the draft and refuses a timed trigger that already matches more than 50 subjects. It stores `saved`, the studio link (`studio`: the automation's ID and the studio origin the save came from, keeping the earlier origin when the save names none), and books or cancels the `tick` job in one transaction, subscribes the automation to its trigger's entity type, then updates the directory, best effort. Runs read only `saved`.
 
 ### AutomationAgent supplies storage, jobs, and models
 
@@ -250,7 +255,7 @@ Answering stores the answer and schedules `planReply` in one transaction, then w
 │   DurableObjectState · Workers AI · EntityStoreD1 ·              │
 │   AutomationIndexD1 · EventsQueue · SLACK_BOT_TOKEN ·            │
 │   STUDIO_URL · ALCHEMY_DEV, read only on a dev_ stage ·          │
-│   EMAIL_FROM → send_email binding (remote)                       │
+│   EMAIL_FROM, EMAIL_FROM_NAME → send_email binding (remote)      │
 │                                                                  │
 │ Instance                                                         │
 │   AutomationHost.storage → the object's storage, transactions    │
@@ -258,12 +263,14 @@ Answering stores the answer and schedules `planReply` in one transaction, then w
 │     planReply   job <chatId>                  at once            │
 │     advance     job <executionId>             at once            │
 │     clock       job <executionId>/<deferred>  at a time          │
-│     tick        job schedule                  at a time          │
+│     tick        job schedule                  at a time;         │
+│                 cancelTick drops it                              │
 │   AutomationHost.erase   → delete storage, jobs, alarm; reset    │
 │   planner tools + AnswerHub → openPiAgent(PLANNER_MODEL)         │
 │   Classifier (clef models)                                       │
 │   SlackSender · EmailSender, null without credentials            │
 │   LocalDevelopment, false unless ALCHEMY_DEV was read            │
+│   ConfiguredStudioOrigin, from STUDIO_URL, for task links        │
 │   makeAutomation() → operations, called over RPC                 │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -331,7 +338,7 @@ Answering stores the answer and schedules `planReply` in one transaction, then w
 └───────────────────────────────────────────────────────────────┘
 ```
 
-[`deliverEvent`](../src/events/delivery.ts) acknowledges a message only after every automation answers, and receipts make the redelivery harmless. Ignored events keep a receipt too, so a redelivery is never matched against a newer workflow. An `entity.put` past the chain limit, or whose data isn't an entity, can never apply: delivery logs a warning and acknowledges it without reaching any automation, instead of retrying it into the dead letters. Publishers refuse both first, and `events.emit` fails a step that would pass the 16-hop limit. [The consumer](../src/platform/cloudflare/api.ts) runs in the private Api Worker.
+[`deliverEvent`](../src/events/delivery.ts) offers the event to every automation and fails if any of them failed; the Api consumer then acknowledges the message or retries it, and receipts make the redelivery harmless. Ignored events keep a receipt too, so a redelivery is never matched against a newer workflow. An `entity.put` past the chain limit, or whose data isn't an entity, can never apply: delivery logs a warning and acknowledges it without reaching any automation, instead of retrying it into the dead letters. Publishers refuse both first, and `events.emit` fails a step that would pass the 16-hop limit. [The consumer](../src/platform/cloudflare/api.ts) runs in the private Api Worker.
 
 ### A replay walks the tree from the start
 
@@ -358,7 +365,9 @@ Answering stores the answer and schedules `planReply` in one transaction, then w
 │ human, ask-first action:      │      │ wakeAt the host              │
 │   request Activity + deferred │      │ Deferred missing: suspend    │
 │ if, match, parallel: plain    │      └──────────────────────────────┘
-│ code; stop: RunStopped        │
+│ code, Activity <id>/now when  │
+│ they read the time;           │
+│ stop: RunStopped              │
 └───────────────┬───────────────┘
                 │ Complete, stored as result, or Suspended
                 ▼
@@ -432,7 +441,7 @@ or person                               wf:<eid>: journal         + StepRunner
   │                     │                       │                       │ reuse results
   │                     │                       │ Activity <id>/request │
   │                     │                       │◀──────────────────────│
-  │                     │ requestHuman: open task, DM it on Slack       │
+  │                     │ requestHuman: open task, DM if notify: slack  │
   │                     │◀──────────────────────────────────────────────│
   │                     │                       │ await deferred <id>   │
   │                     │                       │◀──────────────────────│
@@ -470,7 +479,7 @@ Each `advance` reruns the walk from the first step, reusing what the journal hol
 
 In local development, `resumeNow` fires a waiting wait step's clock early by calling the same `clock` operation with the deferred `DurableClock/<id>`. Deferreds are first-write-wins, so the scheduled callback later finds it complete, writes nothing and schedules no `advance`. A run's `resumesAt` comes from the same journal: a `clock:<name>` whose deferred isn't stored yet.
 
-A human step with a `timeout` races its deferred against the clock `<id>/timeout` in `DurableDeferred.raceAll`, named `<id>/outcome` (journaled as `deferred:raceAll/<id>/outcome`). An ask-first action opens its task with `<id>/approval-request` and waits on `<id>/approval`. Opening a task, either way, also sends it as a Slack DM when the deployment has a bot token ([task notifications](../src/automation/task-notifications.ts)). That happens inside the request Activity, records each recipient on the task, and never fails the step. `respond` checks the answer against the task's field types, and, when the studio knows who answers, an approval against the role members the task recorded. An approval DM's **Approve** and **Reject** buttons reach `respond` too: the Api takes each click off its Slack actions queue and answers with the clicker's Slack email ([approving from Slack](slack.md#approving-from-slack)). `respond` takes one answer at a time and records the first as the task's `decision`. A `stop` step fails the execution with `RunStopped`, which interrupts every branch.
+A human step with a `timeout` races its deferred against the clock `<id>/timeout` in `DurableDeferred.raceAll`, named `<id>/outcome` (journaled as `deferred:raceAll/<id>/outcome`). An ask-first action opens its task with `<id>/approval-request` and waits on `<id>/approval`. When the deployment has a Slack bot token, opening a task also sends it as a DM ([task notifications](../src/automation/task-notifications.ts)): an approval to each member of its role, and a human step to its assignee only when the step says `notify: "slack"`. Email `notify` is recorded, never sent. That happens inside the request Activity, records each recipient on the task, and never fails the step. Only approval DMs carry buttons, and only once the studio link knows the automation's ID. An ask-first action whose role no longer exists fails the step. `respond` checks the answer against the task's field types, and, when the studio knows who answers, an approval against the role members the task recorded. An approval DM's **Approve** and **Reject** buttons reach `respond` too: the Api takes each click off its Slack actions queue and answers with the clicker's Slack email ([approving from Slack](slack.md#approving-from-slack)). `respond` takes one answer at a time and records the first as the task's `decision`. A rejected approval reports the step `declined` and records nothing, so the steps that need its record are skipped. A human step that times out records `timedOut: true` with its form's defaults; a timeout clock that fires after an answer changes nothing. A `stop` step fails the execution with `RunStopped`, which interrupts every branch.
 
 ### Three records describe one run
 

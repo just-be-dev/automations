@@ -28,14 +28,14 @@ The workflow format is described in [Workflow DSL](workflow-dsl.md). Agent instr
 
 ### Evals
 
-The tests script every model. The evals in `evals/` call the real ones, on Workers AI, to measure how well each LLM call does its job: the planner, the assistant, the namer and the thread namer, the progress classifier, agent steps, and decide steps. The calls run in an Evals Worker that `mise run eval` starts locally with `alchemy dev` on its own stage (`eval_$USER`), so Workers AI is reached through Alchemy's binding with the same Cloudflare profile as `mise run dev`, and no API token:
+The tests script every model. The evals in `evals/` call the real ones, through the AI binding (Workers AI, and Claude through AI Gateway), to measure how well each LLM call does its job: the planner, the assistant, the namer and the thread namer, the progress classifier, agent steps, and decide steps. The calls run in an Evals Worker that `mise run eval` starts locally with `alchemy dev` on its own stage (`eval_$USER`), so Workers AI is reached through Alchemy's binding with the same Cloudflare profile as `mise run dev`, and no API token:
 
 ```sh
 mise run eval                                                            # every eval
 mise run eval planner --case onboarding --trials 3                       # one eval, matching cases, three tries each
 mise run eval --list                                                     # the evals and their cases, without running them
 mise run eval -- --help                                                  # every flag (mise keeps a bare --help)
-EVAL_PLANNER_MODEL=@cf/… mise run eval planner agent assistant           # try another model for pi
+EVAL_PLANNER_MODEL=@cf/… mise run eval planner agent assistant           # try another model for pi (@cf/… or anthropic/<id>)
 mise run check                                                           # typecheck, lint, tests, format, then the evals
 ```
 
@@ -94,16 +94,17 @@ mise run demo:reset   # in another
 
 It works through the studio's own HTTP API, in this order:
 
-1. It deletes every automation with its draft, conversation, and runs. Runs in flight stop, and their pending jobs are cancelled.
-2. It restores the `employee` type, four people, the People Ops role, and the two welcome templates.
-3. It deletes every other entity, entity type, role, and template.
-4. It saves the fallback onboarding workflow as `first-week`.
+1. It deletes your assistant threads, erasing their conversations. They're the threads of `DEV_USER_EMAIL`, or of `local` without it, the same owner as your browser, so after a reload the panel's open thread is empty.
+2. It deletes every automation with its draft, conversation, and runs. Runs in flight stop, and their pending jobs are cancelled.
+3. It restores the `employee` type, four people, the People Ops role, and the two welcome templates.
+4. It deletes every other entity, entity type, role, and template.
+5. It saves the fallback onboarding workflow as `first-week`.
 
-Entity, type, and template writes are prepared and approved through `/api/changes`, so the studio validates them as it does a person's edit. Role writes are direct, as they are for everyone. Deleting automations first means none of these writes starts a run. A write that would change nothing is skipped, so running the reset twice leaves the same state. Ada starts on the first Monday at least two weeks after today, so the story never goes stale.
+Entity, type, and template writes are prepared and approved through `/api/changes`, so the studio validates them as it does a person's edit. Role writes are direct, as they are for everyone. Deleting threads first means no assistant turn drafts or proposes anything mid-reset, and deleting automations next means none of these writes starts a run. A write that would change nothing is skipped, so running the reset twice leaves the same state. Ada starts on the first Monday at least two weeks after today, so the story never goes stale.
 
 The people, role, and templates are in [`demo/seed.ts`](../demo/seed.ts). The type and templates match what the migrations seed, which a test checks. The fallback, [`demo/onboarding.json`](../demo/onboarding.json), is the storyboard's plan after its edit: it welcomes engineers in `#eng-team` instead of `#general`. If the live planner misbehaves on stage, open `/?automation=first-week` and run it on Ada. The reset prints that link.
 
-`mise run slides` opens the talk's slide deck, [`docs/demo/deck/index.html`](demo/deck/index.html), in the browser. It's one self-contained file, so it needs no server.
+`mise run slides` opens the talk's slide deck, [`docs/demo/deck/index.html`](demo/deck/index.html), in the browser. It's one self-contained file, so it needs no server. [`docs/demo/script.md`](demo/script.md) is the live part's script: what to say to the studio agent, and where to click.
 
 ### Demo addresses
 
@@ -263,6 +264,7 @@ Manage templates on the studio's **Templates** page (`/templates`), which also l
 | `POST /api/assistant/:sessionId/stop`                        | Stop the turn in progress, and the planner it handed design to                                                                                            |
 | `POST /api/assistant/:sessionId/clear`                       | Erase the thread's conversation in place                                                                                                                  |
 | `POST /api/assistant/:sessionId/archive`                     | Archive or restore the thread with `{ "archived": true }`; returns `{ "threads": [...] }`                                                                 |
+| `DELETE /api/assistant/:sessionId`                           | Erase the thread's conversation and take it out of your list; returns `{ "threads": [...] }`                                                              |
 
 Chat is asynchronous: `POST /chat` returns `202` with a `pendingChat`, and the reply and new draft appear on `GET /api/automations/:id` once `pendingChat` is gone. Until then the response includes `progress`, a plain phrase such as "Planning the steps…". If the agent fails, `pendingChat` stays with `status: "failed"` and an `error` until the next message. Each exchange in `conversation` has the `prompt`, the Markdown `reply`, and the questions the agent asked on the way with their answers (`asked`). When the reply edited an existing draft, `changes` lists the steps it added, changed (with each field's old value) or removed, and the name, trigger and permissions it changed. While the agent waits for answers, `pendingChat` has `status: "asking"` and its `questions`; until the reply is written, it also lists the questions already answered in `asked`. `POST /api/automations/:id/answers` with `{ "chatId", "answer": { "kind": "answers", "answers": ["…", null] } }` (one answer per question, `null` to skip) resumes it; a `POST /chat` meanwhile answers with `{ "kind": "message" }` instead.
 

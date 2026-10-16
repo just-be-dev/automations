@@ -19,7 +19,7 @@ import ChangeCoordinator, { changesLayer } from "./changes.ts";
 import { EntityStoreD1 } from "./entity-store-d1.ts";
 import { openPiAgent } from "./pi.ts";
 import { openPiStorage } from "./pi-storage.ts";
-import { PLANNER_MODEL, workersAiNamer } from "./workers-ai.ts";
+import { PLANNER_MODEL, PLANNER_THINKING_LEVEL, workersAiNamer } from "./workers-ai.ts";
 
 /** Why a cleared thread resets its instance. The RPC client recognizes the reset by it. */
 export const CLEARED = "Assistant thread cleared";
@@ -97,6 +97,7 @@ export default class StudioAssistant extends Cloudflare.DurableObject<StudioAssi
             storage: () => openPiStorage(state.raw.storage),
             ai: aiBinding,
             model: PLANNER_MODEL,
+            thinkingLevel: PLANNER_THINKING_LEVEL,
             tools: session.tools,
           });
           return { session, pi };

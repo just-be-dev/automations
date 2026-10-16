@@ -60,7 +60,10 @@ const setAnswer = (questionnaire: Questionnaire, index: number, answer: Answer):
       Array.map(answers, (current, position) => (position === index ? answer : current)),
   });
 
-/** Picks an option: the only one on a single-choice question, one more (or one fewer) otherwise. */
+/**
+ * Toggles an option: on a single-choice question it replaces the choice, or clears it when it was
+ * already the choice; otherwise it adds or removes one more.
+ */
 export const choose = (
   questionnaire: Questionnaire,
   question: Question,
@@ -68,8 +71,15 @@ export const choose = (
   label: string,
 ): Questionnaire => {
   const current = answerAt(questionnaire, index);
-  if (question.multiSelect !== true || !Answer.guards.Chose(current)) {
+  if (!Answer.guards.Chose(current)) {
     return setAnswer(questionnaire, index, Answer.Chose({ labels: [label] }));
+  }
+  if (question.multiSelect !== true) {
+    return setAnswer(
+      questionnaire,
+      index,
+      isChosen(current, label) ? Answer.Unanswered() : Answer.Chose({ labels: [label] }),
+    );
   }
   const kept = Array.filter(current.labels, (chosen) => chosen !== label);
   const labels = Array.length(kept) === Array.length(current.labels) ? [...kept, label] : kept;

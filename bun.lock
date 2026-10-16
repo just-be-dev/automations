@@ -44,6 +44,7 @@
     },
   },
   "patchedDependencies": {
+    "@earendil-works/pi-ai@1.0.4": "patches/@earendil-works%2Fpi-ai@1.0.4.patch",
     "@foldkit/devtools-mcp@0.24.1": "patches/@foldkit%2Fdevtools-mcp@0.24.1.patch",
     "@foldkit/vite-plugin@0.27.1": "patches/@foldkit%2Fvite-plugin@0.27.1.patch",
   },

@@ -46,6 +46,11 @@ export default defineEval({
       value: Expected,
       check: (expected) => (output) => expectMatch(output.drafted, expected, "drafted automations"),
     },
+    /** How many different automations it handed drafts to; following up on one counts once. */
+    automations: {
+      value: Schema.Int,
+      check: (count) => (output) => expect(new Set(output.drafted).size).toBe(count),
+    },
     /** The operations the drafted workflows use. */
     operationsUsed: {
       value: Expected,

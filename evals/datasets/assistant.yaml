@@ -80,3 +80,20 @@ cases:
         drafted: [{ $matches: "/^(?!welcome-new-hires$)[a-z0-9-]+$/" }]
       doesn't change entities or templates:
         changes: []
+
+  # The request that once failed: the planner wrote its questions in its reply and drafted
+  # nothing, and the assistant reported a failure instead of relaying them. Whether the planner
+  # drafts or only asks, the hand-off completes.
+  onboarding-asks-before-drafting:
+    input:
+      message: >-
+        When someone new joins, welcome them on Slack, send them our welcome email, and book thirty
+        minutes with their manager. After three days, check-in on them and see how it's going.
+      approve: true
+      context: { pathname: / }
+    checks:
+      # It may follow up on the planner's questions, in the same automation.
+      creates one new automation:
+        automations: 1
+      the hand-off completes:
+        activities: { status: completed, atLeast: 1 }

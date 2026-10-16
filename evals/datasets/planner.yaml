@@ -265,6 +265,28 @@ cases:
       finds times on its own:
         permissions: { $includes: { calendar.findTimes: auto } }
 
+  # Has choices for the person (who hears at the check-in, whether People Ops approves). The
+  # planner once wrote them as questions in its reply and drafted nothing; it must ask with
+  # ask_question, which nobody answers here, and then draft with what it recommended.
+  asks-before-drafting:
+    input:
+      message: >-
+        When someone new joins, welcome them on Slack, send them our welcome email, and book thirty
+        minutes with their manager. After three days, check-in on them and see how it's going.
+    checks:
+      drafts a workflow: { drafts: true }
+      starts when an employee is added:
+        trigger:
+          $oneOf:
+            - { $includes: { kind: entity, entity: employee } }
+            - { $includes: { kind: event, event: entity.created, subject: employee } }
+      waits three days:
+        steps:
+          kind: wait
+          mentions: { $matches: "/3 days|72 hours/" }
+      books the meeting:
+        steps: { use: calendar.createEvent }
+
   just-a-question:
     input:
       draft: *heads-up

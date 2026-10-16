@@ -27,6 +27,7 @@ const touch = `INSERT INTO assistant_threads (owner, id, title, created_at, upda
   ON CONFLICT (owner, id) DO UPDATE SET updated_at = excluded.updated_at, archived = 0`;
 const rename = "UPDATE assistant_threads SET title = ? WHERE owner = ? AND id = ?";
 const archive = "UPDATE assistant_threads SET archived = ? WHERE owner = ? AND id = ?";
+const remove = "DELETE FROM assistant_threads WHERE owner = ? AND id = ?";
 const list = `SELECT id, title, created_at, updated_at, archived FROM assistant_threads
   WHERE owner = ? ORDER BY updated_at DESC`;
 
@@ -72,6 +73,9 @@ export const AssistantThreadsD1 = Effect.gen(function* () {
               .bind(archived ? 1 : 0, owner, id)
               .run(),
           );
+        }),
+        remove: Effect.fn("AssistantThreads.remove")(function* (owner: string, id: string) {
+          yield* operation("remove", db.prepare(remove).bind(owner, id).run());
         }),
         list: Effect.fn("AssistantThreads.list")(function* (owner: string) {
           const result = yield* operation("list", db.prepare(list).bind(owner).all());

@@ -565,13 +565,13 @@ An approval task's DM has **Approve** and **Reject** buttons. [The interactivity
 - [`src/ai/pi.ts`](src/ai/pi.ts) defines the `PiAgent` conversation contract and tools; [`trace.ts`](src/ai/trace.ts) defines traces. The Cloudflare implementation wraps Promise-based pi-ai and pi-durable in Effect and stores conversations in Durable Object SQLite. [`src/ai/classifier.ts`](src/ai/classifier.ts) defines the clef classifier that picks progress phrases and makes decide steps' decisions. [`workers-ai.ts`](src/platform/cloudflare/workers-ai.ts) selects the pi, classifier and naming models; evals reuse it.
 - [`src/http/entity-mcp.ts`](src/http/entity-mcp.ts) exposes the entity store over stateless MCP JSON-RPC. Handlers run within the request so they retain access to D1; the assistant uses application tools directly, not MCP.
 
-| Use                                 | Model                                                |
-| ----------------------------------- | ---------------------------------------------------- |
-| Planner, assistant, agent steps     | `@cf/moonshotai/kimi-k2.7-code`                      |
-| Progress phrases                    | `@cf/cloudflare/clef-flash`                          |
-| Decide steps, by the step's `model` | `@cf/cloudflare/clef-flash` or `@cf/cloudflare/clef` |
-| Naming automations and threads      | `@cf/meta/llama-3.1-8b-instruct-fp8`                 |
-| Dictation                           | `@cf/deepgram/nova-3`                                |
+| Use                                 | Model                                                                       |
+| ----------------------------------- | --------------------------------------------------------------------------- |
+| Planner, assistant, agent steps     | `claude-sonnet-5-5` at medium thinking, through AI Gateway `default` (BYOK) |
+| Progress phrases                    | `@cf/cloudflare/clef-flash`                                                 |
+| Decide steps, by the step's `model` | `@cf/cloudflare/clef-flash` or `@cf/cloudflare/clef`                        |
+| Naming automations and threads      | `@cf/meta/llama-3.1-8b-instruct-fp8`                                        |
+| Dictation                           | `@cf/deepgram/nova-3`                                                       |
 
 ## Browser state and server state have separate lifecycles
 

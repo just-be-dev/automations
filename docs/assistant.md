@@ -58,8 +58,9 @@ A thread is a session: the browser keeps the open thread's UUID v4 under `studio
 | `POST /api/assistant/:sessionId/stop`         |                            | `stop`                  |
 | `POST /api/assistant/:sessionId/clear`        |                            | `clear`                 |
 | `POST /api/assistant/:sessionId/archive`      | `{ archived }`             | `archiveThread`         |
+| `DELETE /api/assistant/:sessionId`            |                            | `deleteThread`          |
 
-`GET /api/assistant` and `archive` return `{ threads }`, the owner's threads with archived ones included, most recently used first. The other routes return the session's `AssistantState` ([`model.ts`](../src/assistant/model.ts)). [`assistantsLayer`](../src/platform/cloudflare/assistant.ts) names the object `JSON.stringify([owner, sessionId])`. The object accepts only a UUID v4. The first call stores that pair under `identity`; a call with another pair fails with `Session identity mismatch`, and [`makeAssistantSession`](../src/assistant/session.ts) checks the pair again against the stored `assistant` record.
+`GET /api/assistant`, `archive` and `DELETE` return `{ threads }`, the owner's threads with archived ones included, most recently used first. The other routes return the session's `AssistantState` ([`model.ts`](../src/assistant/model.ts)). [`assistantsLayer`](../src/platform/cloudflare/assistant.ts) names the object `JSON.stringify([owner, sessionId])`. The object accepts only a UUID v4. The first call stores that pair under `identity`; a call with another pair fails with `Session identity mismatch`, and [`makeAssistantSession`](../src/assistant/session.ts) checks the pair again against the stored `assistant` record.
 
 The object's outer Effect binds Workers AI, the `Automation` and `ChangeCoordinator` namespaces, and the D1 adapters, the thread directory's among them. Its instance builds the session and opens pi once (`Effect.cached`), installing the session's tools before pi resumes, so a turn interrupted mid-call keeps them. [pi-durable](../src/platform/cloudflare/pi.ts) keeps the conversation in `pi_*` tables of the same SQLite database ([`pi-storage.ts`](../src/platform/cloudflare/pi-storage.ts)) and calls `PLANNER_MODEL` from [`workers-ai.ts`](../src/platform/cloudflare/workers-ai.ts). No route reads the assistant's transcript; the traces page shows automation traces only.
 
@@ -293,7 +294,7 @@ It submits the description with `Automations.get(id).chat(id, description, "<ses
 
 The assistant follows the planner by polling: while `pendingChat` is `working`, each reply schedules the next one a second later. When the planner asks, the assistant mirrors its questions under a `plannerCall` ID and a signature of the questions. The person's answer is stored on the draft receipt, and the next reply forwards it with `client.answer` only if the planner still asks the same questions.
 
-When `pendingChat` clears or reports `failed`, the receipt completes with the draft and the planner's reply (`plannerReply`), which the assistant relays, or fails if the planner failed or left no draft. A pending chat with another ID means the planner turn was replaced, and the receipt fails. The activity links to `/?automation=<id>`; saving the draft is left to the person. The studio page has no chat of its own: while the planner works it shows the planner's progress phrase above the draft, and the assistant relays its questions.
+When `pendingChat` clears or reports `failed`, the receipt completes with the draft and the planner's reply (`plannerReply`), which the assistant relays, or fails if the planner failed or left neither a draft nor a reply. A planner that replied without drafting, such as with questions written in its reply, completes the receipt with no draft; the assistant relays the reply and sends the person's answer to the same automation. A pending chat with another ID means the planner turn was replaced, and the receipt fails. The activity links to `/?automation=<id>`; saving the draft is left to the person. The studio page has no chat of its own: while the planner works it shows the planner's progress phrase above the draft, and the assistant relays its questions.
 
 ## Threads are listed in D1 and named by a fast model
 
@@ -313,6 +314,8 @@ Cloudflare can't list Durable Objects, so the `assistant_threads` table ([migrat
 `chat` touches the thread after its transaction commits. `deliverReply` names an untitled thread from its first message alongside the reply, with [`nameThread`](../src/agents/namer/namer.ts): the same fast model and cleanup as automation names, asked for the conversation's subject rather than its request. It never fails the reply; a slow or failed answer falls back to the message's opening words. The title is stored only if the thread is still untitled and still starts with that message, then copied to the directory.
 
 Archiving only sets a flag, so an archived thread still opens and answers; sending it a message takes it out of the archive. The panel moves on to a new thread when the person archives the open one.
+
+Deleting, which only the API and `mise run demo:reset` offer, clears the thread as **Clear thread** does and then removes its row. It clears first, so a failed erase leaves the thread listed for another try. A later message to the same ID starts the thread over and lists it again.
 
 ## Stopping ends the turn before aborting anything
 

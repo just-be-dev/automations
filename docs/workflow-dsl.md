@@ -139,13 +139,14 @@ Rules for the whole tree:
 - Steps nest at most 4 levels deep.
 - Step IDs (`[a-zA-Z0-9_-]{1,40}`) are unique across the whole tree.
 
-Decoding checks the shape. Before a draft is accepted, on save, and again when a run starts, `checkWorkflow` checks it against the catalog: the entity types and templates in the store, and the connections.
+Decoding checks the shape. Before a draft is accepted (from the planner or `PUT /api/automations/:id/draft`), on save, and again when a run starts, `checkWorkflow` checks it against the catalog: the entity types and templates in the store, and the connections.
 
 - Every ref starts at the subject's type or at `steps`, or at `event` in an event-triggered workflow. Entity and step fields are checked; event payloads are arbitrary JSON.
 - A step only reads steps that finish before it on every path. Steps inside a `parallel` step's branches are readable after the `parallel` step. Steps inside an `if` or `decide` branch are readable only later in that same branch, because the branch may not run.
 - Action steps name a known operation. On every path through their `match`, each input comes from exactly one place (`with`, a template, or the case), every required input is there, and no unknown ones are. `people` inputs are lists, `person` inputs point at an entity with a text field named `email` (or at that field) or are an email address, and `url` inputs are literal public HTTPS URLs.
 - Templates exist and still check against the entity types, every slot is filled, and an entity slot gets exactly one `{{ref}}` to an entity of its type. A template only fills `text` inputs.
 - A human step's `assignee` is a person.
+- The trigger names a known entity type, an entity trigger's `fields` exist on it, and a trigger's `when` reads the subject or the event, never `steps`. A `when` needs an entity type to read, so a `schedule` with `when` also names its `entity`.
 
 The planner can check its working copy with `check_workflow` while it works. When it answers, every problem left goes back to it and it retries once.
 
@@ -173,7 +174,7 @@ Saving the automation subscribes it to the type in the entity store. Confirmed e
 
 Starts when a named event arrives. Names are lowercase, start with a letter, and contain letters, digits, dots, underscores or hyphens (at most 120 characters). `when` is optional and can read the event payload. An optional `subject: "employee"` requires the event to carry an employee snapshot, makes it the run's subject, and allows `employee.…` refs. Without `subject`, the run has none, even if the event carries an entity.
 
-The Run button also allows a targeted manual invocation with supplied JSON event data and, when required, an entity picked as its subject. `POST /api/automations/:id/start` accepts `{ "event": { "data": <any JSON value> }, "subject": "<entity id>" }` (omit `subject` when not required). The server uses the saved trigger's event name, generates a fresh event ID at depth 0, and snapshots the selected entity. The saved `when` condition must hold; a mismatch returns an error. This input event is **not published**, so it starts only this automation and never applies an `entity.put` command by itself. The workflow's normal actions still execute, including any event publications or entity commands they emit. Each invocation creates a separate run; it does not use delivery receipts.
+The Run button also starts it by hand, which needs event data and, when the trigger has a `subject`, an entity picked as its subject. `POST /api/automations/:id/start` accepts `{ "event": { "data": <any JSON value> }, "subject": "<entity id>" }` (omit `subject` when not required). Event data is required here, and refused for every other trigger kind. The server uses the saved trigger's event name, generates a fresh event ID at depth 0, and snapshots the selected entity. The saved `when` condition must hold; a mismatch returns an error. This input event is **not published**, so it starts only this automation and never applies an `entity.put` command by itself. The workflow's normal actions still execute, including any event publications or entity commands they emit. Each invocation creates a separate run; it does not use delivery receipts.
 
 Every event has `{id, name, data, subject?, depth}`. `data` is any JSON value. Runs retain the original event and subject snapshots across replay. Each automation remembers both started and ignored event IDs, so redelivery does not re-evaluate a previously delivered event against a newer workflow. Delivery is asynchronous and at least once, not ordered; it matches the saved workflow present on first delivery.
 
@@ -211,7 +212,7 @@ Without `entity`, each occurrence starts one run with no subject, and refs can o
 
 `"now"` in `when` is the occurrence's time. One occurrence may start at most 50 runs. Nothing is skipped quietly: saving fails if more than 50 entities match when you save, and an occurrence that matches more starts none of them and records a failed run (`scheduled-<millis>`) that says how many matched, so the overview shows it. Narrow `when` so fewer match.
 
-Saving the automation books its next occurrence as a durable job, in the same storage transaction as the snapshot, and saving a trigger that isn't timed cancels it. Each occurrence starts its runs and then books the next one. Its run IDs are fixed by its time and subject (`scheduled-<millis>` or `scheduled-<millis>-<entity id>`), so a redelivered occurrence doesn't start them twice. An occurrence that fires late still starts its runs once, then books the next one after the current time, so missed occurrences are skipped, not started together. `GET /api/overview` reports when a schedule next runs as `saved.nextRunAt`. A scheduled automation can still be started by hand.
+Saving the automation books its next occurrence as a durable job, in the same storage transaction as the snapshot, and saving a trigger that isn't timed cancels it. Each occurrence starts its runs and then books the next one. Its run IDs are fixed by its time and subject (`scheduled-<millis>` or `scheduled-<millis>-<entity id>`), so a redelivered occurrence doesn't start them twice. An occurrence that fires late still starts its runs once, then books the next one after the current time, so missed occurrences are skipped, not started together. `GET /api/overview` reports when a schedule next runs as `saved.nextRunAt`; date triggers report none. A scheduled automation can still be started by hand.
 
 ### `date`
 
@@ -242,7 +243,7 @@ Started from the studio or `POST /api/automations/:id/start`. With `subject`, th
 
 ## Entities
 
-An entity type has a `name` and `label`, a `title` field that names an entity when it's shown as text, and fields. Field types are `text`, `number`, `boolean`, `date` (`YYYY-MM-DD`), `datetime`, `email`, and `ref`, which holds another entity's ID and names its type in `to`:
+An entity type has a `name` and `label`, a `title` field that names an entity when it's shown as text, and fields. A person is an entity whose type has a text field named `email`. Field types are `text`, `number`, `boolean`, `date` (`YYYY-MM-DD`), `datetime`, and `ref`, which holds another entity's ID and names its type in `to`:
 
 ```json
 {
@@ -261,13 +262,15 @@ An entity type has a `name` and `label`, a `title` field that names an entity wh
 
 `migrations/0002_entities.sql` creates this type and two employees: `grace`, and `ada`, who reports to Grace and has no start date yet.
 
-| Endpoint                        | Purpose                                                                                                      |
-| ------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `GET /api/entities/types`       | List entity types                                                                                            |
-| `PUT /api/entities/types/:type` | Create or replace a type                                                                                     |
-| `GET /api/entities/:type`       | List a type's entities                                                                                       |
-| `GET /api/entities/:type/:id`   | Read one entity                                                                                              |
-| `PUT /api/entities/:type/:id`   | Merge `{ "data": { … } }` over the entity, check it against its type, and start the runs its change triggers |
+| Endpoint                         | Purpose                                                                                                          |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `GET /api/entities/types`        | List entity types                                                                                                |
+| `GET /api/entities/:type`        | List a type's entities                                                                                           |
+| `GET /api/entities/:type/:id`    | Read one entity                                                                                                  |
+| `POST /api/changes`              | Prepare a change: `{ "action": { "kind": "putType", "type": … } }`, `deleteType`, `putEntity`, or `deleteEntity` |
+| `POST /api/changes/:id/decision` | Confirm or cancel the prepared change with `{ "approved": true }` or `false`                                     |
+
+Entity writes are proposals: preparing one writes nothing, and confirming it applies it. `putEntity` (`{ "kind": "putEntity", "type", "id", "data" }`) merges `data` over the entity, checks it against its type, and starts the runs its change triggers. The assistant and the MCP server propose changes the same way.
 
 ### Roles
 
@@ -281,7 +284,7 @@ A role is a named group of people who approve the operations a workflow [asks fi
 }
 ```
 
-`migrations/0004_roles.sql` creates this role. `GET /api/roles` lists roles, and `PUT /api/roles/:name` creates or replaces one once every member exists and has an email: its type has a text field named `email`, and it's set. The MCP server's `list_roles` and `define_role` tools do the same.
+`migrations/0004_roles.sql` creates this role. `GET /api/roles` lists roles, `DELETE /api/roles/:name` deletes one, and `PUT /api/roles/:name` creates or replaces one once every member exists and has an email: its type has a text field named `email`, and it's set. The MCP server's `list_roles` and `define_role` tools do the same.
 
 The store keeps members able to approve. It refuses to delete an entity a role lists, to clear a member's email, to redefine a member's type without an `email` field, and to delete a type a role has members of. Take the member out of the role first. An approval task already open keeps the members it was opened with.
 
@@ -308,7 +311,9 @@ Every step has an `id`, a `title` (non-blank, at most 120 characters), and a `ki
 {
   "kind": "agent",
   "instruction": "...",
-  "output": { "fields": [{ "name": "start", "type": "datetime", "description": "..." }] }
+  "output": {
+    "fields": [{ "name": "start", "type": "datetime", "description": "..." }]
+  }
 }
 ```
 
@@ -369,10 +374,10 @@ Pauses the run until a person responds.
 - `prompt` is up to 4000 characters.
 - `assignee` is a ref to a person: an entity with a text field named `email`. The schema allows leaving it out, but the planner is told to always set it.
 - `notify` (`slack` or `email`) names the channel to reach the assignee on. With [Slack connected](slack.md#task-messages), `slack` sends the assignee a DM, found by their `email`, that says what's needed and links to the run in the studio. Otherwise it is only recorded, and `email` is always only recorded, even when Email is connected.
-- `response` is `"approval"` (approve or reject), or a form of at least one field. Field types are `text`, `number`, `boolean`, `date`, and `datetime`, and a field's `default` is a template that prefills the answer.
+- `response` is `"approval"` (approve or reject), or a form of at least one field. Field types are `text`, `number`, `boolean`, `date`, and `datetime`, and a field's `default` is a template string that prefills the answer.
 - `timeout` is an optional duration. When it passes first, the step finishes with `timedOut: true`, and a form keeps its defaults, so a proposal nobody objects to goes ahead.
 
-Open requests appear on the run as tasks. A task records each DM it sent under `notifications`: `{ "via": "slack", "to": email, "name", "status": "sending" | "sent" | "failed", "channel"?, "ts"?, "error"? }`. `POST /api/automations/:id/runs/:runId/tasks/:stepId` answers one with `{ "approved": boolean }` or `{ "values": { field: value } }`, checked against the field types.
+Open requests appear on the run as tasks. A task records each DM it sent under `notifications`: `{ "via": "slack", "to": email, "name", "status": "sending" | "sent" | "failed", "channel"?, "ts"?, "error"? }`. `POST /api/automations/:id/runs/:runId/tasks/:stepId` answers one with `{ "approved": boolean }` or `{ "values": { field: value } }`, with a value for every field, checked against the field types.
 
 It records `{ "approved"?: boolean, "values"?: { field: JSON }, "respondedBy"?: string, "timedOut": boolean }`.
 
@@ -428,7 +433,9 @@ An action can also take inputs from a [template](#templates) with `template: { "
         }
       }
     ],
-    "otherwise": { "template": { "use": "welcome_email", "with": { "hire": "{{employee}}" } } }
+    "otherwise": {
+      "template": { "use": "welcome_email", "with": { "hire": "{{employee}}" } }
+    }
   }
 }
 ```
@@ -444,10 +451,10 @@ An action can also take inputs from a [template](#templates) with `template: { "
 | `slack.sendMessage`    | `to` (a person, or a channel such as `#team`), `text`                                | `channel`, `ts`                          |
 | `calendar.findTimes`   | `attendees` people, `after` datetime, `duration`                                     | `times`, a few open start times          |
 | `calendar.createEvent` | `title`, `attendees` people, `start` datetime, `duration`, `description?`, `repeat?` | `eventId`, `start`                       |
-| `http.post`            | `url` (literal), `body?` JSON                                                        | `status`, `body` (up to 4000 characters) |
+| `http.post`            | `url` (literal), `body?`                                                             | `status`, `body` (up to 4000 characters) |
 | `events.emit`          | `name`, `data` JSON text or one exact `{{ref}}`                                      | `eventId`, `name`                        |
 
-Calendar is **simulated**: there are no credentials yet, so its operations contact nothing. They succeed and record what they would have sent, with `simulated: true`. Email and Slack are simulated the same way unless the deployment connects them. With a sender address ([setup](email.md)), `email.send` sends a plain-text email through Cloudflare Email Service and records its `messageId`, delivered at least once. With a bot token ([setup](slack.md)), `slack.sendMessage` posts and records Slack's `channel` ID and `ts`, delivered at least once. Simulated IDs derive from the step's idempotency key. `calendar.findTimes` offers weekday slots at 10:00 and 14:00 UTC.
+Calendar is **simulated**: there are no credentials yet, so its operations contact nothing. They succeed and record what they would have sent, with `simulated: true`. Email and Slack are simulated the same way unless the deployment connects them. With a sender address ([setup](email.md)), `email.send` sends a plain-text email through Cloudflare Email Service and records its `messageId`, delivered at least once. With a bot token ([setup](slack.md)), `slack.sendMessage` posts and records Slack's `channel` ID and `ts`, delivered at least once. Simulated email and calendar IDs derive from the step's idempotency key; a simulated Slack `ts` is the time it was recorded. `calendar.findTimes` offers weekday slots at 10:00 and 14:00 UTC.
 
 ### Publishing events and entity commands
 
@@ -476,12 +483,12 @@ Event chains carry a depth from 0 to 16. Publication increments it; an entity co
 
 `permissions` maps each operation the workflow uses to `"auto"` (the run performs it on its own) or `{ "ask": "<role>" }` (each run waits until a member of that [role](#roles) approves it). The studio shows them as allow and ask first, with the role beside it. The planner sets one for every operation, and reads the current ones with the draft on every turn. The person can change any of them in the studio, or with `POST /api/automations/:id/permissions` and `{ "permissions": { "email.send": { "ask": "people_ops" } } }`, which merges into the draft. The planner's edits start from the draft's permissions, and a permission the person sets for another operation while the planner works is kept. `checkWorkflow` rejects a workflow that leaves an operation it uses without a permission, names an unknown operation, or asks an unknown role. Runs follow the saved copy.
 
-When an action asks first, the run resolves its inputs and opens an approval task that shows the operation, those inputs, the template they came from, and the role with its members at that moment. With [Slack connected](slack.md#task-messages), each member gets a DM with the same details and a link to the run. The step waits as `waiting`. Answer it like a human step's task with `{ "approved": boolean }`. When the studio knows who is answering (Cloudflare Access's authenticated email, on deployed stages), only the role's members may answer, and the answer records them as `respondedBy`. Under `alchemy dev` there's no Access, so anyone can answer unless `DEV_USER_EMAIL` names who you are locally. The run shows who approved, by the name the role gave them, and when. Approving performs the operation with the inputs shown. Declining marks the step `declined`, and it records nothing. Every later step that reads its record is then `skipped`, as are the steps that read theirs; the rest of the run carries on. Use a [`stop`](#stop) step to end the run instead. A human step's `notify` doesn't ask.
+When an action asks first, the run resolves its inputs and opens an approval task that shows the operation, those inputs, the template they came from, and the role with its members at that moment. With [Slack connected](slack.md#task-messages), each member gets a DM with the same details, a link to the run, and **Approve** and **Reject** buttons ([approving from Slack](slack.md#approving-from-slack)). The step waits as `waiting`. Answer it like a human step's task with `{ "approved": boolean }`. When the studio knows who is answering (Cloudflare Access's authenticated email, on deployed stages), only the role's members may answer, and the answer records them as `respondedBy`. Under `alchemy dev` there's no Access, so anyone can answer unless `DEV_USER_EMAIL` names who you are locally. The run shows who approved, by the member entity's title, and when. Approving performs the operation with the inputs shown. Declining marks the step `declined`, and it records nothing. Every later step that reads its record is then `skipped`, as are the steps that read theirs; the rest of the run carries on. Use a [`stop`](#stop) step to end the run instead. A human step's `notify` doesn't ask.
 
 `http.post` really sends:
 
 - This is the SSRF boundary. The URL must be HTTPS, carry no username or password, and not target `localhost`, `127.*`, `10.*`, `192.168.*`, `169.254.*`, or `172.16–31.*`. It's checked when the workflow is checked and again before sending.
-- Without `body`, it sends `{ "subject", "steps" }`.
+- Without `body`, it sends `{ "subject", "steps" }`. A `body` that is exactly one `{{ref}}` sends that value as JSON; any other `body` is rendered and sent as a JSON string, not parsed.
 - Delivery is at least once. Every request carries an `Idempotency-Key` header that stays the same across retries, so receivers can drop duplicates.
 - It doesn't forward trace headers, times out after 30 seconds, and fails on a non-2xx status.
 
@@ -515,15 +522,16 @@ A template is approved wording an action fills its inputs with, stored next to t
 }
 ```
 
-- `name` is snake_case. `label` and `description` (up to 500 characters) tell the planner who and what it's for; it reads them to decide when the template fits.
-- `slots` are its insertion points, declared like an entity type's fields. A `ref` slot (`hire → employee`) takes an entity; any other slot takes text.
-- `content` fills the action inputs of the same names, up to 4000 characters each. Its `{{refs}}` start at a slot and follow `ref` fields like any ref: `{{hire.name}}`, `{{hire.manager.email}}`. A text slot is read whole: `{{note}}`.
+- `name` is snake_case. `label` (up to 120 characters) and `description` (up to 500) tell the planner who and what it's for; it reads them to decide when the template fits.
+- `slots` are its insertion points, at most 10 with unique names, declared like an entity type's fields. A `ref` slot (`hire → employee`) takes an entity; any other slot takes text.
+- `content` fills at least one action input, by name, up to 4000 characters each. Its `{{refs}}` start at a slot and follow `ref` fields like any ref: `{{hire.name}}`, `{{hire.manager.email}}`. A text slot is read whole: `{{note}}`.
 - A template is checked against the entity types when it's written.
 
 An action uses one with `"template": { "use": "engineering_welcome_email", "with": { "hire": "{{employee}}", "manager": "{{employee.manager}}" } }`. Each value in `with` fills a slot:
 
 - An entity slot takes exactly one `{{ref}}` that starts at the subject's type and leads to an entity of the slot's type. The content's refs read through it, so `{{manager.name}}` reads `employee.manager.name`.
 - A text slot takes text that may contain `{{refs}}`, such as `"{{steps.draft.output}}"`.
+- `with` fills only the template's slots, and every slot.
 
 The planner prefers templates to writing text itself or adding an agent step to write it, and uses a `match` when the right template depends on the subject.
 
@@ -535,9 +543,9 @@ When a run starts, `expandTemplates` replaces each use with the inputs its conte
 | -------------------------------------- | ------------------------------------------------ |
 | `GET /api/templates`                   | List templates                                   |
 | `GET /api/templates/:name`             | Read one template                                |
-| `PUT /api/templates/:name`             | Create or replace a template once it checks      |
-| `DELETE /api/templates/:name`          | Delete a template                                |
 | `GET /api/templates/:name/automations` | Automations whose saved workflow or draft use it |
+
+Templates are written through `POST /api/changes` like entities, with `{ "kind": "putTemplate", "template": … }` (once it checks) or `{ "kind": "deleteTemplate", "name" }`.
 
 ## Conditions
 
@@ -558,7 +566,7 @@ When a run starts, `expandTemplates` replaces each use with the inputs its conte
 | `before` / `after`         | Both are dates `Date.parse` reads. `"now"` is the current time.         |
 | `exists`                   | The value is neither missing nor `null`.                                |
 
-A step that didn't run records nothing, so `{ "ref": "steps.<id>", "op": "exists" }` tests whether it ran. Unlike a ref that reads a value, it doesn't make the step that holds it skip.
+A step that didn't run records nothing, so `{ "ref": "steps.<id>", "op": "exists" }` tests whether it ran. That doesn't work for a `wait` step, which records `null`, or a `parallel` step, which records nothing under its own ID. Unlike a ref that reads a value, it doesn't make the step that holds it skip.
 
 A comparison between mismatched types is false. Conditions never call a model; use `decide` for judgment calls. An `if` step reads the current time once, in an Activity, so a replay gets the same answer.
 
@@ -568,15 +576,15 @@ A run executes the saved workflow with its templates expanded. It starts with `{
 
 `RunAutomation` maps the tree onto `effect/workflow` primitives:
 
-| Kind                        | Primitive                                                                                                                      |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Every step's refs           | An Activity named `<id>/refs`.                                                                                                 |
-| `agent`, `action`, `decide` | An Activity, retried twice. A replay reuses its result.                                                                        |
-| `action` that asks first    | Before that, an Activity `<id>/approval-request` opens the task, and a `DurableDeferred` `<id>/approval` waits for the answer. |
-| `stop`                      | Fails the execution with `RunStopped`, which interrupts every branch.                                                          |
-| `wait`                      | A `DurableClock`. The current time is an Activity.                                                                             |
-| `human`                     | A `DurableDeferred`, raced against a `DurableClock` when it has a timeout.                                                     |
-| `parallel`, `if`, `match`   | Plain control flow, evaluated again on every replay.                                                                           |
+| Kind                        | Primitive                                                                                                                       |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| A step's refs               | An Activity named `<id>/refs`, when the step has any, retried twice.                                                            |
+| `agent`, `action`, `decide` | An Activity, retried twice. A replay reuses its result.                                                                         |
+| `action` that asks first    | Before that, an Activity `<id>/approval-request` opens the task, and a `DurableDeferred` `<id>/approval` waits for the answer.  |
+| `stop`                      | Fails the execution with `RunStopped`, which interrupts every branch.                                                           |
+| `wait`                      | A `DurableClock`. A wait `until` reads the current time in an Activity `<id>/now`.                                              |
+| `human`                     | An Activity `<id>/request` opens the task, and a `DurableDeferred` waits, raced against a `DurableClock` when it has a timeout. |
+| `parallel`, `if`, `match`   | Plain control flow, evaluated again on every replay. `if` and `match` read the time in `<id>/now` when a condition uses it.     |
 
 The engine in `src/workflow/durable-engine.ts` journals payloads, Activity results, deferred completions, and clock times in the Automation object's storage under `wf:<executionId>:…`. It never keeps a run in memory between events: each `advance` callback replays the run from the start, reusing everything journaled, until it completes or reaches a clock or a person. A `clock` callback fires each durable clock at its time, and answering a task completes its deferred. Both schedule another replay.
 

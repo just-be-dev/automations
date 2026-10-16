@@ -1,5 +1,7 @@
-/** Implements PiAgent with resumable pi-durable conversations, root-only tools, and Workers AI model calls. */
-import { createModels } from "@earendil-works/pi-ai/models";
+/** Implements PiAgent with resumable pi-durable conversations, root-only tools, and model calls through the AI binding. */
+import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
+import { createModels, type Provider } from "@earendil-works/pi-ai/models";
+import { ANTHROPIC_MODELS } from "@earendil-works/pi-ai/providers/anthropic.models";
 import {
   AssistantEntry,
   createRegistry,
@@ -13,7 +15,7 @@ import {
   type Storage,
 } from "@earendil-works/pi-durable";
 import { assistantContent, readTrace } from "./pi-trace.ts";
-import { createAI } from "agents/models/pi-ai";
+import { CLOUDFLARE_PROVIDER_ID, createAI } from "agents/models/pi-ai";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import {
@@ -34,7 +36,10 @@ import {
 export interface PiAgentOptions {
   readonly storage: () => Promise<Storage>;
   readonly ai: Ai;
+  /** A Workers AI id (`@cf/…`), or `anthropic/<id>` for an Anthropic model through AI Gateway. */
   readonly model: string;
+  /** How hard the model reasons; absent, pi's default. */
+  readonly thinkingLevel?: ModelThinkingLevel;
   /** Offered to the root conversation only. */
   readonly tools: ReadonlyArray<AgentTool>;
 }
@@ -121,14 +126,59 @@ const toolExtension = (tools: ReadonlyArray<AgentTool>) =>
 const assistantText = (entry: { readonly model?: ReadonlyArray<unknown> } | undefined) =>
   assistantContent(entry?.model?.[0], "text");
 
+/**
+ * The AI Gateway that vendor models go through. It holds the Anthropic key (BYOK) under the
+ * `default` alias. Requests carry no provider key, so the gateway uses that stored key; only if
+ * it were missing would the gateway fall back to Unified Billing. Binding requests consult only
+ * the `default` alias, so the key must stay under it.
+ */
+export const AI_GATEWAY_ID = "default";
+
+/** pi-ai's Cloudflare provider over the AI binding, sending vendor models to `AI_GATEWAY_ID`. */
+export const cloudflareAI = (binding: Ai) => createAI({ binding, id: AI_GATEWAY_ID });
+
+/**
+ * An Anthropic model from pi-ai's catalog, claimed by the Cloudflare provider. The provider sends
+ * any model that isn't Workers AI to AI Gateway (`AI_GATEWAY_ID`), which picks the vendor from its
+ * `baseUrl` and authenticates with the gateway's stored key, so no Anthropic key lives in code.
+ */
+const anthropicModel = (id: string): Model<Api> | undefined => {
+  const found = Object.values(ANTHROPIC_MODELS).find((model) => model.id === id);
+  return found === undefined ? undefined : { ...found, provider: CLOUDFLARE_PROVIDER_ID };
+};
+
+/** The provider, also listing `model`, so pi resolves its conversations' model reference. */
+const listing = (provider: Provider, model: Model<Api>): Provider =>
+  Object.assign(Object.create(provider) as Provider, {
+    getModels: () => [...provider.getModels(), model],
+    getAllModels: () => [...(provider.getAllModels?.() ?? provider.getModels()), model],
+  });
+
+/**
+ * The model `PiAgentOptions.model` names, with the provider pi resolves it through. Also used by
+ * the evals' judge, which completes with it directly.
+ */
+export const piModel = (ai: ReturnType<typeof cloudflareAI>, id: string) => {
+  if (!id.startsWith("anthropic/")) return { model: ai(id), provider: ai.provider };
+  const model = anthropicModel(id.slice("anthropic/".length));
+  if (model === undefined) throw new Error(`pi-ai knows no Anthropic model ${id}`);
+  return { model, provider: listing(ai.provider, model) };
+};
+
 export const openPiAgent = Effect.fn("PiAgent.open")(function* (options: PiAgentOptions) {
-  const ai = createAI({ binding: options.ai });
-  const model = ai(options.model);
-  const agent = { model: { provider: model.provider, modelId: model.id } satisfies ModelRef };
+  const ai = cloudflareAI(options.ai);
+  const { model, provider } = yield* Effect.try({
+    try: () => piModel(ai, options.model),
+    catch: (cause) => new PiError({ message: `Open pi: ${String(cause)}` }),
+  });
+  const agent = {
+    model: { provider: model.provider, modelId: model.id } satisfies ModelRef,
+    ...(options.thinkingLevel === undefined ? {} : { thinkingLevel: options.thinkingLevel }),
+  };
 
   const { harness, rootId } = yield* attempt("Open pi", async () => {
     const models = createModels();
-    models.setProvider(ai.provider);
+    models.setProvider(provider);
     const storage = await options.storage();
     const registry = createRegistry();
     const tools = toolExtension(options.tools);
@@ -140,8 +190,9 @@ export const openPiAgent = Effect.fn("PiAgent.open")(function* (options: PiAgent
       context,
     );
     const root = await opened.root(context, { agent });
-    // Before resuming, so an answer interrupted mid-run keeps its tools.
-    await root.configure({ extensions: [tools] }, context);
+    // Before resuming, so an answer interrupted mid-run keeps its tools. pi stores the model
+    // and thinking level with the conversation, so a changed one is applied here too.
+    await root.configure({ ...agent, extensions: [tools] }, context);
     opened.resume();
     return { harness: opened, rootId: root.id };
   });
@@ -180,7 +231,9 @@ export const openPiAgent = Effect.fn("PiAgent.open")(function* (options: PiAgent
       return submission.wait(context);
     });
     if (settled.status === "unanswered") {
-      return yield* new PiError({ message: `Agent did not answer: ${settled.reason}` });
+      // pi puts the model's own error in `detail`; without it, every failure reads the same.
+      const detail = typeof settled.detail === "string" ? ` (${settled.detail})` : "";
+      return yield* new PiError({ message: `Agent did not answer: ${settled.reason}${detail}` });
     }
     if (settled.type !== "input") {
       return "";

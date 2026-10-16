@@ -5,6 +5,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import type { AgentTool } from "../../src/ai/pi.ts";
 import { openPiAgent } from "../../src/platform/cloudflare/pi.ts";
+import { PLANNER_THINKING_LEVEL } from "../../src/platform/cloudflare/workers-ai.ts";
 
 /**
  * The real models, inside the Evals Worker (`worker.ts`): Workers AI through the binding Alchemy
@@ -27,6 +28,7 @@ export const openPi = (tools: ReadonlyArray<AgentTool> = []) =>
       storage: async () => new MemoryStorage(),
       ai: binding,
       model,
+      thinkingLevel: PLANNER_THINKING_LEVEL,
       tools,
     });
   });

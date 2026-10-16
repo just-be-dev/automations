@@ -5,7 +5,7 @@ import * as Layer from "effect/Layer";
 import * as Semaphore from "effect/Semaphore";
 import { Namer } from "../agents/namer/namer.ts";
 import { AutomationIndex } from "../automation/index.ts";
-import type { PendingChat } from "../automation/model.ts";
+import type { Exchange, PendingChat } from "../automation/model.ts";
 import { Automations, type AutomationClient } from "../automation/service.ts";
 import { Changes } from "../changes/service.ts";
 import type { ChangeAction, ChangeProposal } from "../changes/model.ts";
@@ -140,6 +140,7 @@ export const assistantFixture = Effect.gen(function* () {
   const directory = new Map<string, string>();
   const submissions: Array<{ id: string; description: string; requestId: string }> = [];
   const drafts = new Map<string, Workflow>();
+  const conversations = new Map<string, ReadonlyArray<Exchange>>();
   const pending = new Map<string, PendingChat>();
   const submitted = new Set<string>();
   const stoppedChats: Array<string> = [];
@@ -153,7 +154,7 @@ export const assistantFixture = Effect.gen(function* () {
         saved: undefined,
         pendingChat: pending.get(id),
         progress: undefined,
-        conversation: [],
+        conversation: conversations.get(id) ?? [],
         runs: [],
       })),
     chat: (_id, description, requestId) =>
@@ -250,6 +251,7 @@ export const assistantFixture = Effect.gen(function* () {
     submissions,
     pending,
     drafts,
+    conversations,
     directory,
     sessionId,
     threads,

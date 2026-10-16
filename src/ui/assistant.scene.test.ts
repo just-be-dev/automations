@@ -251,6 +251,12 @@ test("assistant questions accept choices and written answers in the same session
     given(asking),
     click(role("button", { name: "Today" })),
     expect(role("button", { name: "Today" })).toHaveAttr("aria-pressed", "true"),
+    click(role("button", { name: "Tomorrow" })),
+    expect(role("button", { name: "Today" })).toHaveAttr("aria-pressed", "false"),
+    expect(role("button", { name: "Tomorrow" })).toHaveAttr("aria-pressed", "true"),
+    click(role("button", { name: "Tomorrow" })),
+    expect(role("button", { name: "Tomorrow" })).toHaveAttr("aria-pressed", "false"),
+    click(role("button", { name: "Today" })),
     type(label("Write your own answer"), "Next Monday"),
     click(role("button", { name: "Send answers" })),
     Command.expectExact(

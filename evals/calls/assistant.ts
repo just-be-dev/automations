@@ -83,17 +83,13 @@ export const assistant: Call<typeof Input.Type, typeof Output.Type> = {
               roles: yield* f.entities.listRoles,
             },
           });
-          if (result.workflow === undefined)
-            f.pending.set(submission.id, {
-              id: submission.requestId,
-              prompt: submission.description,
-              status: "failed",
-              error: "Planner produced no draft",
-            });
-          else {
-            f.drafts.set(submission.id, result.workflow);
-            f.pending.delete(submission.id);
-          }
+          // As the studio does: the reply is recorded, and a draft only when the planner made one.
+          f.conversations.set(submission.id, [
+            ...(f.conversations.get(submission.id) ?? []),
+            { prompt: submission.description, reply: result.reply },
+          ]);
+          if (result.workflow !== undefined) f.drafts.set(submission.id, result.workflow);
+          f.pending.delete(submission.id);
         }
       }
       return {

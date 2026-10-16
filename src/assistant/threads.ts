@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import type { AssistantThread } from "./model.ts";
+import { Assistants } from "./service.ts";
 
 export { AssistantThread } from "./model.ts";
 
@@ -35,6 +36,8 @@ export class AssistantThreads extends Context.Service<
       id: string,
       archived: boolean,
     ) => Effect.Effect<void, AssistantThreadsError>;
+    /** Takes the thread out of the owner's list. A thread that isn't listed stays unlisted. */
+    readonly remove: (owner: string, id: string) => Effect.Effect<void, AssistantThreadsError>;
     /** The owner's threads, archived ones included, most recently used first. */
     readonly list: (
       owner: string,
@@ -71,6 +74,7 @@ export const layerMemory = Layer.sync(AssistantThreads, () => {
         title === undefined ? thread : { ...thread, title },
       ),
     archive: (owner, id, archived) => modify(owner, id, (thread) => ({ ...thread, archived })),
+    remove: (owner, id) => Effect.sync(() => void threads.delete(key(owner, id))),
     list: (owner) =>
       Effect.sync(() =>
         [...threads.values()]
@@ -89,5 +93,21 @@ export const archiveThread = Effect.fn("AssistantThreads.archiveThread")(functio
 ) {
   const threads = yield* AssistantThreads;
   yield* threads.archive(owner, id, archived);
+  return { threads: yield* threads.list(owner) };
+});
+
+/**
+ * Deletes one of the owner's threads: erases its conversation, then takes it out of their list,
+ * and resolves with their threads afterwards. A failed erase leaves the thread listed, so deleting
+ * it again retries. A later message to the same ID starts a fresh thread and lists it again.
+ */
+export const deleteThread = Effect.fn("AssistantThreads.deleteThread")(function* (
+  owner: string,
+  id: string,
+) {
+  const assistants = yield* Assistants;
+  yield* assistants.get(owner, id).clear();
+  const threads = yield* AssistantThreads;
+  yield* threads.remove(owner, id);
   return { threads: yield* threads.list(owner) };
 });

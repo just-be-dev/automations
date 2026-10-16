@@ -5,7 +5,7 @@ import * as Schema from "effect/Schema";
 import { QuestionsAnswer } from "../ai/ask-question/question.ts";
 import { PageContext } from "../assistant/model.ts";
 import { Assistants } from "../assistant/service.ts";
-import { archiveThread, AssistantThreads } from "../assistant/threads.ts";
+import { archiveThread, AssistantThreads, deleteThread } from "../assistant/threads.ts";
 import { RequestIdentity } from "./identity.ts";
 import { limitedBody, pathParams, respond } from "./response.ts";
 
@@ -33,6 +33,16 @@ export const assistantRoutes = HttpRouter.addAll(
       "GET",
       "/:sessionId",
       respond(client.pipe(Effect.flatMap((c) => c.inspect()))),
+    ),
+    HttpRouter.route(
+      "DELETE",
+      "/:sessionId",
+      respond(
+        Effect.gen(function* () {
+          const { sessionId } = yield* pathParams(Params);
+          return yield* deleteThread(yield* ownerOf, sessionId);
+        }),
+      ),
     ),
     HttpRouter.route(
       "POST",

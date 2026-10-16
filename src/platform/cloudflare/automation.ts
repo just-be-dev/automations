@@ -24,7 +24,7 @@ import { EventsQueue } from "./events.ts";
 import { localDevelopment } from "./local-development.ts";
 import { openPiAgent } from "./pi.ts";
 import { openPiStorage } from "./pi-storage.ts";
-import { PLANNER_MODEL, workersAiClassifier } from "./workers-ai.ts";
+import { PLANNER_MODEL, PLANNER_THINKING_LEVEL, workersAiClassifier } from "./workers-ai.ts";
 
 // Callback names, payloads, and schedule keys are persisted contracts.
 const PlanReply = Schema.Struct({ automationId: Schema.String, chatId: Schema.String });
@@ -136,6 +136,7 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
         storage: () => openPiStorage(state.raw.storage),
         ai: aiBinding,
         model: PLANNER_MODEL,
+        thinkingLevel: PLANNER_THINKING_LEVEL,
         tools,
       }).pipe(Effect.orDie);
       const classifier = workersAiClassifier(aiBinding);

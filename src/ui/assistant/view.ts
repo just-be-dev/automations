@@ -219,30 +219,35 @@ const chatView = (
                   [h.Class("space-y-2")],
                   [
                     h.legend([h.Class("text-sm font-medium")], [question.question]),
-                    ...question.options.map((option) =>
-                      button(
-                        {
-                          onClick: Message.ClickedOption({
-                            question: index,
-                            label: option.label,
-                          }),
-                          variant: "outline",
-                          isDisabled: busy,
-                          attributes: [
-                            h.AriaPressed(
-                              String(
-                                Option.exists(model.maybeQuestionnaire, (questionnaire) =>
-                                  Questionnaire.isChosen(
-                                    Questionnaire.answerAt(questionnaire, index),
-                                    option.label,
+                    h.div(
+                      [h.Class("flex flex-wrap gap-2")],
+                      question.options.map((option) =>
+                        button(
+                          {
+                            onClick: Message.ClickedOption({
+                              question: index,
+                              label: option.label,
+                            }),
+                            variant: "outline",
+                            isDisabled: busy,
+                            className:
+                              "h-auto min-h-8 max-w-full py-1.5 text-left whitespace-normal aria-pressed:border-signal aria-pressed:bg-signal/10 aria-pressed:text-signal aria-pressed:hover:bg-signal/15 aria-pressed:hover:text-signal",
+                            attributes: [
+                              h.AriaPressed(
+                                String(
+                                  Option.exists(model.maybeQuestionnaire, (questionnaire) =>
+                                    Questionnaire.isChosen(
+                                      Questionnaire.answerAt(questionnaire, index),
+                                      option.label,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
-                          ],
-                        },
-                        option.label,
-                        h,
+                            ],
+                          },
+                          option.label,
+                          h,
+                        ),
                       ),
                     ),
                     textarea(

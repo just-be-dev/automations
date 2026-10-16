@@ -1,4 +1,4 @@
-/** Checks the studio agent's thread routes: listing, archiving, stopping and clearing, per owner. */
+/** Checks the studio agent's thread routes: listing, archiving, deleting, stopping and clearing, per owner. */
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";
@@ -129,6 +129,48 @@ test("archiving changes only the owner's thread and returns their list", async (
       await handler(new Request("http://studio/api/assistant"))
     ).json();
     expect(listed).toMatchObject({ threads: [{ archived: true }] });
+  } finally {
+    await dispose();
+  }
+});
+
+test("deleting erases the thread, then takes only the owner's thread out of their list", async () => {
+  const erased: Array<string> = [];
+  const { handler, dispose } = HttpRouter.toWebHandler(
+    assistantRoutes.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(
+          Layer.succeed(RequestIdentity, { email: undefined }),
+          Layer.succeed(Assistants, {
+            get: (owner, id) => ({
+              inspect: unused,
+              chat: unused,
+              confirm: unused,
+              answer: unused,
+              stop: unused,
+              clear: () => Effect.sync(() => (erased.push(`${owner} ${id}`), state(id))),
+            }),
+          }),
+          Layer.effectDiscard(
+            Effect.gen(function* () {
+              const threads = yield* AssistantThreads;
+              yield* threads.touch("local", sessionId);
+              yield* threads.touch("someone@example.com", sessionId);
+            }),
+          ),
+        ),
+      ),
+      Layer.provideMerge(layerMemory),
+    ),
+    { disableLogger: true },
+  );
+  try {
+    const deleted = await handler(
+      new Request(`http://studio/api/assistant/${sessionId}`, { method: "DELETE" }),
+    );
+    const body: unknown = await deleted.json();
+    expect(body).toEqual({ threads: [] });
+    expect(erased).toEqual([`local ${sessionId}`]);
   } finally {
     await dispose();
   }

@@ -117,7 +117,7 @@ describe("durable assistant", () => {
       }),
     ));
 
-  for (const outcome of ["success", "failed", "questions"] as const)
+  for (const outcome of ["success", "failed", "questions", "replied"] as const)
     test(`template → durable planner ${outcome}`, () =>
       Effect.runPromise(
         Effect.gen(function* () {
@@ -187,7 +187,13 @@ describe("durable assistant", () => {
               status: "failed",
               error: "Design rejected",
             });
-          else {
+          else if (outcome === "replied") {
+            // The planner wrote its questions in its reply and drafted nothing.
+            f.pending.delete(submission.id);
+            f.conversations.set(submission.id, [
+              { prompt: submission.description, reply: "Who should get the check-in?" },
+            ]);
+          } else {
             f.pending.delete(submission.id);
             f.drafts.set(submission.id, {
               name: "Welcome employees",
@@ -207,6 +213,10 @@ describe("durable assistant", () => {
           expect(fixtureValue(final.conversation[0]).reply).toContain(
             outcome === "failed" ? "failed" : "completed",
           );
+          if (outcome === "replied")
+            expect(fixtureValue(final.conversation[0]).reply).toContain(
+              "Who should get the check-in?",
+            );
           expect(f.submissions.length).toBe(1);
         }),
       ));

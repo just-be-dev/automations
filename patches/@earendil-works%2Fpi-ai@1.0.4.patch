@@ -1,0 +1,15 @@
+diff --git a/dist/utils/retry.js b/dist/utils/retry.js
+index d3cb8e1ccbc38d5b91f9911dd4ee5692183b945f..6db83c540c09df7c16a88a072d62e917f5abde5c 100644
+--- a/dist/utils/retry.js
++++ b/dist/utils/retry.js
+@@ -187,6 +187,10 @@ export function isRetryableAssistantError(message) {
+     if (message.stopReason !== "error" || !message.errorMessage)
+         return false;
+     const errorMessage = message.errorMessage;
++    // PATCH(automations): Cloudflare Unified Billing's throttle says "billing", which the quota
++    // pattern below takes for an exhausted balance. It's a rate limit, so it's retried.
++    if (/unified billing rate limited/i.test(errorMessage))
++        return true;
+     if (NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN.test(errorMessage))
+         return false;
+     return RETRYABLE_PROVIDER_ERROR_PATTERN.test(errorMessage);
