@@ -331,3 +331,38 @@
 @utility step-highlight-item {
   --rail-curve-top: 16px;
 }
+
+/* The shimmer on a running trace line's title (`components/ui/trace.ts`). `trace-shimmer-none`
+   turns it off under reduced motion. */
+@utility trace-shimmer {
+  background-image: var(
+    --trace-shimmer-image,
+    linear-gradient(
+      90deg,
+      currentColor 0%,
+      currentColor 40%,
+      var(--foreground) 50%,
+      currentColor 60%,
+      currentColor 100%
+    )
+  );
+  background-size: 200% 100%;
+  background-clip: text;
+  -webkit-text-fill-color: var(--trace-shimmer-text-fill, transparent);
+  animation: var(--trace-shimmer-animation, trace-shimmer 2s linear infinite);
+}
+
+@utility trace-shimmer-none {
+  --trace-shimmer-image: none;
+  --trace-shimmer-text-fill: currentColor;
+  --trace-shimmer-animation: none;
+}
+
+@keyframes trace-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}

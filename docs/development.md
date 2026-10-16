@@ -248,7 +248,7 @@ Each assistant response is an `AssistantState`; while it is `working`, poll its 
 
 ### Agent traces
 
-`/traces` in the studio (**Debug → Agent traces** in the sidebar) shows what the agents were asked and did. Pick an automation for its planner's conversation, or one of its recent runs for the conversation its agent steps share. Each trace lists system prompt changes, prompts, every model response with its reasoning, tool calls, stop reason, and token use, and every tool result, with failed ones marked. They come from pi's own records in the automation's Durable Object; a trace holds the latest 1,000 entries. The namer and the classifier behind progress phrases and decide steps aren't pi conversations, so they have no trace; a decide step's record holds its choice and every option's probability.
+`/traces` in the studio (**Debug → Agent traces** in the sidebar) shows what the agents were asked and did. Pick an automation for its planner's conversation, or one of its recent runs for the conversation its agent steps share. Each trace is a list of lines: system prompt changes, prompts, every model response with its reasoning and tool calls, and every tool result, with failed ones marked. Click a line to open its full text; a response's details hold its model, stop reason, and token use. A refresh keeps open lines open. They come from pi's own records in the automation's Durable Object; a trace holds the latest 1,000 entries. The namer and the classifier behind progress phrases and decide steps aren't pi conversations, so they have no trace; a decide step's record holds its choice and every option's probability.
 
 ### Entity store
 
