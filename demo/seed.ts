@@ -112,6 +112,30 @@ export const roles: ReadonlyArray<Role> = [
   },
 ];
 
+/**
+ * What the reset tells the presenter about approving as themselves. A local studio knows them
+ * only by `DEV_USER_EMAIL`; they approve the welcome email when that address is one of People
+ * Ops' people, which in the storyboard means giving Grace their address.
+ */
+export const approverNote = (
+  devUser: string | undefined,
+  seeded: ReadonlyArray<{ readonly id: string; readonly data: EntityData }>,
+) => {
+  if (devUser === undefined) {
+    return "Approvals in the studio name no one. Set DEV_USER_EMAIL and DEMO_GRACE_EMAIL to your address, restart dev, and reset again.";
+  }
+  const you = seeded.find(
+    (each) => String(each.data["email"]).toLowerCase() === devUser.toLowerCase(),
+  );
+  const role = roles.find((each) => each.name === "people_ops");
+  const approves =
+    you !== undefined && role?.members.some((member) => member.id === you.id) === true;
+  if (you === undefined || !approves || role === undefined) {
+    return `You are ${devUser}, who isn't in People Ops, so the studio won't let you approve. Set DEMO_GRACE_EMAIL to ${devUser} and reset again.`;
+  }
+  return `You are ${String(you.data["name"])} (${devUser}) and approve for ${role.label}.`;
+};
+
 /** The two welcome emails the migrations seed, word for word. */
 export const templates: ReadonlyArray<Template> = [
   {

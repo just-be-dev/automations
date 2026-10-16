@@ -202,6 +202,38 @@ describe("steps in flight and steps that didn't run", () => {
     );
   });
 
+  test("a human step names who answered as their task knows them", () => {
+    const form: Step = {
+      id: "f",
+      kind: "human",
+      title: "Check in",
+      prompt: "How is it going?",
+      response: { fields: [{ name: "buddy", label: "Buddy", type: "text" }] },
+    };
+    const answered = done({ values: { buddy: "Katherine" }, respondedBy: "Me@Studio.dev" });
+    const { approvers: _approvers, ...checkIn } = {
+      ...permissionTask,
+      step: "f",
+      status: "closed" as const,
+      assignee: { $title: "Grace Hopper", email: "me@studio.dev" },
+    };
+    expect(summaryOf(form, answered, { tasks: [checkIn] }).summary).toBe("Answered by Grace");
+    const approval: Step = { ...form, response: "approval" };
+    const approved = done({ approved: true, respondedBy: "me@studio.dev" });
+    const byRole: HumanTask = {
+      ...permissionTask,
+      step: "f",
+      status: "closed",
+      approvers: {
+        role: "people_ops",
+        label: "People Ops",
+        members: [{ name: "Mary Jackson", email: "me@studio.dev" }],
+      },
+    };
+    expect(summaryOf(approval, approved, { tasks: [byRole] }).summary).toBe("Approved by Mary");
+    expect(summaryOf(form, answered).summary).toBe("Answered by Me");
+  });
+
   test("a wait says when it resumes", () => {
     const pause: Step = { id: "w", kind: "wait", title: "Settle in", duration: "3 days" };
     const waiting: RunStep = { status: "waiting" };

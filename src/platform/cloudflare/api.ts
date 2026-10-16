@@ -64,6 +64,17 @@ export default class Api extends Cloudflare.Worker<Api>()(
     ];
     // Development-only routes refuse unless this is `alchemy dev` on a dev_ stage.
     const local = yield* localDevelopment;
+    // Who you are in a local studio, where Access is off. Never read on a deployed stage.
+    const devUser = local
+      ? yield* Config.option(Config.String("DEV_USER_EMAIL")).pipe(Effect.orDie)
+      : Option.none<string>();
+    const localUser = devUser.pipe(
+      Option.map((email) => email.trim()),
+      Option.filter((email) => email !== ""),
+    );
+    if (Option.isSome(localUser) && !/^[^\s@]+@[^\s@]+$/.test(localUser.value)) {
+      return yield* Effect.die(`DEV_USER_EMAIL must be an email address, not ${localUser.value}`);
+    }
     const automations = automationsLayer(namespace);
     const subscribers = Layer.unwrap(
       Automations.use((service) =>
@@ -79,7 +90,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
       index,
       events,
       subscribers,
-      accessIdentity,
+      accessIdentity(localUser),
       namer,
       assistantsLayer(assistantNamespace),
       changesLayer(changeNamespace),

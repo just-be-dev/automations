@@ -165,13 +165,33 @@ const agentSummary = (record: Schema.Json | undefined) => {
     : "Answered";
 };
 
+/**
+ * Who answered a task, by first name: its assignee or a member of its role when the address is
+ * theirs, since a person's address needn't spell their name. Otherwise read from the address.
+ */
+const responderName = (email: string, task: Option.Option<HumanTask>) => {
+  const same = (other: string | undefined) => other?.toLowerCase() === email.toLowerCase();
+  const known = Option.flatMap(task, (found) => {
+    const assignee = found.assignee;
+    if (same(Option.getOrUndefined(textField(assignee ?? undefined, "email")))) {
+      return personName(assignee);
+    }
+    return Option.map(
+      Option.fromNullishOr(found.approvers?.members.find((member) => same(member.email))),
+      (member) => firstWord(member.name),
+    );
+  });
+  return Option.getOrElse(known, () => recipientName(email));
+};
+
 const humanDoneSummary = (
   step: Extract<Step, { kind: "human" }>,
   record: Schema.Json | undefined,
+  task: Option.Option<HumanTask>,
 ) => {
   const by = Option.match(textField(record, "respondedBy"), {
     onNone: () => "",
-    onSome: (email) => ` by ${recipientName(email)}`,
+    onSome: (email) => ` by ${responderName(email, task)}`,
   });
   if (field(record, "timedOut") === true) {
     return step.response !== "approval" && isJsonObject(field(record, "values"))
@@ -197,7 +217,11 @@ const ifSummary = (step: Extract<Step, { kind: "if" }>, record: Schema.Json | un
       : "Otherwise";
 };
 
-const doneSummary = (step: Step, record: Schema.Json | undefined): Option.Option<string> =>
+const doneSummary = (
+  step: Step,
+  record: Schema.Json | undefined,
+  task: Option.Option<HumanTask>,
+): Option.Option<string> =>
   Match.value(step).pipe(
     Match.discriminatorsExhaustive("kind")({
       action: (action) => Option.some(actionSummary(action, record)),
@@ -205,7 +229,7 @@ const doneSummary = (step: Step, record: Schema.Json | undefined): Option.Option
       decide: () =>
         Option.map(textField(record, "choice"), (choice) => `Chose “${labelFromName(choice)}”`),
       if: (branch) => Option.some(ifSummary(branch, record)),
-      human: (human) => Option.some(humanDoneSummary(human, record)),
+      human: (human) => Option.some(humanDoneSummary(human, record, task)),
       wait: (wait) =>
         Option.some(
           "until" in wait
@@ -270,7 +294,7 @@ export const stepProgress = (
   return Match.value(runStep.status).pipe(
     Match.when("done", (): StepProgress => ({
       mark: "done",
-      maybeSummary: doneSummary(step, runStep.record),
+      maybeSummary: doneSummary(step, runStep.record, lastTaskOf(run, step)),
     })),
     Match.when("skipped", () => progress("skipped", "Skipped")),
     Match.when("declined", () =>

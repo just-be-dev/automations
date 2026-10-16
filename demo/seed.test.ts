@@ -6,6 +6,7 @@ import { checkEntityData, EntityType, Role } from "../src/entities/model.ts";
 import { Template } from "../src/entities/templates.ts";
 import { checkWorkflow } from "../src/workflow/catalog.ts";
 import {
+  approverNote,
   employees,
   employeeType,
   fallback,
@@ -77,4 +78,16 @@ test("the fallback workflow checks against the seeded catalog", () => {
   );
   expect(checked.name).toBe("Launch a great first week");
   expect(checked.permissions?.["email.send"]).toEqual({ ask: "people_ops" });
+});
+
+test("the reset says whether the local studio's user approves for People Ops", () => {
+  const seeded = employees({ DEMO_GRACE_EMAIL: "Me@Example.com" }, "2026-11-02");
+  expect(approverNote("me@example.com", seeded)).toBe(
+    "You are Grace Hopper (me@example.com) and approve for People Ops.",
+  );
+  expect(approverNote("katherine@example.com", seeded)).toContain("isn't in People Ops");
+  expect(approverNote("someone@example.com", seeded)).toContain(
+    "Set DEMO_GRACE_EMAIL to someone@example.com",
+  );
+  expect(approverNote(undefined, seeded)).toContain("Set DEV_USER_EMAIL and DEMO_GRACE_EMAIL");
 });

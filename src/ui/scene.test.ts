@@ -1132,8 +1132,15 @@ test("a permission request shows what the action will send and sends the approva
       ...waiting.steps,
       notify: { status: "done", record: { simulated: true, channel: "@sam@example.com", ts: "1" } },
     },
-    tasks: [{ ...permissionTask, status: "closed" }],
+    tasks: [
+      {
+        ...permissionTask,
+        status: "closed",
+        decision: { approved: true, by: "Grace@example.com", at: Date.UTC(2026, 9, 16, 15, 14) },
+      },
+    ],
   });
+  const decision = selector('[data-component="approval-decision"]');
   scene(
     { update, view },
     given(withOpenRun(waiting)),
@@ -1154,6 +1161,10 @@ test("a permission request shows what the action will send and sends the approva
     Command.resolve(LoadRun, runLoaded({ revision: 0, poll: 2, run: sent })),
     expect(role("region", { name: /Open task/ })).not.toExist(),
     expect(text("Answer sent.")).toExist(),
+    click(role("button", { name: /Tell the manager/ })),
+    expect(decision).toContainText("Approved by Grace Hopper, People Ops · Fri, Oct 16"),
+    expect(decision).toHaveAttr("title", "Grace@example.com"),
+    expect(text("Approved by People Ops (Grace Hopper)")).not.toExist(),
   );
 });
 

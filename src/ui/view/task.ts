@@ -24,6 +24,7 @@ import { Message } from "../message.ts";
 import { type OpenRun, RunNotice } from "../model.ts";
 import { isSimulated, operationIcon, operationTitle, simulatedTagView } from "./operation.ts";
 import { chipClass, notifyLabel, stepMetaView } from "./shared.ts";
+import { dayTimeText } from "./step-summary.ts";
 
 const jsonString = (value: Schema.Json | null, key: string) =>
   Predicate.isObject(value) && !Array.isArray(value)
@@ -101,7 +102,7 @@ const notificationsView = (
 
 const isSendingAnswer = (openRun: OpenRun) => RunNotice.guards.Sending(openRun.notice);
 
-/** Who a task is for, who may approve it, and how they heard about it. */
+/** Who a task is for, who may approve it or who did, and how they heard about it. */
 export const taskMetaView = (
   task: HumanTask,
   liveConnections: ReadonlyArray<string>,
@@ -110,11 +111,57 @@ export const taskMetaView = (
   stepMetaView(
     [
       ...assigneeView(task.assignee, h),
-      ...(task.approvers === undefined ? [] : [approversView(task.approvers, h)]),
+      ...Option.match(approvalDecision(task), {
+        onSome: (decision) => [decisionView(task, decision, h)],
+        onNone: () => (task.approvers === undefined ? [] : [approversView(task.approvers, h)]),
+      }),
       ...notificationsView(task, liveConnections, h),
     ],
     h,
   );
+
+type Decision = NonNullable<HumanTask["decision"]>;
+
+/** A closed approval's decision. Other tasks' answers show in their step's record. */
+const approvalDecision = (task: HumanTask) =>
+  task.status === "closed" && task.response === "approval"
+    ? Option.filter(Option.fromNullishOr(task.decision), (decision) =>
+        Predicate.isBoolean(decision.approved),
+      )
+    : Option.none<Decision>();
+
+/**
+ * "Approved by Grace Hopper, People Ops · Fri, Oct 16 at 10:14 AM": the approver by the name
+ * their role recorded for them, or by address. An answer from no known person, as in a local
+ * studio without `DEV_USER_EMAIL`, names no one.
+ */
+const decisionView = (task: HumanTask, decision: Decision, h: HtmlBuilder<Message>) => {
+  const verb = decision.approved === true ? "Approved" : "Rejected";
+  const role = task.approvers?.label;
+  const by = Option.map(Option.fromNullishOr(decision.by), (email) => {
+    const member = task.approvers?.members.find(
+      (candidate) => candidate.email.toLowerCase() === email.toLowerCase(),
+    );
+    return { email, name: member?.name ?? email };
+  });
+  return h.span(
+    [
+      componentName("approval-decision"),
+      ...Option.match(by, { onNone: () => [], onSome: ({ email }) => [h.Title(email)] }),
+    ],
+    [
+      ...Option.match(by, {
+        onNone: () => [role === undefined ? verb : `${verb} for ${role}`],
+        onSome: ({ name }) => [
+          `${verb} by `,
+          h.span([h.Class(cn(chipClass, "text-foreground"))], [name]),
+          ...(role === undefined ? [] : [`, ${role}`]),
+        ],
+      }),
+      ` · ${dayTimeText(decision.at)}`,
+    ],
+  );
+};
 
 /** An open task under its step's row: what it asks, and the answer it waits for. */
 export const openTaskView = (

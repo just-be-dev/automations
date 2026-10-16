@@ -18,6 +18,8 @@ mise run dev    # alchemy dev: local Workers, Durable Object, and Vite with hot 
 
 Local development also offers **Resume now** on a run's step that waits on a clock, so a three-day wait takes seconds in a demo. It fires the clock through the same operation as the scheduled `clock` callback, and that delivery later changes nothing. Only `alchemy dev` on a `dev_` stage enables it: each Worker's Init reads `ALCHEMY_DEV` on such a stage, which binds it into the Worker. A deploy binds nothing, so `GET /api/dev` answers `{ "local": false }` and the resume route answers 404 like an unknown route. The Automation object refuses too.
 
+Without Access, a local studio doesn't know who you are, so anyone can answer an approval and the answer names no one. Set `DEV_USER_EMAIL` in `.env` to your address and restart dev to answer as yourself. Every request from your browser, `curl` or the demo reset then carries that address, as if Access had sent it, so only a role's members can approve and the run records who did. The Api reads it only when local development is on, so a deploy ignores it. Assistant sessions belong to that address too, so the assistant panel starts a fresh conversation the first time.
+
 If an existing OAuth profile has expired, run `bun alchemy profile refresh --profile default --provider Cloudflare` and follow the sign-in flow.
 
 `package.json` overrides Effect to `4.0.1` so the app and tooling share one copy despite Foldkit's exact `4.0.0` peer pins and the Effect lint plugin's `4.0.0` dependency. Recheck this override when upgrading those packages; remove it once their constraints allow the app's Effect version.
@@ -94,7 +96,10 @@ Each person's address comes from `.env`, which is gitignored. The reset reads th
 | `DEMO_GRACE_EMAIL`     | Grace Hopper, Ada's manager and in People Ops  | The Slack heads-up, the calendar invite, and the check-in. Can approve email  |
 | `DEMO_MARY_EMAIL`      | Mary Jackson, People Ops                       | Can approve the welcome email                                                 |
 | `DEMO_KATHERINE_EMAIL` | Katherine Johnson, an engineer on Grace's team | Nothing in the fallback workflow                                              |
+| `DEV_USER_EMAIL`       | You, the presenter                             | Who the local studio thinks you are. Use the same address as Grace's          |
 | `STUDIO_URL`           | Optional                                       | The studio to reset. By default it's read from this checkout's `mise run dev` |
+
+On stage you play Grace, so you approve the welcome email as yourself. Set `DEMO_GRACE_EMAIL` and `DEV_USER_EMAIL` to your own address, then restart dev and run the reset. The reset says whether you approve for People Ops. The run's step then reads "Approved by Grace Hopper, People Ops" with the time. With Slack connected, use the address of your account in the Slack sandbox: the heads-up, the approval DM and the check-in come to you, and the Approve button records you too.
 
 `slack.sendMessage` finds a person to message by email, so with [Slack connected](slack.md), use the addresses of the Slack sandbox's members. The fallback also posts to `#eng-team`, so create that public channel in the sandbox. With `SLACK_BOT_TOKEN` set, running the fallback posts for real. Email and Calendar are still simulated, whatever the addresses.
 
@@ -270,7 +275,7 @@ The screenshot demonstrates the conversation and workflow UI, not a live model r
 - `email.send` is delivered **at least once**: Cloudflare Email Service takes no idempotency key, so if a run restarts after Cloudflare accepted an email but before the run recorded it, the email sends again.
 - `slack.sendMessage` is delivered **at least once**: Slack takes no idempotency key, so if a run restarts after Slack accepted a message but before the run recorded it, the message posts again.
 - Anyone who can post in a channel the bot is in can start a `slack.*`-triggered automation. Treat `event.data.text` as untrusted input, and ask a role in the permissions of anything such a run sends or changes.
-- Only a role's members may answer its approval tasks, going by the email Cloudflare Access sends in `Cf-Access-Authenticated-User-Email`. The Api trusts that header because only the Access-protected Studio Worker reaches it. Verify the Access JWT before production. Under `alchemy dev`, and with the test service token, there's no email, so anyone can answer. A click on an approval DM's buttons always carries the clicker's Slack email, even in dev, so only members can approve from Slack.
+- Only a role's members may answer its approval tasks, going by the email Cloudflare Access sends in `Cf-Access-Authenticated-User-Email`. The Api trusts that header because only the Access-protected Studio Worker reaches it. Verify the Access JWT before production. With the test service token there's no email, so anyone can answer. So can anyone under `alchemy dev`, unless `DEV_USER_EMAIL` says who you are. A click on an approval DM's buttons always carries the clicker's Slack email, even in dev, so only members can approve from Slack.
 - `http.post` steps are delivered **at least once**, with an `Idempotency-Key` header that stays the same across retries, so receiving endpoints must be idempotent. Don't put secrets in step definitions.
 - Runs replay from a journal. If the Durable Object is evicted mid-step, that step runs again; agent steps reuse their pi request ID instead of prompting twice.
 - Event receipts remain indefinitely in each automation's storage, and dead-lettered events are replayed by hand.

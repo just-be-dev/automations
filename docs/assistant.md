@@ -45,7 +45,7 @@ The studio assistant is a page-aware chat that reads the catalog, proposes entit
 └───────────────────┘  └───────────────────┘  └───────────────────┘  └───────────────────┘
 ```
 
-The browser keeps a UUID v4 under `studio-assistant-session` in `localStorage` ([`command.ts`](../src/ui/assistant/command.ts)) and addresses `/api/assistant/:sessionId`. [The routes](../src/http/assistant.ts) check that the session ID is a UUID v4, the same check the object makes, so a session it would refuse gets a 404 at the route; they take the owner from `RequestIdentity`, which [`access.ts`](../src/platform/cloudflare/access.ts) reads from `cf-access-authenticated-user-email`. Local dev and service-token requests have no email and share the owner `local`.
+The browser keeps a UUID v4 under `studio-assistant-session` in `localStorage` ([`command.ts`](../src/ui/assistant/command.ts)) and addresses `/api/assistant/:sessionId`. [The routes](../src/http/assistant.ts) check that the session ID is a UUID v4, the same check the object makes, so a session it would refuse gets a 404 at the route; they take the owner from `RequestIdentity`, which [`access.ts`](../src/platform/cloudflare/access.ts) reads from `cf-access-authenticated-user-email`. Under `alchemy dev` it falls back to `DEV_USER_EMAIL` when that is set. Other local dev requests and service-token requests have no email and share the owner `local`.
 
 | Route                                         | Body                       | Session operation |
 | --------------------------------------------- | -------------------------- | ----------------- |

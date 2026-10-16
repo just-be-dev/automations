@@ -584,7 +584,7 @@ Agent replies render Markdown tokens without setting raw HTML. Run results rende
 
 ## Guarantees have deliberate limits
 
-- Approval tasks record the role's members when opened and check the Access email, or the Slack email of whoever clicked in a DM, when answered. The private API trusts the Studio's identity header; local dev and service-token requests have no email restriction and share the `local` owner. JWT verification and the rest of the security boundary need production review.
+- Approval tasks record the role's members when opened and check the Access email, or the Slack email of whoever clicked in a DM, when answered. The private API trusts the Studio's identity header; local dev requests carry `DEV_USER_EMAIL` when it is set, and otherwise, like service-token requests, have no email restriction and share the `local` owner. JWT verification and the rest of the security boundary need production review.
 - `http.post` accepts only literal public HTTPS URLs without credentials. Both the catalog and connection runner enforce the URL boundary. It does not forward trace headers. Workflows must not contain secrets.
 - Steps that are declined or skipped record nothing. Dependent steps are skipped; catalog checks guarantee that referenced steps precede their readers on every path.
 - Calendar and `notify: "email"` send nothing in the prototype. Email sends through Cloudflare Email Service only when `EMAIL_FROM` is set ([setup](docs/email.md)), and Slack posts, including task DMs, only when `SLACK_BOT_TOKEN` is set. Neither takes an idempotency key, so a retried step can send twice. A task DM records each recipient before and after posting, and looks for its own key in the DM before posting again. HTTP requests are real.

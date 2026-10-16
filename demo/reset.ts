@@ -12,6 +12,7 @@ import { Template } from "../src/entities/templates.ts";
 import { messageOf } from "../src/error.ts";
 import { Workflow } from "../src/workflow/model.ts";
 import {
+  approverNote,
   employees,
   employeeType,
   fallback,
@@ -36,7 +37,8 @@ import {
  * start date when the calendar has moved on.
  *
  * People's addresses come from `.env` (`DEMO_ADA_EMAIL` and the others in `seed.ts`), and the
- * Studio URL from `STUDIO_URL` or the local Alchemy state. It refuses any host but this machine.
+ * Studio URL from `STUDIO_URL` or the local Alchemy state. It says whether `DEV_USER_EMAIL`, who
+ * you are in the local studio, can approve the welcome email. It refuses any host but this machine.
  */
 
 class ResetError extends Schema.TaggedError<ResetError>()("ResetError", {
@@ -164,6 +166,13 @@ const makeStudio = (origin: string) => {
 const program = Effect.gen(function* () {
   const origin = yield* studioUrl;
   const emails = yield* configuredEmails;
+  // The address a local studio knows you by. The server read it when dev started.
+  const devUser = Option.getOrUndefined(
+    yield* Config.option(Config.String("DEV_USER_EMAIL")).pipe(
+      Effect.map(Option.map((email) => email.trim())),
+      Effect.map(Option.filter((email) => email !== "")),
+    ),
+  );
   const startDate = startDateFrom(new Date());
   const { call, change } = makeStudio(origin);
   const done: Array<string> = [];
@@ -278,6 +287,7 @@ const program = Effect.gen(function* () {
       `  ${String(record?.data["name"]).padEnd(18)} ${String(record?.data["email"]).padEnd(32)} ${configured ? "" : `(set ${each.emailKey} in .env)`}`,
     );
   }
+  yield* Console.log(approverNote(devUser, seededPeople));
   yield* Console.log(
     `Slack: ${live.includes("slack") ? "live. Running the workflow posts to the workspace." : "simulated. Set SLACK_BOT_TOKEN in .env and restart dev to post."}`,
   );
