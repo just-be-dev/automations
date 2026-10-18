@@ -20,7 +20,11 @@ Then refine it:
 
 It finds a welcome slot and gives the manager a heads-up **in parallel**. It chooses approved email wording based on the hire’s role, pauses for **People Ops to review the exact email**, and books a manager welcome. Three days after the start date, it asks the manager to record the onboarding buddy, first project, and any help the hire needs.
 
-The [example workflow](docs/examples/first-week.json) uses the employee type, templates, and People Ops role included with local setup. Choose an employee with a start date and manager to try it. The screenshot pairs a scripted local conversation with the validated draft; see the [demo details](docs/development.md#readme-demo). `mise run demo:reset` prepares a local studio for the live demo; see [Live demo](docs/development.md#live-demo).
+The [example workflow](docs/examples/first-week.json) uses the employee type, templates, and People Ops role included with local setup. Choose an employee with a start date and manager to try it. The screenshot below is a live model's draft from these two requests, so it differs in places from the example; see the [demo details](docs/development.md#readme-demo). `mise run demo:reset` prepares a local studio for the live demo; see [Live demo](docs/development.md#live-demo).
+
+![The studio agent drafting and then refining a new-hire onboarding automation, beside the rendered draft: a welcome email chosen by role, a manager meeting, and a Slack heads-up running in parallel, a three-day wait, and a check-in form for the manager. Steps the last reply added or changed are marked.](docs/images/first-week.png)
+
+_Both requests sent to the studio agent in a local studio. The draft marks what the second reply added or changed. Calendar is simulated, and Email and Slack are too unless you connect them._
 
 ## Workflows with people in the loop
 
