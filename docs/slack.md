@@ -4,7 +4,7 @@ Connecting a Slack workspace does four things:
 
 - **Sending.** `slack.sendMessage` posts for real instead of being simulated. It posts to a channel (`#team`), or sends a DM to a person given by email address or by an entity with an `email` field. This needs only the bot token.
 - **Task messages.** When a run waits on a person, they get a DM with what's needed and an **Open in Studio** link to the run. See [Task messages](#task-messages). This also needs only the bot token.
-- **Approving.** An approval's DM also has **Approve** and **Reject** buttons. A click counts only from a member of the role. See [Approving from Slack](#approving-from-slack). This needs the bot token, the signing secret, and the interactivity URL that Slack can reach.
+- **Approving.** Approval DMs sent before roles were removed have **Approve** and **Reject** buttons, which still decide their task. See [Approving from Slack](#approving-from-slack). This needs the bot token, the signing secret, and the interactivity URL that Slack can reach.
 - **Receiving.** Mentions of the bot, messages in threads it follows, and reactions in those threads become [`slack.*` events](workflow-dsl.md#event) that can start automations. This needs the bot token, the signing secret, and a public webhook that Slack can reach.
 
 How it works inside is in [Architecture](../ARCHITECTURE.md), and the event payloads are in the [Workflow DSL](workflow-dsl.md#event). This page covers setup.
@@ -123,12 +123,9 @@ The planner should give it an event trigger on `slack.mention` and a message suc
 
 ## Task messages
 
-A run that waits on a person sends them a DM from the bot:
+A human step with `notify: "slack"` sends its assignee a DM from the bot, with the step's title, its prompt, and the fields they'll fill in. With `notify: "email"`, nothing is sent, even when [email](email.md) is connected. An ask-first action names no one, since anyone in the studio may approve it, so it sends no DM: approve it in the studio.
 
-- **Ask-first actions.** Each member of the role the action asks gets one. It says which automation needs the role to approve what, and for whom. It shows the exact content the action will send. For an email, that is the template it came from, the subject, and the start of the body.
-- **Human steps with `notify: "slack"`.** The assignee gets one with the step's title, its prompt, and the fields they'll fill in. With `notify: "email"`, nothing is sent, even when [email](email.md) is connected.
-
-People are found by the `email` field of their entity, the same way `slack.sendMessage` finds them. Each DM ends with an **Open in Studio** button that opens the run (`/?automation=<id>&run=<runId>`), where the task can be answered. An approval's DM also has **Approve** and **Reject** beside it; see [Approving from Slack](#approving-from-slack).
+The assignee is found by the `email` field of their entity, the same way `slack.sendMessage` finds people. Each DM ends with an **Open in Studio** button that opens the run (`/?automation=<id>&run=<runId>`), where the task can be answered.
 
 The button links to `STUDIO_URL` when it's set. Otherwise it links to the address the automation was last saved from: the Studio Worker forwards the browser's request to the API unchanged, so saving records the studio's origin. An automation saved before task messages existed has no link until it's saved again, and its messages say to answer in the studio instead.
 
@@ -140,22 +137,20 @@ Delivery is recorded on the task, per person, under `notifications`, and the stu
 
 ### Approving from Slack
 
-An ask-first action's DM has **Approve** and **Reject** after **Open in Studio**. Human steps don't get them, even ones that ask for approval: they have no role to check a click against, so they're answered in the studio.
-
-When someone clicks:
+Before roles were removed, an ask-first action DMed each member of its role, with **Approve** and **Reject** after **Open in Studio**. New tasks send no such DM, but the buttons on those already sent still work:
 
 1. Slack posts the click to the interactivity URL. The `Channels` Worker checks Slack's signature, puts the click on the `SlackActions` queue, and answers at once with an empty 200, inside Slack's 3-second limit.
-2. The private `Api` takes the click off the queue. It asks Slack for the clicker's email address (`users.info`, which needs `users:read.email`) and answers the task with it, as the studio answers with the Cloudflare Access email. Only the members the task recorded when it opened may answer.
-3. A member's click decides the task. The bot then updates the message: the two buttons go, **Open in Studio** stays, and a last line says who decided and when, such as "✅ Approved by Grace Hopper · today at 10:05 AM". Slack shows the time in each reader's own time zone.
-4. Anyone else sees a message only they can see, such as "Only members of People Ops can answer this". So does someone Slack has no email address for. The task stays open and the message doesn't change. This is rare, because only a DM's recipient can click its buttons, but nothing about the message itself is trusted.
+2. The private `Api` takes the click off the queue. It asks Slack for the clicker's email address (`users.info`, which needs `users:read.email`) and answers the task with it, as the studio answers with the Cloudflare Access email. Anyone may answer, but a click without an email address is refused, so every decision records who made it.
+3. The click decides the task. The bot then updates the message: the two buttons go, **Open in Studio** stays, and a last line says who decided and when, such as "✅ Approved by Grace Hopper · today at 10:05 AM". Slack shows the time in each reader's own time zone.
+4. A click Slack has no email address for gets a message only the clicker can see. The task stays open and the message doesn't change.
 
 Deciding is idempotent. The first answer closes the task and is recorded on it as `decision`, with whether it was approved, by whom, and when. A repeated click, a click on the other button, or a click after the task was answered in the studio decides nothing more: it redraws the message from that recorded decision. If Slack or the automation can't be reached, the queue retries the click up to three times, which is safe for the same reason.
 
-The other members' DMs keep their buttons until someone clicks them. A decision made in the studio doesn't update any DM.
+The other recipients' DMs keep their buttons until someone clicks them. A decision made in the studio doesn't update any DM.
 
 ### Try it in a sandbox
 
-The seeded data already fits: Grace Hopper is Ada Lovelace's manager and the only member of People Ops.
+The demo's data already fits: Grace Hopper is Ada Lovelace's manager.
 
 1. Point Grace at your own address in the Slack sandbox. Ask the studio's assistant ("Change Grace Hopper's email to you@your-sandbox.example") and confirm the change, or prepare it and approve it:
 
@@ -168,12 +163,9 @@ The seeded data already fits: Grace Hopper is Ada Lovelace's manager and the onl
 
 2. Create an automation with the sidebar's **+**:
 
-   > When I start it for an employee, send them the engineering welcome email, asking People Ops first. Then ask their manager how it's going, and notify them on Slack.
+   > When I start it for an employee, ask their manager how it's going, and notify them on Slack.
 
-3. Choose **Save draft** in the studio, then run it for Ada Lovelace. You get a DM asking People Ops to approve the email, with its template, subject and body. **Open in Studio** opens the run.
-4. Choose **Approve** in the DM. Within a few seconds the buttons give way to a line saying you approved it, and when. Clicking again changes nothing. You then get a second DM, for the manager's check-in, with only **Open in Studio**.
-
-You won't see a refusal in this walkthrough. Only a DM's recipient can click its buttons, and the bot only DMs the role's members. The check still matters, because it never trusts the message itself: it compares the clicker's Slack email with the members the task recorded.
+3. Choose **Save draft** in the studio, then run it for Ada Lovelace. You get a DM for the manager's check-in. **Open in Studio** opens the run, where you answer it.
 
 The run's task shows who it was sent to. In the Api log, `Couldn't send a task on Slack` means the whole delivery failed, and `Task messages have no studio link` means the automation needs saving again or `STUDIO_URL`.
 
@@ -200,7 +192,6 @@ Channels logs are in `.alchemy/log/dev_$USER/Channels/`. Api logs, where runs po
 | A task's DM failed with "no one in the Slack workspace has that email address" | The person's entity has an `email` that isn't a member of the workspace. Fix the address, then start a new run.                                                                                                |
 | A task DM has no **Open in Studio** button                                     | The automation was saved before task messages existed. Save it again, or set `STUDIO_URL`.                                                                                                                     |
 | Clicking **Approve** or **Reject** shows an error in Slack                     | The interactivity Request URL is still the placeholder, the tunnel address changed, or dev isn't running. The Channels log shows `Slack interactivity authentication failed` when the signing secret is wrong. |
-| "Only members of … can answer this" after a click                              | Your Slack account's email address isn't the `email` of any member the task recorded when it opened. Fix the entity or the role, then start a new run.                                                         |
 | "Slack has no email address for you" after a click                             | The app lacks `users:read.email`, or the account is a bot or has no email. Add the scope and reinstall.                                                                                                        |
 | A click is accepted but the message never changes                              | The Api log shows `Slack click failed` or `Dropped a Slack click`. `SLACK_BOT_TOKEN` must be set for the Api too.                                                                                              |
 | A mention starts nothing                                                       | The bot isn't in the channel, the bot events aren't subscribed, no saved automation listens for `slack.mention`, or the Channels log shows a signature failure (wrong `SLACK_SIGNING_SECRET`).                 |

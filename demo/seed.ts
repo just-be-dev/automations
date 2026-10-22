@@ -1,4 +1,4 @@
-/** The demo's known state: its people, entity type, templates, role, and saved onboarding workflow. */
+/** The demo's known state: its people, entity type, templates, and saved onboarding workflow. */
 import * as Schema from "effect/Schema";
 import type { EntityData, EntityType } from "../src/entities/model.ts";
 import type { Template } from "../src/entities/templates.ts";

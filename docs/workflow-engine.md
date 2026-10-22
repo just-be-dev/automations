@@ -18,12 +18,12 @@ Agents write a workflow, the DSL holds it, and an interpreter runs a saved snaps
                          ┌───────────────────────────┐
                          │ checkWorkflow             │
                          │ entity types · templates ·│
-                         │ roles · connection        │
-                         │ registry                  │
+                         │ connection registry       │
+                         │                           │
                          └───────────────────────────┘
 ```
 
-[`checkWorkflow`](../src/workflow/catalog.ts) runs at five points: when the planner calls [`check_workflow`](../src/agents/planner/tools.ts), when [`planDraft`](../src/agents/planner/planner.ts) settles its answer, when [`setDraft`](../src/automation/design-session.ts) replaces the draft (`PUT /:id/draft`), on [save](../src/automation/workflow-store.ts), and when [a run starts](../src/automation/runs.ts). The tool, `setDraft`, save, and run start each read the current catalog, so a type, template, or role that changed since the last check is caught at the next one. `planDraft` checks against the catalog read when the reply started, the same one its instructions describe, and skips the check when the working copy didn't change.
+[`checkWorkflow`](../src/workflow/catalog.ts) runs at five points: when the planner calls [`check_workflow`](../src/agents/planner/tools.ts), when [`planDraft`](../src/agents/planner/planner.ts) settles its answer, when [`setDraft`](../src/automation/design-session.ts) replaces the draft (`PUT /:id/draft`), on [save](../src/automation/workflow-store.ts), and when [a run starts](../src/automation/runs.ts). The tool, `setDraft`, save, and run start each read the current catalog, so a type or template that changed since the last check is caught at the next one. `planDraft` checks against the catalog read when the reply started, the same one its instructions describe, and skips the check when the working copy didn't change.
 
 ## Agents generate the workflow
 
@@ -150,7 +150,7 @@ Answering stores the answer and schedules `planReply` in one transaction, then w
 
 ```diagram
 ┌──────────────────────────────────────────────────────────────────────┐
-│ Workflow · name · permissions? { operation: "auto" | { ask: role } } │
+│ Workflow · name · permissions? { operation: "auto" | "ask" }         │
 │                                                                      │
 │ ┌──────────────────────────────┐  ┌────────────────────────────────┐ │
 │ │ trigger · one of             │  │ steps · Step[], 1–20 top level │ │
@@ -212,7 +212,7 @@ Answering stores the answer and schedules `planReply` in one transaction, then w
 ```diagram
 ┌──────────────────────────┐      ┌──────────────────────────────┐
 │ Workflow                 │      │ Catalog, read when checked   │
-│ decoded by its Schema:   │      │ types, templates, roles      │
+│ decoded by its Schema:   │      │ types, templates             │
 │ shape, sizes, IDs        │      │ (catalogOf over EntityStore) │
 └────────────┬─────────────┘      │ + connection registry        │
              │                    └───────────────┬──────────────┘
@@ -230,14 +230,14 @@ Answering stores the answer and schedules `planReply` in one transaction, then w
 │                      person and url inputs fit; an assignee is a │
 │                      person                                      │
 │ unreachableProblems  nothing follows a stop step in its list     │
-│ permissionProblems   every operation used has "auto" or a known  │
-│                      role, and none named is unknown             │
+│ permissionProblems   every operation used has "auto" or "ask",   │
+│                      and none named is unknown                   │
 └───────────────────────────────┬──────────────────────────────────┘
                                 ▼
      no problems: the Workflow   ·   some: InvalidWorkflow, one per line
 ```
 
-`checkSequence` carries the steps finished on every path. After a `parallel` step, every step its branches finish on every path joins them; after an `if` or `decide`, only the step itself does, because a branch may not run. That guarantee lets the interpreter treat a missing record as a step that didn't run. `describeCatalog` writes the same catalog into the planner's instructions. [`docs.test.ts`](../src/workflow/docs.test.ts) checks the DSL reference's examples against the seeded catalog.
+`checkSequence` carries the steps finished on every path. After a `parallel` step, every step its branches finish on every path joins them; after an `if` or `decide`, only the step itself does, because a branch may not run. That guarantee lets the interpreter treat a missing record as a step that didn't run. `describeCatalog` writes the same catalog into the planner's instructions. [`docs.test.ts`](../src/workflow/docs.test.ts) checks the DSL reference's examples against the demo's sample catalog.
 
 ## Execution replays a saved snapshot
 
@@ -452,7 +452,7 @@ or person                               wf:<eid>: journal         + StepRunner
   │ POST …/tasks/:step  │                       │                       │
   │ or a Slack click    │                       │                       │
   │────────────────────▶│                       │                       │
-  │                     │ respond: approvers,   │                       │
+  │                     │ respond: task open,   │                       │
   │                     │ field types           │                       │
   │                     │ respondToHuman        │                       │
   │                     │──────────────────────▶│                       │
@@ -479,7 +479,7 @@ Each `advance` reruns the walk from the first step, reusing what the journal hol
 
 In local development, `resumeNow` fires a waiting wait step's clock early by calling the same `clock` operation with the deferred `DurableClock/<id>`. Deferreds are first-write-wins, so the scheduled callback later finds it complete, writes nothing and schedules no `advance`. A run's `resumesAt` comes from the same journal: a `clock:<name>` whose deferred isn't stored yet.
 
-A human step with a `timeout` races its deferred against the clock `<id>/timeout` in `DurableDeferred.raceAll`, named `<id>/outcome` (journaled as `deferred:raceAll/<id>/outcome`). An ask-first action opens its task with `<id>/approval-request` and waits on `<id>/approval`. When the deployment has a Slack bot token, opening a task also sends it as a DM ([task notifications](../src/automation/task-notifications.ts)): an approval to each member of its role, and a human step to its assignee only when the step says `notify: "slack"`. Email `notify` is recorded, never sent. That happens inside the request Activity, records each recipient on the task, and never fails the step. Only approval DMs carry buttons, and only once the studio link knows the automation's ID. An ask-first action whose role no longer exists fails the step. `respond` checks the answer against the task's field types, and, when the studio knows who answers, an approval against the role members the task recorded. An approval DM's **Approve** and **Reject** buttons reach `respond` too: the Api takes each click off its Slack actions queue and answers with the clicker's Slack email ([approving from Slack](slack.md#approving-from-slack)). `respond` takes one answer at a time and records the first as the task's `decision`. A rejected approval reports the step `declined` and records nothing, so the steps that need its record are skipped. A human step that times out records `timedOut: true` with its form's defaults; a timeout clock that fires after an answer changes nothing. A `stop` step fails the execution with `RunStopped`, which interrupts every branch.
+A human step with a `timeout` races its deferred against the clock `<id>/timeout` in `DurableDeferred.raceAll`, named `<id>/outcome` (journaled as `deferred:raceAll/<id>/outcome`). An ask-first action opens its task with `<id>/approval-request` and waits on `<id>/approval`. When the deployment has a Slack bot token, opening a human step's task also sends it to its assignee as a DM when the step says `notify: "slack"` ([task notifications](../src/automation/task-notifications.ts)). Email `notify` is recorded, never sent. That happens inside the request Activity, records each recipient on the task, and never fails the step. An approval names no one, so anyone in the studio may answer it and no DM goes out. `respond` checks the answer against the task's field types and records who answered when the studio knows. The **Approve** and **Reject** buttons on approval DMs sent before roles were removed reach `respond` too: the Api takes each click off its Slack actions queue and answers with the clicker's Slack email ([approving from Slack](slack.md#approving-from-slack)). `respond` takes one answer at a time and records the first as the task's `decision`. A rejected approval reports the step `declined` and records nothing, so the steps that need its record are skipped. A human step that times out records `timedOut: true` with its form's defaults; a timeout clock that fires after an answer changes nothing. A `stop` step fails the execution with `RunStopped`, which interrupts every branch.
 
 ### Three records describe one run
 

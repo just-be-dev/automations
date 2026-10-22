@@ -18,7 +18,7 @@ This is the live part of the talk, act two in the [deck](deck/index.html) (`mise
    > When someone new joins, welcome them on Slack, send our welcome email, and book 30 minutes with their manager. Three days in, check how it's going.
 
 3. Press **Stop dictation**. Wait for the words to stop changing, fix any mistakes in the input, then press **Send**.
-4. The agent asks: _Should People Ops review the welcome email before it goes out?_ Choose **Yes, People Ops approves each one**, then press **Send answers**.
+4. The agent asks something like: _Should someone review the welcome email before it goes out?_ Choose the answer that has each one approved first, then press **Send answers**.
 
 **Point out:** the agent asks about a real choice before it drafts anything. While it works, the studio page shows what the planner is doing.
 
@@ -28,7 +28,7 @@ The draft appears in the studio: **Launch a great first week**. Walk it top to b
 
 - The trigger: an employee's start date.
 - **Get the first day ready**: three branches that run at the same time (find a welcome slot, give the manager a heads-up, and welcome them on Slack).
-- **Send the right welcome email**: the template is chosen by role, and the step shows _Asks People Ops_.
+- **Send the right welcome email**: the template is chosen by role, and the step shows _Asks first_.
 - **Book their first conversation**, **Give them three days to settle in**, **Ask the manager how it's going**.
 
 **Point out branch three.** If the planner picked `#general`, this is the act one mistake, and here you see it before it reaches anyone. If it picked something else, say what it chose and make the same correction anyway.
@@ -50,24 +50,23 @@ Optional, if you have time and want the check-in to collect specific answers:
 
 ## 4. Permissions
 
-Scroll to **Permissions**. Each operation lists the steps that use it. **Send an email** is set to **Ask first** with People Ops as the approver; the others are set to **Allow**.
+Scroll to **Permissions**. Each operation lists the steps that use it. **Send an email** is set to **Ask first**; the others are set to **Allow**.
 
-**Point out:** permissions belong to this plan's operations, so People Ops approves this specific message rather than "email" in general.
+**Point out:** permissions belong to this plan's operations, so someone approves this specific message rather than "email" in general.
 
 ## 5. Save and run on Ada
 
 1. Press **Save draft**.
 2. Pick **Ada Lovelace** in the employee picker beside the run button, then press **Run saved version**.
-3. The run opens beside the workflow, one row per step. The three branches finish, and **Send the right welcome email** waits for People Ops.
+3. The run opens beside the workflow, one row per step. The three branches finish, and **Send the right welcome email** waits for approval.
 
 **Point out:** runs use the saved version, so you can keep editing the draft without touching this run.
 
 ## 6. Approve the email
 
-- **With Slack:** open the DM from Automations. It shows the finished engineering welcome email and a link into the run. Press **Approve**.
-- **Without Slack:** press **Approve** on the task in the run panel.
+Press **Approve** on the task in the run panel. It shows the finished engineering welcome email.
 
-The step then reads _Approved by Grace Hopper, People Ops_ with the time. If Slack is connected, show the heads-up DM and the `#eng-team` post. Email and Calendar are simulated, so say so when you show their results.
+The step then reads _Approved by_ your address, with the time. If Slack is connected, show the heads-up DM and the `#eng-team` post. Email and Calendar are simulated, so say so when you show their results.
 
 ## 7. Skip ahead three days
 

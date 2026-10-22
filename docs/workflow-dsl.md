@@ -2,7 +2,7 @@
 
 An automation is a JSON `Workflow`: a name, a trigger, and a tree of steps. The planner agent builds it with its tools, and runs execute the saved copy. The pieces:
 
-- **Entities** are the records a workflow is about, such as an `employee`. The `EntityStore` service keeps their types and records; its D1 layer is the implementation in use. A run's **subject** is the entity it's about.
+- **Entities** are the records a workflow is about, such as an `employee`. Their types and records live in entity-store, behind the `EntityStore` service; automations has no built-in type, and the examples here use the demo's sample `employee`. A run's **subject** is the entity it's about.
 - **Capabilities** are what the interpreter does itself: run an agent, wait, branch, run branches in parallel, decide, ask a person, and stop the run.
 - **Connections** are outside services, such as email, Slack, a calendar, or HTTP. An `action` step performs one of their operations.
 - **Templates** are approved, reusable wording, such as the standard welcome email. An `action` step fills its inputs from one, and a `match` picks a different one per case, for example by role.
@@ -118,7 +118,7 @@ When a new hire's start date is set, remind the manager to greet them, propose a
     }
   ],
   "permissions": {
-    "calendar.createEvent": { "ask": "people_ops" },
+    "calendar.createEvent": "ask",
     "calendar.findTimes": "auto"
   }
 }
@@ -126,12 +126,12 @@ When a new hire's start date is set, remind the manager to greet them, propose a
 
 ## Workflow
 
-| Field         | Meaning                                                                                               |
-| ------------- | ----------------------------------------------------------------------------------------------------- |
-| `name`        | Non-blank, at most 120 characters.                                                                    |
-| `trigger`     | What starts a run. See [Triggers](#triggers).                                                         |
-| `steps`       | 1–20 top-level steps. Each list runs in order.                                                        |
-| `permissions` | Whether each operation it uses runs on its own or asks a role first. See [Permissions](#permissions). |
+| Field         | Meaning                                                                                        |
+| ------------- | ---------------------------------------------------------------------------------------------- |
+| `name`        | Non-blank, at most 120 characters.                                                             |
+| `trigger`     | What starts a run. See [Triggers](#triggers).                                                  |
+| `steps`       | 1–20 top-level steps. Each list runs in order.                                                 |
+| `permissions` | Whether each operation it uses runs on its own or asks first. See [Permissions](#permissions). |
 
 Rules for the whole tree:
 
@@ -273,22 +273,6 @@ automations reads each type at its latest version in entity-store: a `string` is
 | `POST /api/changes/:id/decision` | Confirm or cancel the prepared change with `{ "approved": true }` or `false`                                     |
 
 Entity writes are proposals: preparing one writes nothing, and confirming it applies it. `putEntity` (`{ "kind": "putEntity", "type", "id", "data" }`) merges `data` over the entity (`null` clears a field) and checks it against its type. Confirming writes it only if the entity is still at the revision you reviewed; otherwise it fails as stale and writes nothing. The runs the change triggers start shortly after, from entity-store's change queue, so the decision's result is the entity, not its runs. The assistant and the MCP server propose changes the same way.
-
-### Roles
-
-A role is a named group of people who approve the operations a workflow [asks first](#permissions) about. Its members are employees with an email, by type and ID. entity-store keeps each role as an entity of type `role`, whose ID is the role's name:
-
-```json
-{
-  "name": "people_ops",
-  "label": "People Ops",
-  "members": [{ "type": "employee", "id": "grace" }]
-}
-```
-
-The demo reset creates this role. `GET /api/roles` lists roles, `DELETE /api/roles/:name` deletes one, and `PUT /api/roles/:name` creates or replaces one once every member is a stored employee with an email. The MCP server's `list_roles` and `define_role` tools do the same.
-
-The store keeps members able to approve. It refuses to delete an entity a role lists (entity-store refuses too, since the role links to it), to clear a member's email, to redefine `employee` without an `email` field, and to delete a type a role has members of. Take the member out of the role first. An approval task already open keeps the members it was opened with.
 
 ## Refs
 
@@ -477,15 +461,15 @@ The built-in command `entity.put` merges a validated update through the same ten
 }
 ```
 
-Permission to emit this command **authorizes the entity write**, with no second confirmation. Use an ask-first role unless automatic writes were explicitly authorized. Unknown types, invalid fields and role-member constraints still fail validation. Duplicate delivery returns the existing receipt instead of overwriting a newer edit. A command that finds the entity changed since it was prepared is checked again against the newer data, since nobody reviewed a particular version; one entity-store refuses fails into the dead letters. Lifecycle names cannot be emitted by actions or HTTP callers.
+Permission to emit this command **authorizes the entity write**, with no second confirmation. Set it to ask first unless automatic writes were explicitly authorized. Unknown types and invalid fields still fail validation. Duplicate delivery returns the existing receipt instead of overwriting a newer edit. A command that finds the entity changed since it was prepared is checked again against the newer data, since nobody reviewed a particular version; one entity-store refuses fails into the dead letters. Lifecycle names cannot be emitted by actions or HTTP callers.
 
 Event chains carry a depth from 0 to 16. Publication increments it; an entity command's resulting fact and entity-triggered runs also increment it. A command's write carries its depth in entity-store's `meta`, so the fact entity-store's change queue brings back keeps it, and a write made in entity-store directly starts at 0. At depth 16, runs may finish but cannot emit again, and entity commands are refused: an `events.emit` step that would publish past the limit, or an `entity.put` at depth 16, fails with "Event chain limit reached". Delivery failures retry and eventually enter a dead-letter queue, but a command that can never apply is dropped with a warning instead. The depth bound stops cycles, not all possible fan-out.
 
 ### Permissions
 
-`permissions` maps each operation the workflow uses to `"auto"` (the run performs it on its own) or `{ "ask": "<role>" }` (each run waits until a member of that [role](#roles) approves it). The studio shows them as allow and ask first, with the role beside it. The planner sets one for every operation, and reads the current ones with the draft on every turn. The person can change any of them in the studio, or with `POST /api/automations/:id/permissions` and `{ "permissions": { "email.send": { "ask": "people_ops" } } }`, which merges into the draft. The planner's edits start from the draft's permissions, and a permission the person sets for another operation while the planner works is kept. `checkWorkflow` rejects a workflow that leaves an operation it uses without a permission, names an unknown operation, or asks an unknown role. Runs follow the saved copy.
+`permissions` maps each operation the workflow uses to `"auto"` (the run performs it on its own) or `"ask"` (each run waits until someone approves it). The studio shows them as allow and ask first. Workflows saved before roles were removed may hold `{ "ask": "<role>" }`; it reads as `"ask"`, and the role is ignored. The planner sets one for every operation, and reads the current ones with the draft on every turn. The person can change any of them in the studio, or with `POST /api/automations/:id/permissions` and `{ "permissions": { "email.send": "ask" } }`, which merges into the draft. The planner's edits start from the draft's permissions, and a permission the person sets for another operation while the planner works is kept. `checkWorkflow` rejects a workflow that leaves an operation it uses without a permission, or names an unknown operation. Runs follow the saved copy.
 
-When an action asks first, the run resolves its inputs and opens an approval task that shows the operation, those inputs, the template they came from, and the role with its members at that moment. With [Slack connected](slack.md#task-messages), each member gets a DM with the same details, a link to the run, and **Approve** and **Reject** buttons ([approving from Slack](slack.md#approving-from-slack)). The step waits as `waiting`. Answer it like a human step's task with `{ "approved": boolean }`. When the studio knows who is answering (Cloudflare Access's authenticated email, on deployed stages), only the role's members may answer, and the answer records them as `respondedBy`. Under `alchemy dev` there's no Access, so anyone can answer unless `DEV_USER_EMAIL` names who you are locally. The run shows who approved, by the member entity's title, and when. Approving performs the operation with the inputs shown. Declining marks the step `declined`, and it records nothing. Every later step that reads its record is then `skipped`, as are the steps that read theirs; the rest of the run carries on. Use a [`stop`](#stop) step to end the run instead. A human step's `notify` doesn't ask.
+When an action asks first, the run resolves its inputs and opens an approval task that shows the operation, those inputs, and the template they came from. It names no one and sends no message: anyone who can use the studio may answer it. The step waits as `waiting`. Answer it like a human step's task with `{ "approved": boolean }`. When the studio knows who is answering (Cloudflare Access's authenticated email, on deployed stages, or `DEV_USER_EMAIL` under `alchemy dev`), the answer records them as `respondedBy`, and the run shows who approved, and when. Approving performs the operation with the inputs shown. Declining marks the step `declined`, and it records nothing. Every later step that reads its record is then `skipped`, as are the steps that read theirs; the rest of the run carries on. Use a [`stop`](#stop) step to end the run instead. A human step's `notify` doesn't ask.
 
 `http.post` really sends:
 
@@ -539,7 +523,7 @@ The planner prefers templates to writing text itself or adding an agent step to 
 
 When a run starts, `expandTemplates` replaces each use with the inputs its content fills, so the run's workflow carries plain text and replays the same wording after a template changes. It keeps the template's label beside those inputs as `templateLabel`, so an approval can name the wording it shows; don't write `templateLabel` yourself. Editing a template changes the runs that start afterwards. If a template a saved workflow uses is deleted, or no longer fits it, the next run is recorded as `failed` with the problems instead of starting.
 
-`migrations/0003_templates.sql` creates `engineering_welcome_email` and `welcome_email`, which welcomes any new hire.
+automations seeds no templates. The [demo reset](development.md#live-demo) creates `engineering_welcome_email` and `welcome_email`, which welcomes any new hire.
 
 | Endpoint                               | Purpose                                          |
 | -------------------------------------- | ------------------------------------------------ |

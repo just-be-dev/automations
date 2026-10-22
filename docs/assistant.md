@@ -139,8 +139,8 @@ The browser polls `GET /api/assistant/:sessionId` every second while the status 
 
 [`session.ts`](../src/assistant/session.ts) defines four `AgentTool`s ([`src/ai/pi.ts`](../src/ai/pi.ts)). [The pi adapter](../src/platform/cloudflare/pi.ts) offers them to the root conversation only, with `replay: "safe"` and `executionMode: "sequential"`. Each tool decodes its arguments with Schema; a decode failure reaches the model as an `AgentToolError` result before any receipt exists. A later failure in `propose_change` or `draft_automation` also fails the tool's open receipt.
 
-- `read_studio` reads the `catalog` (types, templates, roles, automations), the `entities` of a type, one `entity`, or one `automation`'s workflow. It writes nothing and keeps no receipt. The instructions treat what it returns as untrusted data.
-- `propose_change` takes a `ChangeAction` ([`src/changes/model.ts`](../src/changes/model.ts)): put or delete an entity, type or template. Roles have no action.
+- `read_studio` reads the `catalog` (types, templates, automations), the `entities` of a type, one `entity`, or one `automation`'s workflow. It writes nothing and keeps no receipt. The instructions treat what it returns as untrusted data.
+- `propose_change` takes a `ChangeAction` ([`src/changes/model.ts`](../src/changes/model.ts)): put or delete an entity, type or template.
 - `draft_automation` hands design to the planner; see below.
 - `ask_question` is the shared [ask-question tool](../src/ai/ask-question/tool.ts): 1–4 questions with 2–4 options each, checked before anything is shown.
 

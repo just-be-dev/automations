@@ -16,11 +16,11 @@ The workflow starts with a request like this:
 
 Then refine it:
 
-> People Ops should check the email before it goes out. Send the manager a heads-up on Slack too. For the check-in, ask who their buddy is, what they're working on, and whether they need any help.
+> I want to check the email before it goes out. Send the manager a heads-up on Slack too. For the check-in, ask who their buddy is, what they're working on, and whether they need any help.
 
-It finds a welcome slot and gives the manager a heads-up **in parallel**. It chooses approved email wording based on the hire’s role, pauses for **People Ops to review the exact email**, and books a manager welcome. Three days after the start date, it asks the manager to record the onboarding buddy, first project, and any help the hire needs.
+It finds a welcome slot and gives the manager a heads-up **in parallel**. It chooses approved email wording based on the hire’s role, pauses for **someone to review the exact email**, and books a manager welcome. Three days after the start date, it asks the manager to record the onboarding buddy, first project, and any help the hire needs.
 
-The [example workflow](docs/examples/first-week.json) uses the employee type and People Ops role that `mise run demo:reset` creates, and the templates included with local setup. Choose an employee with a start date and manager to try it. The screenshot below is a live model's draft from these two requests, so it differs in places from the example; see the [demo details](docs/development.md#readme-demo). `mise run demo:reset` prepares a local studio for the live demo; see [Live demo](docs/development.md#live-demo).
+The [example workflow](docs/examples/first-week.json) uses the sample employee type and welcome templates that `mise run demo:reset` creates. Choose an employee with a start date and manager to try it. The screenshot below is a live model's draft from these two requests, so it differs in places from the example; see the [demo details](docs/development.md#readme-demo). `mise run demo:reset` prepares a local studio for the live demo; see [Live demo](docs/development.md#live-demo).
 
 ![The studio agent drafting and then refining a new-hire onboarding automation, beside the rendered draft: a welcome email chosen by role, a manager meeting, and a Slack heads-up running in parallel, a three-day wait, and a check-in form for the manager. Steps the last reply added or changed are marked.](docs/images/first-week.png)
 
@@ -36,7 +36,7 @@ _Both requests sent to the studio agent in a local studio. The draft marks what 
 
 ## Prototype status
 
-This is a **single-tenant prototype**, not a production-ready service. It runs on Cloudflare and supports long-lived workflows that pause for days or for a person’s response. The records automations act on, and their types and roles, live in a separate service, entity-store, which automations reads and writes over a service binding; every change to them, wherever it’s made, can start automations.
+This is a **single-tenant prototype**, not a production-ready service. It runs on Cloudflare and supports long-lived workflows that pause for days or for a person’s response. The records automations act on, and their types, live in a separate service, entity-store, which automations reads and writes over a service binding; every change to them, wherever it’s made, can start automations.
 
 Calendar currently **simulates its operations**: it records what would happen but contacts nobody. Email is simulated too until you [set a sender on a domain onboarded to Cloudflare Email Service](docs/email.md), and Slack until you [connect a workspace](docs/slack.md), which lets automations post messages and start from mentions. Human tasks reach people only as Slack DMs, once Slack is connected; otherwise their notifications are recorded rather than sent. HTTP webhooks make real requests. Do not put secrets in workflow definitions. Production use needs further security review; see the [operational caveats](docs/development.md#caveats).
 

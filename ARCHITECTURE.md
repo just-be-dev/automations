@@ -47,7 +47,7 @@ This is a single-tenant Cloudflare application. [Development and operations](doc
 ┌───────────────────────┐ ┌───────────────────────┐ ┌───────────────────────┐
 │ entity-store          │ │ D1                    │ │ Workers AI            │
 │ its own stack · types │ │ directory, templates  │ │ pi models, namer,     │
-│ entities, roles       │ │ + subscriptions       │ │ clef, dictation       │
+│ entities              │ │ + subscriptions       │ │ clef, dictation       │
 └───────────┬───────────┘ └───────────────────────┘ └───────────────────────┘
             │ change queue: every committed entity write, consumed by Api
             ▼
@@ -96,17 +96,17 @@ When Slack is configured, a third Worker, [`Channels`](src/platform/cloudflare/c
 
 Dependencies point from the Cloudflare adapters into the application and domain modules, never back. [The boundary test](src/platform/boundary.test.ts) checks every module outside `ui/` and `platform/`: none may import Alchemy, `cloudflare:*`, `@cloudflare/*`, `agents`, or `src/platform/`, or name native types such as `D1Database` or `DurableObjectStorage`. Alchemy binding declarations run at plan time and cold start; storage, AI, and callbacks are used only inside request or instance handlers.
 
-| Owner                     | Responsibility                                                                      | Implementation                                                                                               |
-| ------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Browser application       | Navigation, editable forms, workflow rendering, run panels, polling                 | [`src/ui/`](src/ui/AGENTS.md)                                                                                |
-| API request               | Boundary validation, identity, per-request service composition                      | [`src/http/`](src/http/api.ts), [`api.ts`](src/platform/cloudflare/api.ts)                                   |
-| Automation                | Design session, saved snapshot, runs, durable callbacks, pi conversations           | [`src/automation/`](src/automation/application.ts), [`automation.ts`](src/platform/cloudflare/automation.ts) |
-| Planner and namer         | Planner instructions, working copy and tools; naming new automations                | [`src/agents/`](src/agents/planner/planner.ts), [`planning.ts`](src/automation/planning.ts)                  |
-| Workflow execution        | Replay journal, completed activities, clocks, deferred answers                      | [`durable-engine.ts`](src/workflow/durable-engine.ts), [`interpreter.ts`](src/workflow/interpreter.ts)       |
-| Assistant session         | Conversation, typed tools, questions, confirmations, delegated design               | [`src/assistant/`](src/assistant/session.ts), [`assistant.ts`](src/platform/cloudflare/assistant.ts)         |
-| Tenant change coordinator | Validated proposals, stale-decision checks, recovery, receipts                      | [`src/changes/`](src/changes/application.ts), [`changes.ts`](src/platform/cloudflare/changes.ts)             |
-| Tenant catalog            | Entity types, records and roles (entity-store); templates, subscriptions, directory | [`EntityStore`](src/entities/store.ts), [`AutomationIndex`](src/automation/index.ts), adapters               |
-| Events                    | Event model, publishing, queue delivery, Slack ingress                              | [`src/events/`](src/events/delivery.ts), [`src/channels/`](src/channels/slack.ts)                            |
+| Owner                     | Responsibility                                                               | Implementation                                                                                               |
+| ------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Browser application       | Navigation, editable forms, workflow rendering, run panels, polling          | [`src/ui/`](src/ui/AGENTS.md)                                                                                |
+| API request               | Boundary validation, identity, per-request service composition               | [`src/http/`](src/http/api.ts), [`api.ts`](src/platform/cloudflare/api.ts)                                   |
+| Automation                | Design session, saved snapshot, runs, durable callbacks, pi conversations    | [`src/automation/`](src/automation/application.ts), [`automation.ts`](src/platform/cloudflare/automation.ts) |
+| Planner and namer         | Planner instructions, working copy and tools; naming new automations         | [`src/agents/`](src/agents/planner/planner.ts), [`planning.ts`](src/automation/planning.ts)                  |
+| Workflow execution        | Replay journal, completed activities, clocks, deferred answers               | [`durable-engine.ts`](src/workflow/durable-engine.ts), [`interpreter.ts`](src/workflow/interpreter.ts)       |
+| Assistant session         | Conversation, typed tools, questions, confirmations, delegated design        | [`src/assistant/`](src/assistant/session.ts), [`assistant.ts`](src/platform/cloudflare/assistant.ts)         |
+| Tenant change coordinator | Validated proposals, stale-decision checks, recovery, receipts               | [`src/changes/`](src/changes/application.ts), [`changes.ts`](src/platform/cloudflare/changes.ts)             |
+| Tenant catalog            | Entity types and records (entity-store); templates, subscriptions, directory | [`EntityStore`](src/entities/store.ts), [`AutomationIndex`](src/automation/index.ts), adapters               |
+| Events                    | Event model, publishing, queue delivery, Slack ingress                       | [`src/events/`](src/events/delivery.ts), [`src/channels/`](src/channels/slack.ts)                            |
 
 `AutomationHost` treats persistence and durable job scheduling as one capability: writes and scheduling commit or roll back together. `AssistantHost` requires the same guarantee for its turns, confirmations and answers. Application tests substitute an in-memory host and scripted `PiAgent`; production hosts supply SQLite storage, Alchemy callbacks, and Workers AI.
 
@@ -149,7 +149,7 @@ Dependencies point from the Cloudflare adapters into the application and domain 
 
 [The automation facade](src/automation/application.ts) composes two independent lifecycles: [design sessions](src/automation/design-session.ts) and [runs](src/automation/runs.ts). Both use [the workflow store](src/automation/workflow-store.ts); neither imports the other. The facade merges their callbacks and joins their reads.
 
-Each automation's Durable Object holds its draft, saved workflow, chat exchanges, pending planning work, run records, the replay journal, and pi conversations. D1 holds what must be listed across automations: the directory, because Cloudflare cannot enumerate Durable Object names, plus templates and subscriptions. Entity types, entities and roles live in [entity-store](#entity-store-is-the-system-of-record-for-entities).
+Each automation's Durable Object holds its draft, saved workflow, chat exchanges, pending planning work, run records, the replay journal, and pi conversations. D1 holds what must be listed across automations: the directory, because Cloudflare cannot enumerate Durable Object names, plus templates and subscriptions. Entity types and entities live in [entity-store](#entity-store-is-the-system-of-record-for-entities).
 
 ### Creation names the automation, then sends the first message
 
@@ -210,7 +210,7 @@ The studio designs automations only through [the studio assistant](#the-studio-a
 
 `chat` only stores the message and schedules `planReply`, so a reload mid-answer loses nothing. A second message while one is working is refused, and a message sent while questions are open answers them. The assistant passes a request ID, which makes its delegated chat idempotent.
 
-The planner's instructions come from the current entity types, templates, roles, and connection registry, rebuilt on each turn and resent only when they change. [Planner tools](src/agents/planner/tools.ts) edit [a flat working copy](src/agents/planner/plan.ts): each step is stored once, and container steps name their children by ID. Tools set or replace values so replaying a call does not apply the edit twice. The planner reads workflow content as YAML; tool arguments remain JSON.
+The planner's instructions come from the current entity types, templates, and connection registry, rebuilt on each turn and resent only when they change. [Planner tools](src/agents/planner/tools.ts) edit [a flat working copy](src/agents/planner/plan.ts): each step is stored once, and container steps name their children by ID. Tools set or replace values so replaying a call does not apply the edit twice. The planner reads workflow content as YAML; tool arguments remain JSON.
 
 When the answer arrives, the application assembles the tree and checks its schema and catalog references. An invalid, empty or oversized answer gets one retry with the problems; a pi failure marks the chat failed. A turn that changes nothing leaves the draft alone. A turn that edits an existing draft records [what it changed](src/workflow/changes.ts) with its exchange: steps matched by ID, old field values, and the name, trigger and permissions. Questions live beside the working copy, so asking one is not a workflow edit.
 
@@ -325,7 +325,7 @@ Timed triggers schedule one pending `tick`. Each tick starts its occurrence's ru
                  ▼                                      ▼
 ┌─────────────────────────────────┐    ┌─────────────────────────────────┐
 │ POST respond, or a Slack click  │    │ clock callback at `at`          │
-│ task open? responder in role?   │    │ fireClock                       │
+│ task open? who answered?        │    │ fireClock                       │
 │ values valid?                   │    │                                 │
 └────────────────┬────────────────┘    └────────────────┬────────────────┘
                  │                                      │
@@ -525,7 +525,7 @@ entity-store and proposal storage cannot share a transaction. Every write carrie
 
 Confirmed writes no longer publish anything or start runs themselves; their receipt is `{ entity }` or `{ deleted }`. Lifecycle events and entity triggers follow from entity-store's change queue, keyed by the change's `seq` in entity-store's log, which is never reused, so a redelivered message, or a write recovered after a restart, starts nothing twice. Proposals stored before entity-store keep their receipts; one without a receipt must be prepared again.
 
-Role writes are direct rather than proposal-based. [Entity MCP](src/http/entity-mcp.ts) mutation tools return proposals, and its `decide_change` tool applies the person's decision. A client that passes a `requestId` can retry a mutation tool without preparing a second proposal.
+[Entity MCP](src/http/entity-mcp.ts) mutation tools return proposals, and its `decide_change` tool applies the person's decision. A client that passes a `requestId` can retry a mutation tool without preparing a second proposal.
 
 ## Events flow through one queue
 
@@ -562,18 +562,18 @@ Named events are an application capability in [`src/events/`](src/events/deliver
 
 Every source picks an event ID that is stable across its own retries, so redeliveries reach each automation's receipts and start nothing twice. `events.emit` is a normal permission-controlled action. Authorized `entity.put` commands persist their applying intent during preparation, so a restart before application cannot make the command stale. Event depth follows commands, lifecycle facts and entity-triggered runs, and stops publication at 16 hops. A command's write carries its depth + 1 in entity-store's `meta`; the change consumer publishes the lifecycle fact at that depth and gives runs it starts the fact as their origin, so the count survives the round trip. A write made outside automations starts a chain at 0. `events.emit` fails a step that would go past the limit, including an `entity.put` at depth 16, whose lifecycle fact could not be published. Delivery drops a command that can never apply, with a warning, rather than retrying it into the dead-letter queue. See [events and entity commands](docs/workflow-dsl.md#publishing-events-and-entity-commands) for authorization and delivery semantics.
 
-Each Slack thread gets a `ChannelMailbox` Durable Object that stores its events and runs them in order from its alarm, with retries. [Its callbacks](src/channels/slack.ts) only publish `slack.mention`, `slack.message`, and `slack.reaction` under IDs taken from Slack's. A mention also subscribes the mailbox to its thread. The mailbox never touches automations directly. Outgoing Slack messages are a separate path: the `slack.sendMessage` action posts through `SlackSender` when `SLACK_BOT_TOKEN` is set ([setup](docs/slack.md)). With the same sender, [opening a task](src/automation/task-notifications.ts) DMs the role's members or the assignee, linking to the run at the studio origin that `STUDIO_URL` sets or the latest save recorded.
+Each Slack thread gets a `ChannelMailbox` Durable Object that stores its events and runs them in order from its alarm, with retries. [Its callbacks](src/channels/slack.ts) only publish `slack.mention`, `slack.message`, and `slack.reaction` under IDs taken from Slack's. A mention also subscribes the mailbox to its thread. The mailbox never touches automations directly. Outgoing Slack messages are a separate path: the `slack.sendMessage` action posts through `SlackSender` when `SLACK_BOT_TOKEN` is set ([setup](docs/slack.md)). With the same sender, [opening a task](src/automation/task-notifications.ts) DMs a human step's assignee, linking to the run at the studio origin that `STUDIO_URL` sets or the latest save recorded.
 
 ### Approvals from Slack go through respond
 
-An approval task's DM has **Approve** and **Reject** buttons. [The interactivity route](src/channels/slack-interactivity.ts) on `Channels` checks Slack's signature over the exact body, puts the click on the `SlackActions` queue, and answers within Slack's 3 seconds. `Channels` can't reach the Automation objects, and the `Api` stays private, so the queue is the hand-off. The `Api` consumes it with [`decideFromSlack`](src/channels/slack-approvals.ts), which looks up the clicker's email address in Slack and calls `Automation.respond` with it, just as HTTP passes the Access email. A click is never answered without an email address, because `respond` checks the role only for a known responder.
+An ask-first action's DM, sent before roles were removed, has **Approve** and **Reject** buttons; new tasks name no one to DM, but those buttons still work. [The interactivity route](src/channels/slack-interactivity.ts) on `Channels` checks Slack's signature over the exact body, puts the click on the `SlackActions` queue, and answers within Slack's 3 seconds. `Channels` can't reach the Automation objects, and the `Api` stays private, so the queue is the hand-off. The `Api` consumes it with [`decideFromSlack`](src/channels/slack-approvals.ts), which looks up the clicker's email address in Slack and calls `Automation.respond` with it, just as HTTP passes the Access email. A click is never answered without an email address, so every decision records who made it.
 
-`respond` takes one answer at a time per automation and records the first as the task's `decision`. Every later click, of either button and by anyone, finds the task closed and redraws the message from that decision, so a redelivered or retried click repeats nothing. While the task is open, a refused click gets an ephemeral reply and changes nothing. The button's action IDs and its value, the task's automation, run and step, are persisted in sent messages.
+`respond` takes one answer at a time per automation and records the first as the task's `decision`. Every later click, of either button and by anyone, finds the task closed and redraws the message from that decision, so a redelivered or retried click repeats nothing. While the task is open, a refused click (no email address, or a task that isn't an approval) gets an ephemeral reply and changes nothing. The button's action IDs and its value, the task's automation, run and step, are persisted in sent messages.
 
 ## Catalogs and adapters keep validation consistent
 
 - [`src/workflow/model.ts`](src/workflow/model.ts) defines the pure workflow DSL, references, and conditions. [`catalog.ts`](src/workflow/catalog.ts) checks entity references, path ordering, operation inputs, template slots, and permissions.
-- [`src/entities/`](src/entities/store.ts) owns entity models, approved templates, roles, subscriptions, the entity-store contract and type adapter, and automations' rules on top. The memory store runs the same store code over [an in-memory entity-store](src/entities/entity-store-fake.ts).
+- [`src/entities/`](src/entities/store.ts) owns entity models, approved templates, subscriptions, the entity-store contract and type adapter, and automations' rules on top. The memory store runs the same store code over [an in-memory entity-store](src/entities/entity-store-fake.ts).
 - [`src/connections/registry.ts`](src/connections/registry.ts) describes operations without executing them. The planner, checker, and UI share it. [`runner.ts`](src/connections/runner.ts) executes those operations; [`slack.ts`](src/connections/slack.ts) posts to Slack with a bot token, and [`email.ts`](src/connections/email.ts) is the email sender's contract, which [the Cloudflare adapter](src/platform/cloudflare/email.ts) fills with Email Service.
 - [`src/ai/pi.ts`](src/ai/pi.ts) defines the `PiAgent` conversation contract and tools; [`trace.ts`](src/ai/trace.ts) defines traces. The Cloudflare implementation wraps Promise-based pi-ai and pi-durable in Effect and stores conversations in Durable Object SQLite. [`src/ai/classifier.ts`](src/ai/classifier.ts) defines the clef classifier that picks progress phrases and makes decide steps' decisions. [`workers-ai.ts`](src/platform/cloudflare/workers-ai.ts) selects the pi, classifier and naming models; evals reuse it.
 - [`src/http/entity-mcp.ts`](src/http/entity-mcp.ts) exposes the entity store over stateless MCP JSON-RPC. Handlers run within the request so they retain access to D1 and entity-store; the assistant uses application tools directly, not MCP.
@@ -600,10 +600,10 @@ Agent replies render Markdown tokens without setting raw HTML. Run results rende
 
 ## Guarantees have deliberate limits
 
-- Approval tasks record the role's members when opened and check the Access email, or the Slack email of whoever clicked in a DM, when answered. The private API trusts the Studio's identity header; local dev requests carry `DEV_USER_EMAIL` when it is set, and otherwise, like service-token requests, have no email restriction and share the `local` owner. JWT verification and the rest of the security boundary need production review.
+- Anyone who can reach the studio may answer an approval task; the answer records the Access email, or the Slack email of whoever clicked in a DM. The private API trusts the Studio's identity header; local dev requests carry `DEV_USER_EMAIL` when it is set, and otherwise, like service-token requests, carry no email and share the `local` owner. JWT verification and the rest of the security boundary need production review.
 - `http.post` accepts only literal public HTTPS URLs without credentials. Both the catalog and connection runner enforce the URL boundary. It does not forward trace headers. Workflows must not contain secrets.
 - Steps that are declined or skipped record nothing. Dependent steps are skipped; catalog checks guarantee that referenced steps precede their readers on every path.
-- automations' entity rules (snake_case names, role members who are employees with an email, the dependencies that block deleting a type) hold for writes made through automations. A write made in entity-store directly passes only entity-store's own checks, though it still reaches automations through the change queue.
+- automations' entity rules (snake_case names, the dependencies that block deleting a type) hold for writes made through automations. A write made in entity-store directly passes only entity-store's own checks, though it still reaches automations through the change queue.
 - entity-store delivers changes at least once and in no set order. A trigger compares the change's own before and after, and run IDs come from the change's `seq`, so neither duplicates nor reordering start extra runs; a trigger's condition that reads through a ref sees the referenced entity as it is at delivery.
 - Calendar and `notify: "email"` send nothing in the prototype. Email sends through Cloudflare Email Service only when `EMAIL_FROM` is set ([setup](docs/email.md)), and Slack posts, including task DMs, only when `SLACK_BOT_TOKEN` is set. Neither takes an idempotency key, so a retried step can send twice. A task DM records each recipient before and after posting, and looks for its own key in the DM before posting again. HTTP requests are real.
 

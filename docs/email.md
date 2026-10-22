@@ -55,7 +55,7 @@ In the studio, create an automation with the sidebar's **+**, using an inbox you
 
 Choose **Save draft**, then **Run saved version**. The email should arrive within a minute from `EMAIL_FROM`. The run's step record should show Cloudflare's `messageId` with no "Simulated" tag. Check the spam folder if it doesn't arrive; a newly onboarded domain has no sending reputation yet.
 
-For the welcome email from an approved template, pick an employee entity whose `email` is a real inbox, and run an automation whose `email.send` step uses the welcome template.
+For the welcome email from an approved template, run `mise run demo:reset`, pick an employee entity whose `email` is a real inbox, and run an automation whose `email.send` step uses the welcome template.
 
 ## How a send behaves
 
