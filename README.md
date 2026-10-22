@@ -50,7 +50,7 @@ mise install
 mise run dev
 ```
 
-Local development needs a Cloudflare profile for Workers AI, and entity-store running beside it ([setup](docs/development.md#running-entity-store-alongside)). The [development guide](docs/development.md#local-development) covers credentials and setup; `mise run dev` prints the studio address.
+Local development needs a Cloudflare profile for Workers AI, and runs a local stand-in for entity-store ([details](docs/development.md#entity-store-under-alchemy-dev)). The [development guide](docs/development.md#local-development) covers credentials and setup; `mise run dev` prints the studio address.
 
 ```sh
 mise run typecheck

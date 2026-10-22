@@ -25,7 +25,7 @@ Most modules open with a comment saying what they own.
 - `evals/`: evals of every LLM call against the real models: the tests in `<name>.eval.ts`, and their cases in `datasets/<name>.yaml`. See `docs/development.md#evals`.
 - `demo/`: `mise run demo:reset`, which brings a local studio to the live demo's state through the HTTP API, with its seed (`seed.ts`) and fallback workflow (`onboarding.json`). See `docs/development.md#live-demo`. Keep the seed's type and templates in step with the migrations; `demo/seed.test.ts` checks them.
 - `migrations/`: D1 migrations, applied in numeric order on deploy and under `alchemy dev`.
-- `scripts/`: the data migration to entity-store (`entity-store-migration/`, not run by anything) and `link-entity-store.ts`, which `mise run dev` runs first.
+- `scripts/`: the data migration to entity-store (`entity-store-migration/`, not run by anything).
 
 ## Boundaries
 
@@ -52,7 +52,8 @@ Most modules open with a comment saying what they own.
 ## entity-store
 
 - entity-store (a separate repo and Alchemy stack) is the system of record for entity types, entities and roles. automations keeps templates and `entity_subscriptions` in D1. Its `entity_types`, `entities` and `roles` tables are unused but stay until the data migration has run everywhere: never read, write or drop them.
-- `EntityStoreRpc` in `src/entities/entity-store-api.ts` is a contract with entity-store; change it only together with entity-store. Decode every answer. Every method returns a `Result` and never throws for a domain error.
+- `EntityStoreRpc` in `src/entities/entity-store-api.ts` is a contract with entity-store, whose API Worker serves it on its default entrypoint; change it only together with entity-store. Decode every answer. Every method returns a `Result` and never throws for a domain error.
+- Under `alchemy dev`, `EntityStoreDev` (`src/platform/cloudflare/entity-store-dev.ts`) stands in for entity-store: the in-memory entity-store behind the same methods, kept in its storage (`entity-store`), feeding the local `EntityStoreChanges` queue. `EntityStoreLive` picks it from `localDevelopment`; never bind it on a deployed stage. `PUT`/`DELETE /api/dev/entity-store/:type/:id` write to it directly, like an edit made in entity-store itself.
 - Roles are `role` entities (ID = role name, members link to `employee`s), and the `role` type is hidden from automations' types. Entity IDs are unique across types.
 - Saving a type from automations only adds or removes fields (`planTypeWrite`). Refuse a field whose kind changes rather than authoring a lens here.
 - The `meta` automations writes (`{ depth, sourceEventId?, changeId?, source? }`, at most 1 KB) is persisted in entity-store's change log. Keep it compatible.
@@ -142,7 +143,7 @@ Stick to these `GET` routes unless the user asks for more. `chat` calls Workers 
   - An occurrence never starts only some of its runs: past `MAX_SCHEDULED_RUNS` it starts none and records a failed `scheduled-<at>` run saying why, and save refuses a trigger that already matches more. Keep it that way; don't trim the list.
 - Storage keys are persisted contracts too: `draft`, `saved`, `pendingChat`, `plan` (the planner's working copy for one chat ID, with each `ask_question` call's questions and answer by call ID), `run:<id>`, `savedAt` (when `saved` was saved), `studio` (the automation's ID and the studio origin its latest save came from, for task links), `execution:<executionId>` (its run ID), `event:<eventId>` (`{runId}` receipt, with `runId: null` when ignored), `exchange:<000000>`, and `exchangeCount` in `Automation`, `identity`, `assistant` and `tool:<callId>` in `StudioAssistant`, `sequence` and `proposal:<id>` in `ChangeCoordinator` (`version: 2` records; older ones keep only their receipts), plus the engine's journal under `wf:<executionId>:` (see `src/workflow/durable-engine.ts`). Event runs use `event-<eventId>` and retain the optional original event in their run and execution payloads. A stored value that doesn't decode is a defect, not missing data.
 - Activity and deferred names in `src/workflow/interpreter.ts` (`<id>`, `<id>/refs`, `<id>/now`, `<id>/request`, `<id>/outcome`, `<id>/timeout`, `<id>/approval-request`, `<id>/approval`) are journal keys for runs in flight. Renaming one makes a waiting run redo that step.
-- entity-store's Api Worker and change queue are Alchemy refs to the constant stack `entity-store` with no stage (the current one): the queue ref must build the same env key at plan time and cold start. Alchemy's typed service bindings don't take another stack's Worker, so `EntityStoreRpcBinding` registers the raw `service` binding with `entrypoint: "EntityStoreRpc"`. Under `alchemy dev`, refs read entity-store's state through the link `mise run dev:entity-store` makes, and the Api consumes a local queue of the same name, since a ref can't reach another process's dev queue.
+- entity-store's Api Worker and change queue are Alchemy refs to the constant stack `entity-store` with no stage (the current one): the queue ref must build the same env key at plan time and cold start. Alchemy's typed service bindings don't take another stack's Worker, so `entity-store.ts` registers the raw `service` binding to its default entrypoint. Refs resolve through this stack's own state, so `alchemy dev` uses the `EntityStoreDev` stand-in and its local queue instead.
 - Never edit an applied D1 migration. Add the next numbered file in `migrations/` instead; Alchemy tracks applied files by hash in `__alchemy_migrations`.
 
 ## Invariants
@@ -164,7 +165,7 @@ Stick to these `GET` routes unless the user asks for more. `chat` calls Workers 
 ## Deploy and dependencies
 
 - Never run `alchemy deploy`, `alchemy destroy`, or `alchemy dev --stage <deployed stage>` unless asked.
-- `alchemy dev` runs locally on stage `dev_$USER`, skips Access, and still needs a Cloudflare profile for Workers AI, and entity-store's `alchemy dev` running on the same stage with `ENTITY_STORE_DIR` set (`docs/development.md#running-entity-store-alongside`). Its state lives in the checkout's `.alchemy/state` beside the local data, so each worktree migrates its own database. Deploys use the Cloudflare state store.
+- `alchemy dev` runs locally on stage `dev_$USER`, skips Access, and still needs a Cloudflare profile for Workers AI. Entities come from the `EntityStoreDev` stand-in, not a real entity-store. Its state lives in the checkout's `.alchemy/state` beside the local data, so each worktree migrates its own database. Deploys use the Cloudflare state store.
 - Never commit `.alchemy/` or Access service-token secrets.
 - Install dependencies with the mise-pinned bun (`mise exec -- bun`); an older bun rewrites the lockfile.
 - Foldkit, `@foldkit/*`, Vite, and `@effect/platform-*` are pinned exactly on purpose. To upgrade Foldkit, follow `src/ui/AGENTS.md`.

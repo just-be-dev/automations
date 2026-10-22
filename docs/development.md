@@ -14,21 +14,25 @@ mise run format-check
 mise run dev    # alchemy dev: local Workers, Durable Object, and Vite with hot reload
 ```
 
-`mise run dev` runs everything locally on stage `dev_$USER` and prints the Studio URL. Dev mode skips Cloudflare Access, but it needs Cloudflare credentials for Workers AI. Run `bun alchemy profile edit --add Cloudflare` once, or set `ALCHEMY_PROFILE` to a profile that already has them. It also needs entity-store running locally: see [below](#running-entity-store-alongside).
+`mise run dev` runs everything locally on stage `dev_$USER` and prints the Studio URL. Dev mode skips Cloudflare Access, but it needs Cloudflare credentials for Workers AI. Run `bun alchemy profile edit --add Cloudflare` once, or set `ALCHEMY_PROFILE` to a profile that already has them. Entities come from a local stand-in for entity-store: see [below](#entity-store-under-alchemy-dev).
 
 Local development also offers **Resume now** on a run's step that waits on a clock, so a three-day wait takes seconds in a demo. It fires the clock through the same operation as the scheduled `clock` callback, and that delivery later changes nothing. Only `alchemy dev` on a `dev_` stage enables it: each Worker's Init reads `ALCHEMY_DEV` on such a stage, which binds it into the Worker. A deploy binds nothing, so `GET /api/dev` answers `{ "local": false }` and the resume route answers 404 like an unknown route. The Automation object refuses too.
 
 Without Access, a local studio doesn't know who you are, so anyone can answer an approval and the answer names no one. Set `DEV_USER_EMAIL` in `.env` to your address and restart dev to answer as yourself. Every request from your browser, `curl` or the demo reset then carries that address, as if Access had sent it, so only a role's members can approve and the run records who did. The Api reads it only when local development is on, so a deploy ignores it. Assistant sessions belong to that address too, so the assistant panel starts a fresh conversation the first time.
 
-### Running entity-store alongside
+### entity-store under `alchemy dev`
 
-automations keeps no entities of its own. Entity types, entities and roles live in entity-store, a separate Alchemy stack ([architecture](../ARCHITECTURE.md#entity-store-is-the-system-of-record-for-entities)), so a local studio needs a local entity-store:
+automations keeps no entities of its own. Entity types, entities and roles live in entity-store, a separate Alchemy stack ([architecture](../ARCHITECTURE.md#entity-store-is-the-system-of-record-for-entities)). A reference to another stack resolves through this stack's own Alchemy state, so `alchemy dev` can't bind the entity-store another checkout serves. Instead, under `alchemy dev` a local stand-in takes its place: the `EntityStoreDev` Durable Object ([`entity-store-dev.ts`](../src/platform/cloudflare/entity-store-dev.ts)) runs the same in-memory entity-store the tests use behind the same RPC methods, keeps it in its storage, and sends each committed change to a local `EntityStoreChanges` queue, which the Api consumes as it does entity-store's queue when deployed. Nothing else needs to run. Deployed stages never bind it.
 
-1. In your entity-store checkout, run its `alchemy dev`, on the same stage as here (`dev_$USER` by default).
-2. Set `ENTITY_STORE_DIR` in this checkout's `.env` to that checkout.
-3. Run `mise run dev` here. It first runs `mise run dev:entity-store`, which links entity-store's local Alchemy state into `.alchemy/state/entity-store`, so this stack's reference to entity-store's Api Worker resolves to the one its `alchemy dev` serves. It stops and says what to do if entity-store's state isn't there yet.
+A fresh local studio has no entities: `mise run demo:reset` creates the demo's type, people and role through the studio. To see what an edit made in entity-store itself does, write to the stand-in directly, without automations' checks; its change still reaches automations through the queue:
 
-Both `alchemy dev` processes register their Workers in Alchemy's local dev registry (`~/.local/state/alchemy/registry`), so the service binding reaches `EntityStoreRpc` in the other process. Changes flow the other way through a queue: under `alchemy dev`, automations declares a local queue named `entity-store-dev_$USER-changes` and consumes it, and entity-store's local producer delivers to whichever process consumes that name. A change entity-store sends while automations' dev isn't running is dropped with a warning there, so no automation hears of it; its change log still lists it (`GET /api/changes` on entity-store). A fresh local entity-store is empty: `mise run demo:reset` creates the demo's type, people and role through the studio.
+```sh
+curl -X PUT "$STUDIO_URL/api/dev/entity-store/employee/ada" \
+  -H "Content-Type: application/json" -d '{"patch":{"start_date":"2026-11-02"}}'
+curl -X DELETE "$STUDIO_URL/api/dev/entity-store/employee/ada"
+```
+
+These routes answer 404 outside local development. The stand-in checks the schema kinds, links and revisions automations relies on, and only the lens operations automations writes (`add`, `remove`); try anything beyond that against a deployed entity-store.
 
 If an existing OAuth profile has expired, run `bun alchemy profile refresh --profile default --provider Cloudflare` and follow the sign-in flow.
 
@@ -153,7 +157,7 @@ The first deploy offers to bootstrap Alchemy's Cloudflare-hosted state store. Al
 - `Api` has no public URL. Studio forwards `/api/*` to it over a service binding.
 - `Channels` takes Slack's webhooks, deployed only when Slack is configured ([Slack](#slack)).
 
-Deploy entity-store first, on the same stage. automations finds it by Alchemy reference to the `entity-store` stack in the shared Cloudflare state store: `Api` and its Durable Objects bind entity-store's Api Worker by its `EntityStoreRpc` entrypoint, and `Api` consumes entity-store's `entity-store-<stage>-changes` queue.
+Deploy entity-store first, on the same stage. automations finds it by Alchemy reference to the `entity-store` stack in the shared Cloudflare state store: `Api` and its Durable Objects bind entity-store's Api Worker, whose default entrypoint serves the RPC methods, and `Api` consumes entity-store's `entity-store-<stage>-changes` queue.
 
 It also creates `AutomationsDatabase`, a D1 database that lists the automations and holds the templates and which automations subscribe to each type. Alchemy applies the migrations in `migrations/` on every deploy. They seed two welcome-email templates. The `entity_types`, `entities` and `roles` tables they also create are left in place but no longer read; [copy them to entity-store](#moving-entities-to-entity-store) once.
 
