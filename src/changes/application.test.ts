@@ -585,3 +585,52 @@ test("proposals prepared before entity-store keep their receipts, and the rest m
     }).pipe(Effect.provide(h.layer)),
   );
 });
+
+test("a current proposal that doesn't decode is a defect, not an older proposal", async () => {
+  const h = harness();
+  h.data.set("proposal:change-1", {
+    version: 2,
+    owner: "owner",
+    proposal: {
+      id: "change-1",
+      action,
+      title: "Save person ada",
+      details: [],
+      consequences: [],
+      confirmLabel: "Save",
+    },
+    state: "pending",
+  });
+  const failure = await Effect.runPromise(
+    Effect.gen(function* () {
+      const changes = yield* makeChanges(h.storage);
+      return yield* changes.decide("owner", "change-1", true).pipe(Effect.flip);
+    }).pipe(Effect.provide(h.layer)),
+  );
+  expect(String((failure as { message?: string }).message)).not.toContain(
+    "Prepare the change again",
+  );
+});
+
+test("a command that no longer fits after a newer write is settled with the reason", async () => {
+  const h = harness();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const changes = yield* makeChanges(h.storage);
+      const store = yield* EntityStore;
+      const origin: Event = { id: "command-4", name: "entity.put", data: null, depth: 1 };
+      const command = yield* changes.prepare("event:command-4", action, origin.id, origin);
+      yield* store.putEntity("person", "ada", { email: "ada@lovelace.dev" });
+      yield* store.putType({
+        ...person,
+        title: "email",
+        fields: person.fields.filter((field) => field.name !== "name"),
+      });
+      expect(yield* changes.decide("event:command-4", command.id, true)).toEqual({
+        status: "cancelled",
+        result: { error: "person has no field name" },
+      });
+      expect(h.writes("ada")).toEqual([]);
+    }).pipe(Effect.provide(h.layer)),
+  );
+});

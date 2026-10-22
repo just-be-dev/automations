@@ -67,7 +67,7 @@ const withField = (model: Model, key: number, change: (field: FieldDraft) => Fie
     }),
   );
 
-const validEntityId = /^[a-zA-Z0-9_.@-]{1,120}$/;
+const validEntityId = /^[a-zA-Z0-9_.@-]{1,128}$/;
 
 const withEntityDraft = (
   model: Model,
@@ -108,7 +108,7 @@ const submitEntity = (model: Model, draft: EntityDraft, isNew: boolean): UpdateR
     onSome: (type) => {
       const id = draft.id.trim();
       if (!validEntityId.test(id)) {
-        return fail(model, "IDs use letters, numbers, _ . @ and - (up to 120 characters)");
+        return fail(model, "IDs use letters, numbers, _ . @ and - (up to 128 characters)");
       }
       const isTaken =
         isNew &&

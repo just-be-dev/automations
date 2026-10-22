@@ -55,6 +55,8 @@ type Stored = typeof Stored.Type;
  * Its receipt still answers; one that never got a receipt can't be confirmed any more.
  */
 const Legacy = Schema.Struct({
+  /** Absent: a current record that doesn't decode must not pass for an older one. */
+  version: Schema.optionalKey(Schema.Never),
   owner: Schema.String,
   requestId: Schema.optionalKey(Schema.String),
   proposal: ChangeProposal,
@@ -320,30 +322,32 @@ export const makeChanges = Effect.fn("Changes.make")(function* (storage: ChangeS
         yield* write({ ...record, state: "pending" });
         return yield* fail(outcome.message);
       }
+      if (outcome.reason === "conflict" && attempt >= COMMAND_ATTEMPTS) {
+        return yield* fail(outcome.message);
+      }
+      // Checked again against the newer data; what fails that check can never apply.
       const again =
-        outcome.reason === "conflict" && attempt < COMMAND_ATTEMPTS
+        outcome.reason === "conflict"
           ? yield* look(record.proposal.action, true).pipe(
+              Effect.map((found) => ({ found, refused: undefined })),
               Effect.catchIf(
                 (error) => error instanceof InvalidEntity || error instanceof ChangeError,
-                () => Effect.succeed(undefined),
+                (error) => Effect.succeed({ found: undefined, refused: error.message }),
               ),
             )
-          : undefined;
-      if (again === undefined) {
-        if (outcome.reason === "conflict" && attempt >= COMMAND_ATTEMPTS) {
-          return yield* fail(outcome.message);
-        }
+          : { found: undefined, refused: outcome.message };
+      if (again.found === undefined) {
         return yield* terminal(record, {
           status: "cancelled",
-          result: { error: outcome.reason === "refused" ? outcome.message : STALE },
+          result: { error: again.refused ?? outcome.message },
         });
       }
       record = {
         ...record,
-        before: again.before,
-        after: again.after,
-        result: again.result,
-        ...(again.write === undefined ? {} : { write: again.write }),
+        before: again.found.before,
+        after: again.found.after,
+        result: again.found.result,
+        ...(again.found.write === undefined ? {} : { write: again.found.write }),
       };
       yield* write(record);
     }

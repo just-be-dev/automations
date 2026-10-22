@@ -15,8 +15,8 @@ export const EntityName = Schema.String.check(
 
 /** An entity's ID: `ada`, `ada@example.com`. */
 export const EntityId = Schema.String.check(
-  Schema.isPattern(/^[a-zA-Z0-9_.@-]{1,120}$/, {
-    message: "Entity IDs use letters, numbers, _ . @ and - (up to 120 characters)",
+  Schema.isPattern(/^[a-zA-Z0-9_.@-]{1,128}$/, {
+    message: "Entity IDs use letters, numbers, _ . @ and - (up to 128 characters)",
   }),
 );
 
