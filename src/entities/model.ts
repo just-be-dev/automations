@@ -8,7 +8,7 @@ export class InvalidEntity extends Schema.TaggedError<InvalidEntity>()("InvalidE
 
 const snakeCase = /^[a-z][a-z0-9_]{0,39}$/;
 
-/** An entity type or field name: `employee`, `start_date`. */
+/** An entity type or field name: `person`, `start_date`. */
 export const EntityName = Schema.String.check(
   Schema.isPattern(snakeCase, { message: "Entity and field names are snake_case identifiers" }),
 );

@@ -170,7 +170,7 @@ const valueProblems = (
   if ((input.type === "people") !== Array.isArray(value)) {
     return [
       input.type === "people"
-        ? `${where} is a list, such as ["{{employee}}", "{{employee.manager}}"]`
+        ? `${where} is a list, such as ["{{<type>}}", "{{<type>.<ref field>}}"]`
         : `${where} is a single value, not a list`,
     ];
   }

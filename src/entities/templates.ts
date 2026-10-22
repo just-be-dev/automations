@@ -18,7 +18,7 @@ import {
 
 /**
  * Templates are approved, reusable wording, such as the standard welcome email. Each one names its
- * insertion points as slots, declared like an entity type's fields (`hire → employee`), and its
+ * insertion points as slots, declared like an entity type's fields (`hire → person`), and its
  * content fills the action inputs of the same name (`subject`, `body`) with text whose `{{refs}}`
  * start at a slot (`{{hire.name}}`). An action step uses one with `template: { use, with }`, where
  * `with` fills the slots from what the run knows. This module holds the pure model: the Schema,
@@ -109,7 +109,7 @@ export const checkTemplate = (
 
 /**
  * What one content ref becomes once the slots are filled: a ref from the run (`{{hire.name}}` with
- * `hire` filled by `{{employee}}` reads `{{employee.name}}`), or a text slot's text. A ref whose
+ * `hire` filled by `{{person}}` reads `{{person.name}}`), or a text slot's text. A ref whose
  * slot isn't filled stays as written.
  */
 const fillRef = (use: TemplateUse, ref: string) => {

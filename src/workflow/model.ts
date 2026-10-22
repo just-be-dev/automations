@@ -71,14 +71,14 @@ const Offset = Identifier(/^-?\d{1,4} (minute|hour|day|week)s?$/, durationMessag
 
 /**
  * A path into what a run knows. Its root is either the trigger's entity type, which reads the
- * run's subject (`employee.start_date`, or `employee.manager.email` through a `ref` field), or
+ * run's subject (`person.start_date`, or `person.manager.email` through a `ref` field), or
  * `steps`, which reads what an earlier step recorded (`steps.approve.approved`).
  */
 const refSource = "[a-z][a-z0-9_]{0,39}(?:\\.[a-zA-Z0-9_$-]{1,40}){0,5}";
 const refSyntax = new RegExp(`^${refSource}$`);
 const wrappedRef = /^\{\{\s*(.*?)\s*\}\}$/;
 
-/** The planner sometimes writes a ref the way it writes templates (`{{employee.email}}`). */
+/** The planner sometimes writes a ref the way it writes templates (`{{person.email}}`). */
 const unwrapRef = (value: string) => {
   const trimmed = value.trim();
   return wrappedRef.exec(trimmed)?.[1] ?? trimmed;
@@ -88,7 +88,7 @@ export const Ref = Schema.String.pipe(
   Schema.decodeTo(
     Identifier(
       refSyntax,
-      "References are dotted paths that start with the trigger's entity type or steps., such as employee.start_date or steps.approve.approved",
+      "References are dotted paths that start with the trigger's entity type or steps., such as <type>.<field> or steps.<id>.<field>",
     ),
     SchemaTransformation.transform({ decode: unwrapRef, encode: (ref: string) => ref }),
   ),
@@ -574,7 +574,7 @@ export type HumanResponseSpec = typeof HumanResponseSpec.Type;
 
 /**
  * Pauses the run until a person approves, rejects, or fills in a form, or `timeout` passes.
- * `assignee` is a ref to the person, such as `employee.manager`; `notify` also sends them the
+ * `assignee` is a ref to the person, such as `person.manager`; `notify` also sends them the
  * request over a connection.
  */
 export const HumanStep = Schema.Struct({

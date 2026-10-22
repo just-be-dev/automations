@@ -197,7 +197,7 @@ describe("workflowProblems", () => {
     ).toEqual([
       "Step x uses unknown operation fax.send",
       "Step invite: calendar.createEvent has no input room",
-      'Step invite input attendees is a list, such as ["{{employee}}", "{{employee.manager}}"]',
+      'Step invite input attendees is a list, such as ["{{<type>}}", "{{<type>.<ref field>}}"]',
       "Step invite input duration is required by calendar.createEvent",
       "Step hook input url must be a literal public HTTPS URL without credentials",
     ]);
