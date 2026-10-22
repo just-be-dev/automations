@@ -81,11 +81,18 @@ const visibleFields = (schema: StoreSchema): ReadonlyArray<EntityField> =>
 
 const latest = (info: TypeInfo) => info.versions.at(-1);
 
+/** Whether a field can be a title: text that's a string, not an enum's value. */
+const titleable = (schema: StoreSchema, field: EntityField | undefined) => {
+  const node = field === undefined ? undefined : schema.fields[field.name];
+  return field?.type === "text" && node !== undefined && unwrap(node)["type"] === "string";
+};
+
 /**
  * The entity type automations sees for an entity-store type at its latest version, or `undefined`
  * when automations can't use it: its name isn't snake_case, it is the role type, or no field is
  * visible. Its label is the schema's description, then the type's, then its name. Its title is
- * the schema's `title`, then a field named `name`, then the first text field, then the first field.
+ * the schema's `title`, then a text field named `name`, then the first text field (an enum's
+ * values aren't names), then the first field.
  */
 export const toEntityType = (info: TypeInfo): EntityType | undefined => {
   const version = latest(info);
@@ -94,10 +101,12 @@ export const toEntityType = (info: TypeInfo): EntityType | undefined => {
   }
   const fields = visibleFields(version.schema);
   const has = (name: string | undefined) => fields.find((field) => field.name === name);
+  const text = (field: EntityField | undefined) =>
+    titleable(version.schema, field) ? field : undefined;
   const title =
     has(version.schema.title) ??
-    has("name") ??
-    fields.find((field) => field.type === "text") ??
+    text(has("name")) ??
+    fields.find((field) => titleable(version.schema, field)) ??
     fields[0];
   if (title === undefined) {
     return undefined;
@@ -181,8 +190,12 @@ const canonical = (value: unknown): string =>
  * whose kind changes is refused: that needs a lens only entity-store can author.
  */
 export const planTypeWrite = (existing: TypeInfo | undefined, type: EntityType): TypeWrite => {
-  const title = textual(type) ? { title: type.title } : {};
+  const untitled: TypeWrite = {
+    kind: "refused",
+    message: `${type.name}.${type.title} can't be the title: a title names a text field`,
+  };
   if (existing === undefined) {
+    if (!textual(type)) return untitled;
     return {
       kind: "create",
       input: {
@@ -190,13 +203,16 @@ export const planTypeWrite = (existing: TypeInfo | undefined, type: EntityType):
         description: type.label,
         schema: {
           description: type.label,
-          ...title,
+          title: type.title,
           fields: Object.fromEntries(type.fields.map((field) => [field.name, fieldNode(field)])),
         },
       },
     };
   }
   const current = latest(existing)?.schema ?? { fields: {} };
+  // What reads show now: kept as entity-store has it unless this save changes it, so saving a type
+  // as it was writes nothing, even one entity-store gave no description or title.
+  const shown = toEntityType(existing);
   const visible = new Map(visibleFields(current).map((field) => [field.name, field]));
   const problems: Array<string> = [];
   const ops: Array<Lens["ops"][number]> = [];
@@ -239,10 +255,23 @@ export const planTypeWrite = (existing: TypeInfo | undefined, type: EntityType):
   if (problems.length > 0) {
     return { kind: "refused", message: problems.join("; ") };
   }
+  const nodes = Object.fromEntries(fields);
+  const keptTitle = type.title === shown?.title;
+  if (
+    !keptTitle &&
+    !titleable(
+      { fields: nodes },
+      type.fields.find((f) => f.name === type.title),
+    )
+  ) {
+    return untitled;
+  }
+  const description = type.label === shown?.label ? current.description : type.label;
+  const title = keptTitle ? current.title : type.title;
   const schema: StoreSchema = {
-    description: type.label,
-    ...(textual(type) ? title : current.title === undefined ? {} : { title: current.title }),
-    fields: Object.fromEntries(fields),
+    ...(description === undefined ? {} : { description }),
+    ...(title === undefined ? {} : { title }),
+    fields: nodes,
   };
   return canonical(schema) === canonical(current)
     ? { kind: "unchanged" }

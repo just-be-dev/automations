@@ -183,7 +183,7 @@ export const planMigration = (source: Source, existing: ReadonlyArray<TypeInfo>)
         fields: kept,
         title: kept.some((field) => field.name === next.title)
           ? next.title
-          : (kept[0]?.name ?? next.title),
+          : (kept.find((field) => field.type === "text")?.name ?? next.title),
       });
     } else {
       write(next);

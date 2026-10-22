@@ -242,3 +242,49 @@ describe("roles as entities", () => {
     expect(roleFromEntity("ops", { members: [] })).toBeUndefined();
   });
 });
+
+describe("titles", () => {
+  test("an enum isn't a name, so it's never chosen as the title", () => {
+    const title = (schema: StoreSchema) => toEntityType(info("thing", schema))?.title;
+    const level = { type: "enum", values: ["low", "high"] };
+    expect(title({ fields: { level, summary: { type: "string" } } })).toBe("summary");
+    expect(title({ fields: { name: level, summary: { type: "string" } } })).toBe("summary");
+  });
+
+  test("a title must be a text field, when created or changed", () => {
+    const counted: EntityType = {
+      name: "counter",
+      label: "Counter",
+      title: "count",
+      fields: [
+        { name: "label", label: "Label", type: "text" },
+        { name: "count", label: "Count", type: "number" },
+      ],
+    };
+    expect(planTypeWrite(undefined, counted)).toEqual({
+      kind: "refused",
+      message: "counter.count can't be the title: a title names a text field",
+    });
+    const existing = info("ticket", {
+      title: "summary",
+      fields: { summary: { type: "string" }, level: { type: "enum", values: ["low", "high"] } },
+    });
+    const ticket = toEntityType(existing);
+    if (ticket === undefined) throw new Error("No type");
+    expect(planTypeWrite(existing, { ...ticket, title: "level" })).toEqual({
+      kind: "refused",
+      message: "ticket.level can't be the title: a title names a text field",
+    });
+  });
+
+  test("saving a type as it was writes nothing, even one entity-store gave no description or title", () => {
+    const existing = info("ticket", { fields: { summary: { type: "string" } } });
+    const ticket = toEntityType(existing);
+    if (ticket === undefined) throw new Error("No type");
+    expect(planTypeWrite(existing, ticket)).toEqual({ kind: "unchanged" });
+    expect(planTypeWrite(existing, { ...ticket, label: "Tickets" })).toMatchObject({
+      kind: "version",
+      schema: { description: "Tickets", fields: { summary: { type: "string" } } },
+    });
+  });
+});
