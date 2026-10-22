@@ -1,9 +1,11 @@
 /** Checks entity data validation, changed fields, and references that walk between related entities. */
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import {
   changedFields,
   checkEntityData,
+  EntityId,
   pathTarget,
   readRef,
   type EntityType,
@@ -85,4 +87,10 @@ describe("entities", () => {
     ).toEqual(["start_date"]);
     expect(changedFields(undefined, { name: "Ada" })).toEqual(["name"]);
   });
+});
+
+test("entity IDs are entity-store's: up to 128 characters, emails included, and not only dots", () => {
+  const valid = Schema.is(EntityId);
+  expect(["ada", "ada@example.com", "a.b", "x".repeat(128)].every(valid)).toBe(true);
+  expect(["", ".", "..", "x".repeat(129), "a b", "a/b"].some(valid)).toBe(false);
 });

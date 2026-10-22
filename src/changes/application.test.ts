@@ -634,3 +634,32 @@ test("a command that no longer fits after a newer write is settled with the reas
     }).pipe(Effect.provide(h.layer)),
   );
 });
+
+test("recovery finds a landed write at the entity's current revision, as for a revived tombstone", async () => {
+  const h = harness();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const store = yield* EntityStore;
+      yield* store.putEntity("person", "sam", { name: "Sam" });
+      yield* store.deleteEntity("person", "sam");
+      const changes = yield* makeChanges(h.storage);
+      // An answer that doesn't say which revision deleted it: the revision the write makes is
+      // unknown, and the write revives it at the next one, 3.
+      h.store.failing("getEntity", { code: "EntityDeleted", message: "sam was deleted" });
+      const created = yield* changes.prepare("owner", {
+        ...action,
+        id: "sam",
+        data: { name: "S" },
+      });
+      h.receiptFailure(true);
+      yield* changes.decide("owner", created.id, true).pipe(Effect.flip);
+      h.receiptFailure(false);
+      h.store.failing("getEntity", undefined);
+      const restarted = yield* makeChanges(h.storage);
+      expect((yield* restarted.decide("owner", created.id, true)).status).toBe("applied");
+      expect(h.writes("sam").map(({ op, rev }) => ({ op, rev }))).toEqual([
+        { op: "create", rev: 3 },
+      ]);
+    }).pipe(Effect.provide(h.layer)),
+  );
+});

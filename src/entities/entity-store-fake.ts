@@ -453,7 +453,10 @@ export const makeFakeEntityStore = (): FakeEntityStore => {
         return err("EntityTypeMismatch", `${id} is a ${row.type}`, { id, type, actual: row.type });
       const live = row !== undefined && row.data !== null;
       if (expectedRev !== undefined && expectedRev !== (live ? row.rev : 0))
-        return err("RevConflict", `${id} is at another revision`, { currentRev: row?.rev ?? 0 });
+        // A deleted entity reports 0, as one that never existed does.
+        return err("RevConflict", `${id} is at another revision`, {
+          currentRev: live ? row.rev : 0,
+        });
       const data = live ? mergePatch(row.data ?? {}, patch) : mergePatch({}, patch);
       const problem = writeProblems(type, data, id);
       if (problem !== undefined) return problem;
@@ -492,7 +495,7 @@ export const makeFakeEntityStore = (): FakeEntityStore => {
       const at = history.find((revision) => revision.rev === rev);
       const event = log.find((change) => change.id === id && change.rev === rev);
       if (at === undefined || event === undefined)
-        return err("RevisionNotFound", `No revision ${rev} of ${id}`);
+        return err("ChangeNotFound", `No change at revision ${rev} of ${id}`);
       const previous = history.find((revision) => revision.rev === rev - 1);
       return ok({
         ...event,

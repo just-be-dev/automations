@@ -197,19 +197,23 @@ export const makeChanges = Effect.fn("Changes.make")(function* (storage: ChangeS
     }
   });
 
-  /** Whether the write at the revision a proposal makes carries the proposal's ID. */
-  const landed = (record: Stored, action: { readonly id: string }) =>
-    record.write === undefined
-      ? Effect.succeed(undefined)
-      : store
-          .getChange(action.id, record.write.rev)
-          .pipe(
-            Effect.map((change) =>
-              change !== undefined && changeIdOf(change.meta) === record.proposal.id
-                ? change
-                : undefined,
-            ),
-          );
+  /**
+   * The proposal's own write, if it landed: the change at one of `revs` that carries the
+   * proposal's ID. The revisions are the one the write makes, and the entity's current one.
+   */
+  const landed = (
+    record: Stored,
+    action: { readonly id: string },
+    revs: ReadonlyArray<number | undefined> = [record.write?.rev],
+  ) =>
+    Effect.gen(function* () {
+      for (const rev of new Set(revs)) {
+        if (rev === undefined || rev < 1) continue;
+        const change = yield* store.getChange(action.id, rev);
+        if (change !== undefined && changeIdOf(change.meta) === record.proposal.id) return change;
+      }
+      return undefined;
+    });
 
   /**
    * Applies an approved proposal once. An entity write is conditioned on the reviewed revision;
@@ -257,11 +261,14 @@ export const makeChanges = Effect.fn("Changes.make")(function* (storage: ChangeS
         Effect.map((result): Outcome => ({ applied: true, result })),
         Effect.catchTags({
           // A write retried after an answer was lost may have landed before this attempt.
-          EntityRevConflict: () =>
-            Effect.map(landed(record, action), (change): Outcome =>
-              change === undefined
-                ? { applied: false, reason: "conflict", message: STALE }
-                : { applied: true, result: record.result },
+          // The current revision is where a lost answer's write is, unless another came after.
+          EntityRevConflict: (conflict) =>
+            Effect.map(
+              landed(record, action, [conflict.currentRev, record.write?.rev]),
+              (change): Outcome =>
+                change === undefined
+                  ? { applied: false, reason: "conflict", message: STALE }
+                  : { applied: true, result: record.result },
             ),
           InvalidEntity: (error) =>
             Effect.succeed<Outcome>({ applied: false, reason: "refused", message: error.message }),

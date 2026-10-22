@@ -47,7 +47,11 @@ export class EntityStoreError extends Schema.TaggedError<EntityStoreError>()("En
 /** A conditional write found the entity at another revision than it expected. Nothing was written. */
 export class EntityRevConflict extends Schema.TaggedError<EntityRevConflict>()(
   "EntityRevConflict",
-  { message: Schema.String },
+  {
+    message: Schema.String,
+    /** The entity's live revision, or 0 when it doesn't exist or is deleted, if known. */
+    currentRev: Schema.optionalKey(Schema.Int),
+  },
 ) {}
 
 /** An entity before and after a write. `before` is missing for a new entity. */
@@ -237,7 +241,15 @@ const refusal = (error: EntityStoreApiError) =>
   refusals.has(error.code) ? new InvalidEntity({ message: error.message }) : storeError(error);
 
 const writeError = (error: EntityStoreApiError) =>
-  error.code === "RevConflict" ? new EntityRevConflict({ message: error.message }) : refusal(error);
+  error.code === "RevConflict"
+    ? new EntityRevConflict({
+        message: error.message,
+        ...(typeof error.details["currentRev"] === "number" &&
+        Number.isInteger(error.details["currentRev"])
+          ? { currentRev: error.details["currentRev"] }
+          : {}),
+      })
+    : refusal(error);
 
 /** Treats one entity-store code as "there's nothing there". */
 const orMissing =
@@ -529,6 +541,7 @@ export const makeEntityStore = (
   const stale = (expected: number, actual: number) =>
     new EntityRevConflict({
       message: `Expected revision ${expected}, but the entity is at revision ${actual}`,
+      currentRev: actual,
     });
 
   return EntityStore.of({
@@ -651,7 +664,7 @@ export const makeEntityStore = (
       const change = yield* api
         .getChange(id, rev)
         .pipe(
-          orMissing("RevisionNotFound", "EntityNotFound", "TypeNotFound"),
+          orMissing("ChangeNotFound", "RevisionNotFound", "EntityNotFound", "TypeNotFound"),
           Effect.mapError(storeError),
         );
       if (change === undefined) {
