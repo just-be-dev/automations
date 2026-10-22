@@ -56,7 +56,7 @@ test("stable chat IDs survive completion and never answer an unrelated planner q
           catalog: Effect.succeed({ types: [], templates: [], roles: [] }),
           save: () => Effect.die("Never save"),
           studioLink: Effect.succeed(undefined),
-          savedAt: Effect.succeed(undefined),
+          triggerSince: Effect.succeed(undefined),
         });
         const first = yield* session.chat("a1", "Design welcome", "stable");
         const duplicate = yield* session.chat("a1", "Design welcome", "stable");
@@ -140,7 +140,7 @@ test("stopping a planner turn marks it stopped, drops its working copy, and abor
           catalog: Effect.succeed({ types: [], templates: [], roles: [] }),
           save: () => Effect.die("Never save"),
           studioLink: Effect.succeed(undefined),
-          savedAt: Effect.succeed(undefined),
+          triggerSince: Effect.succeed(undefined),
         });
         yield* session.chat("a1", "Design welcome", "stable");
         const planning = yield* makePlanning();

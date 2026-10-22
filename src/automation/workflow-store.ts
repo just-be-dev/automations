@@ -21,8 +21,19 @@ export const catalogOf = (entities: EntityStore["Service"]) =>
   });
 
 /** Draft and saved snapshots share the same storage and current catalog. */
-/** When the saved workflow was saved. Entity changes committed before it don't trigger it. */
-export const SAVED_AT_KEY = "savedAt";
+/**
+ * When the saved trigger took effect: the first save of it, kept while later saves keep the same
+ * trigger. Entity changes committed before it don't start runs.
+ */
+export const TRIGGER_SINCE_KEY = "triggerSince";
+
+/** JSON with sorted keys, so stored values compare by content. */
+const canonical = (value: unknown): string =>
+  JSON.stringify(value, (_key, item: unknown) =>
+    item !== null && typeof item === "object" && !Array.isArray(item)
+      ? Object.fromEntries(Object.entries(item).toSorted(([a], [b]) => a.localeCompare(b)))
+      : item,
+  );
 
 export const makeWorkflowStore = Effect.fn("Automation.makeWorkflowStore")(function* () {
   const { storage, jobs } = yield* AutomationHost;
@@ -66,11 +77,14 @@ export const makeWorkflowStore = Effect.fn("Automation.makeWorkflowStore")(funct
         return yield* new AutomationError({ message: tooManyRuns(matching.length) });
       }
     }
+    const previous = yield* read("saved");
     yield* storage
       .transaction(
         Effect.gen(function* () {
           yield* storage.put("saved", draft);
-          yield* storage.put(SAVED_AT_KEY, now);
+          if (previous === undefined || canonical(previous.trigger) !== canonical(trigger)) {
+            yield* storage.put(TRIGGER_SINCE_KEY, now);
+          }
           // A save that doesn't know the studio keeps the origin an earlier one recorded.
           const origin = studioOrigin ?? (yield* studioLink)?.origin;
           const link: StudioLink = { automationId, ...(origin === undefined ? {} : { origin }) };
@@ -88,9 +102,11 @@ export const makeWorkflowStore = Effect.fn("Automation.makeWorkflowStore")(funct
     return { saved: draft };
   });
 
-  const savedAt = storage.get(SAVED_AT_KEY).pipe(Effect.flatMap(decodeStored(Schema.Finite)));
+  const triggerSince = storage
+    .get(TRIGGER_SINCE_KEY)
+    .pipe(Effect.flatMap(decodeStored(Schema.Finite)));
 
-  return { read, catalog, save, studioLink, savedAt };
+  return { read, catalog, save, studioLink, triggerSince };
 });
 
 export type WorkflowStore = Effect.Success<ReturnType<typeof makeWorkflowStore>>;

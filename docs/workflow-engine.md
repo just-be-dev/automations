@@ -243,7 +243,7 @@ Answering stores the answer and schedules `planReply` in one transaction, then w
 
 ### Saving fixes what runs
 
-[`save`](../src/automation/workflow-store.ts) checks the draft and refuses a timed trigger that already matches more than 50 subjects. It stores `saved`, when it was saved (`savedAt`), the studio link (`studio`: the automation's ID and the studio origin the save came from, keeping the earlier origin when the save names none), and books or cancels the `tick` job in one transaction, subscribes the automation to its trigger's entity type, then updates the directory, best effort. Runs read only `saved`.
+[`save`](../src/automation/workflow-store.ts) checks the draft and refuses a timed trigger that already matches more than 50 subjects. It stores `saved`, when its trigger took effect (`triggerSince`, moved only when the trigger changes), the studio link (`studio`: the automation's ID and the studio origin the save came from, keeping the earlier origin when the save names none), and books or cancels the `tick` job in one transaction, subscribes the automation to its trigger's entity type, then updates the directory, best effort. Runs read only `saved`.
 
 ### AutomationAgent supplies storage, jobs, and models
 
@@ -307,7 +307,7 @@ Answering stores the answer and schedules `planReply` in one transaction, then w
 ```
 
 - `start` serves the Run button. For an event trigger it builds an unpublished event with a fresh ID and requires `when` to hold.
-- `entityChanged` starts a run only for an entity trigger, when the entity is new or a watched field changed, and `when` holds. [The change feed](../src/entities/change-feed.ts) passes the key `entity-store:<seq>`, so the run ID is `entity-entity-store:<seq>` and a redelivered change finds its run instead of starting another; without a key it is a UUID. It also passes when the change committed, and a change committed before the workflow's `savedAt` starts nothing. A change from an event chain passes its lifecycle event as the run's origin, at the depth its write carried.
+- `entityChanged` starts a run only for an entity trigger, when the entity is new or a watched field changed, and `when` holds. [The change feed](../src/entities/change-feed.ts) passes the key `entity-store:<seq>`, so the run ID is `entity-entity-store:<seq>` and a redelivered change finds its run instead of starting another; without a key it is a UUID. It also passes when the change committed, and a change committed before `triggerSince` starts nothing (and is logged). A keyed change leaves a receipt, `entity-change:<key>`, even when it starts nothing, so a redelivery gets the same answer. A change from an event chain passes its lifecycle event as the run's origin, at the depth its write carried.
 - `tick` starts each due subject's run under `scheduled-<at>` or `scheduled-<at>-<entity id>`, then books the next occurrence. More than 50 due subjects start none and record one failed run.
 - [`beginRun`](../src/automation/runs.ts) derives the `ExecutionId` from the payload (`RunAutomation.executionId`, keyed by run ID). The payload carries the expanded workflow, so template edits never reach a run in flight.
 

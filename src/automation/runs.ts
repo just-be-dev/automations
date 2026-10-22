@@ -469,8 +469,9 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
   /**
    * Starts a run when the saved workflow's entity trigger matches a change: the entity is new, or
    * a watched field changed, and the trigger's condition holds for the new version. Changes arrive
-   * after they commit, so one `committedAt` before the workflow was saved belongs to what it
-   * replaced, and starts nothing.
+   * after they commit, so one `committedAt` before the saved trigger took effect belongs to what
+   * it replaced, and starts nothing. A keyed change leaves a receipt, matched or declined, so a
+   * redelivery gets the same answer even if the workflow changed in between.
    */
   const entityChanged = Effect.fn("Automation.entityChanged")(
     function* (
@@ -481,32 +482,49 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
       committedAt?: number,
     ) {
       const id = key === undefined ? undefined : RunId.make(`entity-${key}`);
+      const receiptKey = key === undefined ? undefined : `entity-change:${key}`;
       // Check before re-evaluating a trigger: its workflow or referenced values may have changed.
+      if (receiptKey !== undefined) {
+        const receipt = yield* storage.get(receiptKey);
+        if (receipt !== undefined)
+          return yield* Schema.decodeUnknownEffect(Schema.Struct({ runId: Schema.NullOr(RunId) }))(
+            receipt,
+          );
+      }
+      // The run and its journal can commit before the receipt. Recover that window first.
       if (id !== undefined && (yield* readRun(id)) !== undefined) return { runId: id };
-      const savedAt = yield* workflows.savedAt;
-      if (committedAt !== undefined && savedAt !== undefined && committedAt < savedAt) {
-        return { runId: null };
+      const answer = (runId: RunId | null) =>
+        Effect.gen(function* () {
+          if (receiptKey !== undefined) yield* storage.put(receiptKey, { runId });
+          return { runId };
+        });
+      const since = yield* workflows.triggerSince;
+      if (committedAt !== undefined && since !== undefined && committedAt < since) {
+        yield* Effect.logInfo(
+          "Ignored an entity change committed before the saved trigger took effect",
+        ).pipe(Effect.annotateLogs({ key, committedAt, triggerSince: since }));
+        return yield* answer(null);
       }
       const saved = yield* readWorkflow("saved");
       const trigger = saved?.trigger;
       if (saved === undefined || trigger?.kind !== "entity" || trigger.entity !== after.type) {
-        return { runId: null };
+        return yield* answer(null);
       }
       const changed = changedFields(before, after.data);
       const watched = trigger.fields ?? changed;
       if (before !== undefined && !watched.some((field) => changed.includes(field))) {
-        return { runId: null };
+        return yield* answer(null);
       }
       if (trigger.when !== undefined) {
         const values = yield* resolve(conditionRefs(trigger.when), { subject: after, steps: {} });
         const now = yield* Clock.currentTimeMillis;
         if (!holds(trigger.when, (ref) => values[ref], now)) {
-          return { runId: null };
+          return yield* answer(null);
         }
       }
       const origin = event === undefined ? undefined : yield* Schema.decodeEffect(Event)(event);
       const started = yield* beginRun(saved, after, id, origin);
-      return { runId: started.id };
+      return yield* answer(started.id);
     },
     (effect) => notificationLock.withPermit(effect),
   );

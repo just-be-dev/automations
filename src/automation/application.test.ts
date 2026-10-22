@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { TestClock } from "effect/testing";
@@ -1635,16 +1636,21 @@ test("stable entity notification keys deduplicate concurrent delivery and surviv
   );
 });
 
-test("an entity trigger ignores changes committed before its workflow was saved", async () => {
+test("an entity trigger ignores changes committed before it took effect, and re-saving it keeps that time", async () => {
   const h = harness();
+  const logged: Array<unknown> = [];
   await Effect.runPromise(
     Effect.gen(function* () {
       const app = yield* makeAutomation();
-      yield* app.setDraft("a1", { ...workflow, trigger: { kind: "entity", entity: "person" } });
+      const watching: Workflow = { ...workflow, trigger: { kind: "entity", entity: "person" } };
+      yield* app.setDraft("a1", watching);
       yield* app.save("a1");
-      const savedAt = yield* Schema.decodeUnknownEffect(Schema.Finite)(
-        yield* h.host.storage.get("savedAt"),
-      );
+      const since = () =>
+        Effect.flatMap(
+          h.host.storage.get("triggerSince"),
+          Schema.decodeUnknownEffect(Schema.Finite),
+        );
+      const first = yield* since();
       const subject = {
         type: "person",
         id: "sam",
@@ -1652,17 +1658,64 @@ test("an entity trigger ignores changes committed before its workflow was saved"
       };
       // Delivered after the save, but committed before it: the change belongs to what it replaced.
       expect(
-        yield* app.entityChanged(
-          { name: "Sam" },
-          subject,
-          "entity-store:12",
-          undefined,
-          savedAt - 1,
-        ),
+        yield* app.entityChanged({ name: "Sam" }, subject, "entity-store:12", undefined, first - 1),
       ).toEqual({ runId: null });
+      // Saving again with the same trigger, say to fix a step, keeps the time it took effect, so a
+      // change committed in between still starts its run.
+      yield* TestClock.adjust("1 minute");
+      yield* app.setDraft("a1", { ...watching, name: "Watch people, renamed" });
+      yield* app.save("a1");
+      expect(yield* since()).toBe(first);
       expect(
-        yield* app.entityChanged({ name: "Sam" }, subject, "entity-store:13", undefined, savedAt),
+        yield* app.entityChanged({ name: "Sam" }, subject, "entity-store:13", undefined, first + 1),
       ).toEqual({ runId: RunId.make("entity-entity-store:13") });
+      // A new trigger takes effect when it's saved.
+      yield* app.setDraft("a1", {
+        ...watching,
+        trigger: { kind: "entity", entity: "person", fields: ["name"] },
+      });
+      yield* app.save("a1");
+      expect(yield* since()).toBeGreaterThan(first);
+      expect(
+        yield* app.entityChanged({ name: "Sam" }, subject, "entity-store:14", undefined, first + 1),
+      ).toEqual({ runId: null });
+    }).pipe(
+      Effect.provide(Layer.merge(h.layer, TestClock.layer())),
+      Effect.provide(Logger.layer([Logger.make(({ message }) => void logged.push(message))])),
+    ),
+  );
+  expect(JSON.stringify(logged)).toContain("before the saved trigger took effect");
+});
+
+test("a declined entity change leaves a receipt, so its redelivery is declined too", async () => {
+  const h = harness();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const app = yield* makeAutomation();
+      const subject = {
+        type: "person",
+        id: "sam",
+        data: { name: "Sam", email: "sam@example.com" },
+      };
+      yield* app.setDraft("a1", {
+        ...workflow,
+        trigger: {
+          kind: "entity",
+          entity: "person",
+          when: { ref: "person.name", op: "equals", value: "Samuel" },
+        },
+      });
+      yield* app.save("a1");
+      expect(yield* app.entityChanged(undefined, subject, "entity-store:21")).toEqual({
+        runId: null,
+      });
+      // The condition changes; the same change, redelivered, still gets its first answer.
+      yield* app.setDraft("a1", { ...workflow, trigger: { kind: "entity", entity: "person" } });
+      yield* app.save("a1");
+      expect(yield* app.entityChanged(undefined, subject, "entity-store:21")).toEqual({
+        runId: null,
+      });
+      expect((yield* app.inspectWorkflow()).runs).toEqual([]);
     }).pipe(Effect.provide(h.layer)),
   );
 });
