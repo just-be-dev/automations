@@ -104,17 +104,21 @@ test("each write becomes its lifecycle event and reaches the type's watchers und
   expect(h.notified).toEqual([
     {
       automation: "onboarding",
-      change: { before: undefined, after: ada({ name: "Ada" }) },
+      change: { before: undefined, after: ada({ name: "Ada" }), committedAt: expect.any(Number) },
       key: "entity:ada:1",
     },
     {
       automation: "onboarding",
-      change: { before: undefined, after: ada({ name: "Ada" }) },
+      change: { before: undefined, after: ada({ name: "Ada" }), committedAt: expect.any(Number) },
       key: "entity:ada:1",
     },
     {
       automation: "onboarding",
-      change: { before: { name: "Ada" }, after: ada({ name: "Ada", email: "ada@example.com" }) },
+      change: {
+        before: { name: "Ada" },
+        after: ada({ name: "Ada", email: "ada@example.com" }),
+        committedAt: expect.any(Number),
+      },
       key: "entity:ada:2",
     },
   ]);

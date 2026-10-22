@@ -74,7 +74,11 @@ export const deliverEntityChange = Effect.fn("EntityChanges.deliver")(function* 
   }
   const subscribers = yield* EntitySubscribers;
   const outcomes = yield* subscribers.notify(
-    { before: change.before ?? undefined, after: { type: change.type, id, data: change.after } },
+    {
+      before: change.before ?? undefined,
+      after: { type: change.type, id, data: change.after },
+      committedAt: change.createdAt,
+    },
     event.id,
     depth > 0 ? event : undefined,
   );

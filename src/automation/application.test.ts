@@ -1635,6 +1635,32 @@ test("stable entity notification keys deduplicate concurrent delivery and surviv
   );
 });
 
+test("an entity trigger ignores changes committed before its workflow was saved", async () => {
+  const h = harness();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const app = yield* makeAutomation();
+      yield* app.setDraft("a1", { ...workflow, trigger: { kind: "entity", entity: "person" } });
+      yield* app.save("a1");
+      const savedAt = yield* Schema.decodeUnknownEffect(Schema.Finite)(
+        yield* h.host.storage.get("savedAt"),
+      );
+      const subject = {
+        type: "person",
+        id: "sam",
+        data: { name: "Sam Updated", email: "sam@example.com" },
+      };
+      // Delivered after the save, but committed before it: the change belongs to what it replaced.
+      expect(
+        yield* app.entityChanged({ name: "Sam" }, subject, "entity:sam:2", undefined, savedAt - 1),
+      ).toEqual({ runId: null });
+      expect(
+        yield* app.entityChanged({ name: "Sam" }, subject, "entity:sam:3", undefined, savedAt),
+      ).toEqual({ runId: RunId.make("entity-entity:sam:3") });
+    }).pipe(Effect.provide(h.layer)),
+  );
+});
+
 test("event filters, subjects and ignored receipts survive restart; a matching run emits the original payload once", async () => {
   const h = harness();
   await Effect.runPromise(

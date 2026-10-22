@@ -428,8 +428,8 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
   });
 
   /**
-   * Starts a run when the saved workflow's entity trigger matches a change: the entity is new,
-   * or a watched field changed, and the trigger's condition holds for the new version.
+   * Starts a run when an event matches the saved workflow's event trigger, once per event ID: a
+   * receipt records whether it matched.
    */
   const notificationLock = Semaphore.makeUnsafe(1);
   const eventReceived = Effect.fn("Automation.eventReceived")(
@@ -466,11 +466,27 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     },
     (effect) => notificationLock.withPermit(effect),
   );
+  /**
+   * Starts a run when the saved workflow's entity trigger matches a change: the entity is new, or
+   * a watched field changed, and the trigger's condition holds for the new version. Changes arrive
+   * after they commit, so one `committedAt` before the workflow was saved belongs to what it
+   * replaced, and starts nothing.
+   */
   const entityChanged = Effect.fn("Automation.entityChanged")(
-    function* (before: EntityData | undefined, after: Subject, key?: string, event?: Event) {
+    function* (
+      before: EntityData | undefined,
+      after: Subject,
+      key?: string,
+      event?: Event,
+      committedAt?: number,
+    ) {
       const id = key === undefined ? undefined : RunId.make(`entity-${key}`);
       // Check before re-evaluating a trigger: its workflow or referenced values may have changed.
       if (id !== undefined && (yield* readRun(id)) !== undefined) return { runId: id };
+      const savedAt = yield* workflows.savedAt;
+      if (committedAt !== undefined && savedAt !== undefined && committedAt < savedAt) {
+        return { runId: null };
+      }
       const saved = yield* readWorkflow("saved");
       const trigger = saved?.trigger;
       if (saved === undefined || trigger?.kind !== "entity" || trigger.entity !== after.type) {

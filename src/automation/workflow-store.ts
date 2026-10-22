@@ -1,6 +1,7 @@
 /** Reads snapshots and the current catalog; saving validates, persists, schedules, and updates subscriptions. */
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { EntityStore } from "../entities/store.ts";
 import { checkWorkflow } from "../workflow/catalog.ts";
 import { isTimed, subjectType, triggerSchedule, Workflow } from "../workflow/model.ts";
@@ -20,6 +21,9 @@ export const catalogOf = (entities: EntityStore["Service"]) =>
   });
 
 /** Draft and saved snapshots share the same storage and current catalog. */
+/** When the saved workflow was saved. Entity changes committed before it don't trigger it. */
+export const SAVED_AT_KEY = "savedAt";
+
 export const makeWorkflowStore = Effect.fn("Automation.makeWorkflowStore")(function* () {
   const { storage, jobs } = yield* AutomationHost;
   const entities = yield* EntityStore;
@@ -66,6 +70,7 @@ export const makeWorkflowStore = Effect.fn("Automation.makeWorkflowStore")(funct
       .transaction(
         Effect.gen(function* () {
           yield* storage.put("saved", draft);
+          yield* storage.put(SAVED_AT_KEY, now);
           // A save that doesn't know the studio keeps the origin an earlier one recorded.
           const origin = studioOrigin ?? (yield* studioLink)?.origin;
           const link: StudioLink = { automationId, ...(origin === undefined ? {} : { origin }) };
@@ -83,7 +88,9 @@ export const makeWorkflowStore = Effect.fn("Automation.makeWorkflowStore")(funct
     return { saved: draft };
   });
 
-  return { read, catalog, save, studioLink };
+  const savedAt = storage.get(SAVED_AT_KEY).pipe(Effect.flatMap(decodeStored(Schema.Finite)));
+
+  return { read, catalog, save, studioLink, savedAt };
 });
 
 export type WorkflowStore = Effect.Success<ReturnType<typeof makeWorkflowStore>>;

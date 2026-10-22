@@ -54,6 +54,8 @@ export class EntityRevConflict extends Schema.TaggedError<EntityRevConflict>()(
 export interface EntityChange {
   readonly before: EntityData | undefined;
   readonly after: Subject;
+  /** When the write committed, if known. */
+  readonly committedAt?: number;
 }
 
 /** What writing an entity does, or did. */
@@ -80,6 +82,7 @@ export interface StoredChange {
   readonly rev: number;
   readonly op: "create" | "replace" | "patch" | "delete";
   readonly meta: WriteMeta | null;
+  readonly createdAt: number;
   /** The entity's type as automations sees it, or `undefined` when automations can't use it. */
   readonly entityType: EntityType | undefined;
   /** The data at `rev - 1` and at `rev`, as automations sees it; `null` where there was none. */
@@ -663,6 +666,7 @@ export const makeEntityStore = (
         rev: change.rev,
         op: change.op,
         meta: change.meta,
+        createdAt: change.createdAt,
         entityType,
         before: data(change.before),
         after: data(change.after),

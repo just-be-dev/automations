@@ -83,7 +83,9 @@ export default class Api extends Cloudflare.Worker<Api>()(
       Automations.use((service) =>
         Effect.succeed(
           EntitySubscribers.layer((id, change, key, event) =>
-            service.get(id).entityChanged(change.before, change.after, key, event),
+            service
+              .get(id)
+              .entityChanged(change.before, change.after, key, event, change.committedAt),
           ),
         ),
       ),
