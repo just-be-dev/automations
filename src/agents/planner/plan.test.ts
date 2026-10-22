@@ -117,8 +117,8 @@ describe("the planner's working copy", () => {
   });
 
   test("merges permissions", () => {
-    const plan = setPermissions(planOf(workflow), { "slack.sendMessage": { ask: "ops" } });
-    expect(plan.permissions).toEqual({ "email.send": "auto", "slack.sendMessage": { ask: "ops" } });
+    const plan = setPermissions(planOf(workflow), { "slack.sendMessage": "ask" });
+    expect(plan.permissions).toEqual({ "email.send": "auto", "slack.sendMessage": "ask" });
   });
 
   test("compares working copies by value, whatever their key order", () => {

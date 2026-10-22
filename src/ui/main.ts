@@ -1,10 +1,10 @@
 /** Prepares the root app for its initial URL and preferences, loading the selected page and shared catalogues. */
 import * as Option from "effect/Option";
 import type { Runtime } from "foldkit";
-import { LoadAutomations, LoadConnections, LoadDevelopment, LoadRoles } from "./command.ts";
+import { LoadAutomations, LoadConnections, LoadDevelopment } from "./command.ts";
 import { AutomationId } from "./domain/index.ts";
 import type { Message } from "./message.ts";
-import { Activity, Directory, Model, Page, RoleChoices, SubjectChoices } from "./model.ts";
+import { Activity, Directory, Model, Page, SubjectChoices } from "./model.ts";
 import { AppRoute, routeFromUrl } from "./route.ts";
 import type { Flags } from "./theme.ts";
 import { showPage } from "./update/index.ts";
@@ -29,7 +29,6 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
     page: Page.Studio(),
     automationId,
     directory: Directory.Loading(),
-    roles: RoleChoices.Loading(),
     liveConnections: [],
     isLocalDevelopment: false,
     revision: 0,
@@ -58,7 +57,6 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
     commands: [
       ...(page.commands ?? []),
       LoadAutomations(),
-      LoadRoles(),
       LoadConnections(),
       LoadDevelopment(),
       ...Command.mapMessages([Assistant.RestoreAssistant()], toAssistantMessage),

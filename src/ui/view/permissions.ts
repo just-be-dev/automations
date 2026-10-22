@@ -1,14 +1,12 @@
-/** Presents each workflow operation's permission choices and the roles that can approve it. */
+/** Presents each workflow operation's permission: runs on its own, or asks first. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
 import type { HtmlBuilder } from "foldkit/html";
 import { CircleCheck, Hand } from "lucide";
-import { select as nativeSelect } from "@/components/ui/select";
 import { componentName } from "@/lib/component";
 import { icon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { permissionOf } from "../../connections.ts";
-import type { Role } from "../../entities.ts";
 import {
   operationsUsed,
   type Permission,
@@ -16,7 +14,7 @@ import {
   type Workflow,
 } from "../../workflow.ts";
 import { Message } from "../message.ts";
-import { Activity, type Model, readyRoles, replyChanges } from "../model.ts";
+import { Activity, type Model, replyChanges } from "../model.ts";
 import {
   type IconNode,
   isSimulated,
@@ -25,11 +23,6 @@ import {
   simulatedTagView,
 } from "./operation.ts";
 import { eyebrowClass } from "./shared.ts";
-
-const askedRole = (maybePermission: Option.Option<Permission>) =>
-  Option.flatMap(maybePermission, (permission) =>
-    permission === "auto" ? Option.none() : Option.some(permission.ask),
-  );
 
 export const permissionsView = (workflow: Workflow, model: Model, h: HtmlBuilder<Message>) =>
   Array.match(operationsUsed(workflow.steps), {
@@ -61,7 +54,6 @@ export const permissionsView = (workflow: Workflow, model: Model, h: HtmlBuilder
                     (change) => change.operation === operationId,
                   ),
                 ),
-                readyRoles(model.roles),
                 Activity.guards.Working(model.activity),
                 model.liveConnections,
                 h,
@@ -72,20 +64,10 @@ export const permissionsView = (workflow: Workflow, model: Model, h: HtmlBuilder
       ),
   });
 
-const permissionLabel = (permission: Permission, roles: ReadonlyArray<Role>) =>
-  permission === "auto"
-    ? "Allow"
-    : `Ask ${Option.match(
-        Array.findFirst(roles, (role) => role.name === permission.ask),
-        { onNone: () => permission.ask, onSome: (role) => role.label },
-      )}`;
+const permissionLabel = (permission: Permission) => (permission === "auto" ? "Allow" : "Ask first");
 
 /** Marks a permission the agent's latest reply set, with the one it replaced struck through. */
-const permissionChangeView = (
-  change: PermissionChange,
-  roles: ReadonlyArray<Role>,
-  h: HtmlBuilder<Message>,
-) =>
+const permissionChangeView = (change: PermissionChange, h: HtmlBuilder<Message>) =>
   h.span(
     [componentName("permission-change"), h.Class("flex items-center gap-1.5 text-xs")],
     [
@@ -99,10 +81,7 @@ const permissionChangeView = (
       ),
       change.before === undefined
         ? h.empty
-        : h.del(
-            [h.Class("text-muted-foreground line-through")],
-            [permissionLabel(change.before, roles)],
-          ),
+        : h.del([h.Class("text-muted-foreground line-through")], [permissionLabel(change.before)]),
     ],
   );
 
@@ -110,12 +89,10 @@ const permissionRowView = (
   operationId: string,
   maybePermission: Option.Option<Permission>,
   maybeChange: Option.Option<PermissionChange>,
-  roles: ReadonlyArray<Role>,
   isWorking: boolean,
   liveConnections: ReadonlyArray<string>,
   h: HtmlBuilder<Message>,
 ) => {
-  const maybeRole = askedRole(maybePermission);
   const select = (permission: Permission) =>
     Message.SelectedPermission({ operation: operationId, permission });
   return h.keyed("li")(
@@ -142,34 +119,10 @@ const permissionRowView = (
           isSimulated(operationId, liveConnections) ? simulatedTagView(h) : h.empty,
           Option.match(maybeChange, {
             onNone: () => h.empty,
-            onSome: (change) => permissionChangeView(change, roles, h),
+            onSome: (change) => permissionChangeView(change, h),
           }),
         ],
       ),
-      Option.match(maybeRole, {
-        onNone: () => h.empty,
-        onSome: (role) =>
-          nativeSelect(
-            {
-              className: "h-7 w-auto px-2 text-xs md:text-xs",
-              attributes: [
-                h.AriaLabel(`${operationTitle(operationId)} approver`),
-                h.Title("Who approves it"),
-                h.Value(role),
-                h.Disabled(isWorking),
-                h.OnChange((ask) => select({ ask })),
-              ],
-            },
-            Array.map(roles, (candidate) =>
-              h.keyed("option")(
-                candidate.name,
-                [h.Value(candidate.name), h.Selected(candidate.name === role)],
-                [candidate.label],
-              ),
-            ),
-            h,
-          ),
-      }),
       h.div(
         [
           h.Role("group"),
@@ -190,19 +143,10 @@ const permissionRowView = (
           permissionButtonView(
             {
               label: "Ask first",
-              hint: Array.isReadonlyArrayEmpty(roles)
-                ? "Add a role to ask first"
-                : "Waits until someone in a role approves it",
+              hint: "Waits until someone approves it",
               icon: Hand,
-              isChosen: Option.isSome(maybeRole),
-              maybeOnClick: isWorking
-                ? Option.none()
-                : Option.map(
-                    Option.orElse(maybeRole, () =>
-                      Option.map(Array.head(roles), (role) => role.name),
-                    ),
-                    (ask) => select({ ask }),
-                  ),
+              isChosen: Option.exists(maybePermission, (permission) => permission === "ask"),
+              maybeOnClick: isWorking ? Option.none() : Option.some(select("ask")),
             },
             h,
           ),

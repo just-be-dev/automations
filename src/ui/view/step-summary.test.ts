@@ -169,10 +169,10 @@ describe("steps in flight and steps that didn't run", () => {
   const notify = action("slack.sendMessage", "Tell the manager", { to: "{{employee.manager}}" });
   const notifyTask: HumanTask = { ...permissionTask, step: "act" };
 
-  test("an action waiting on approval names the role", () => {
+  test("an action waiting on approval says so", () => {
     expect(summaryOf(notify, { status: "waiting" }, { tasks: [notifyTask] })).toEqual({
       mark: "waiting",
-      summary: "Waiting for People Ops",
+      summary: "Waiting for approval",
     });
   });
 
@@ -189,12 +189,8 @@ describe("steps in flight and steps that didn't run", () => {
       step: "h",
       assignee: { $title: "Grace Hopper", email: "grace@example.com" },
     };
-    const { approvers: _approvers, ...unassigned } = { ...task, assignee: null };
+    const unassigned = { ...task, assignee: null };
     expect(summaryOf(step, { status: "waiting" }, { tasks: [task] }).summary).toBe(
-      "Waiting for People Ops",
-    );
-    const { approvers: _ignored, ...assigned } = task;
-    expect(summaryOf(step, { status: "waiting" }, { tasks: [assigned] }).summary).toBe(
       "Waiting for Grace",
     );
     expect(summaryOf(step, { status: "waiting" }, { tasks: [unassigned] }).summary).toBe(
@@ -211,7 +207,7 @@ describe("steps in flight and steps that didn't run", () => {
       response: { fields: [{ name: "buddy", label: "Buddy", type: "text" }] },
     };
     const answered = done({ values: { buddy: "Katherine" }, respondedBy: "Me@Studio.dev" });
-    const { approvers: _approvers, ...checkIn } = {
+    const checkIn = {
       ...permissionTask,
       step: "f",
       status: "closed" as const,
@@ -219,18 +215,9 @@ describe("steps in flight and steps that didn't run", () => {
     };
     expect(summaryOf(form, answered, { tasks: [checkIn] }).summary).toBe("Answered by Grace");
     const approval: Step = { ...form, response: "approval" };
-    const approved = done({ approved: true, respondedBy: "me@studio.dev" });
-    const byRole: HumanTask = {
-      ...permissionTask,
-      step: "f",
-      status: "closed",
-      approvers: {
-        role: "people_ops",
-        label: "People Ops",
-        members: [{ name: "Mary Jackson", email: "me@studio.dev" }],
-      },
-    };
-    expect(summaryOf(approval, approved, { tasks: [byRole] }).summary).toBe("Approved by Mary");
+    const approved = done({ approved: true, respondedBy: "mary.jackson@studio.dev" });
+    const closed: HumanTask = { ...permissionTask, step: "f", status: "closed" };
+    expect(summaryOf(approval, approved, { tasks: [closed] }).summary).toBe("Approved by Mary");
     expect(summaryOf(form, answered).summary).toBe("Answered by Me");
   });
 
@@ -251,7 +238,7 @@ describe("steps in flight and steps that didn't run", () => {
       summaryOf(notify, { status: "declined" }, { tasks: [{ ...notifyTask, status: "closed" }] }),
     ).toEqual({
       mark: "declined",
-      summary: "Declined by People Ops",
+      summary: "Declined",
     });
     expect(summaryOf(notify, { status: "skipped" })).toEqual({
       mark: "skipped",

@@ -24,7 +24,6 @@ import { labelFromName, withArticle } from "@/lib/format";
 import { icon, triggerIcon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
 import { findOperation, type InputType } from "../../connections.ts";
-import type { Role } from "../../entities.ts";
 import {
   type ActionInput,
   type ActionMatch,
@@ -384,8 +383,6 @@ export interface StepContext {
   readonly scope: "draft" | "run";
   readonly expandedStepIds: ReadonlyArray<string>;
   readonly permissions: Permissions;
-  /** The roles permissions can ask, for their labels. */
-  readonly roles: ReadonlyArray<Role>;
   /** Connections simulated by default that this deployment really connects. */
   readonly liveConnections: ReadonlyArray<string>;
   /** What the agent's latest reply changed that isn't saved yet. Only the draft shows it. */
@@ -954,20 +951,8 @@ const matchView = (
     ],
   );
 
-const permissionTagView = (
-  permission: Permission | undefined,
-  roles: ReadonlyArray<Role>,
-  h: HtmlBuilder<Message>,
-) =>
-  permission === undefined || permission === "auto"
-    ? h.empty
-    : tagView(
-        `Asks ${Option.match(
-          Array.findFirst(roles, (role) => role.name === permission.ask),
-          { onNone: () => permission.ask, onSome: (role) => role.label },
-        )}`,
-        h,
-      );
+const permissionTagView = (permission: Permission | undefined, h: HtmlBuilder<Message>) =>
+  permission === undefined || permission === "auto" ? h.empty : tagView("Asks first", h);
 
 const humanFieldView = (field: HumanField, h: HtmlBuilder<Message>) =>
   h.keyed("li")(
@@ -1023,7 +1008,7 @@ export const stepDetailView = (
               [
                 operationTitle(action.use),
                 isSimulated(action.use, context.liveConnections) ? simulatedTagView(h) : h.empty,
-                permissionTagView(context.permissions[action.use], context.roles, h),
+                permissionTagView(context.permissions[action.use], h),
               ],
             ),
             inputListView(

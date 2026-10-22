@@ -146,19 +146,12 @@ test("a write's depth comes from its meta, and a chain's runs get the lifecycle 
   expect(h.notified[0]?.event?.depth).toBe(16);
 });
 
-test("roles and types automations can't use publish nothing", async () => {
+test("types automations can't use publish nothing", async () => {
   const h = harness();
   await Effect.runPromise(
     Effect.gen(function* () {
       const entities = yield* EntityStore;
       yield* entities.subscribe("watcher", "employee");
-      yield* entities.putEntity("employee", "grace", { name: "Grace", email: "g@example.com" });
-      yield* entities.putRole({
-        name: "ops",
-        label: "Ops",
-        members: [{ type: "employee", id: "grace" }],
-      });
-      yield* deliverEntityChange(h.latest());
       h.store.seedType("Office-Space", "", { fields: { name: { type: "string" } } });
       yield* Effect.promise(() =>
         h.store.upsertEntity("Office-Space", "hq", { patch: { name: "HQ" } }),

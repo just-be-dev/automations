@@ -15,7 +15,6 @@ import { Classifier } from "../ai/classifier.ts";
 import type { QuestionsAnswer } from "../ai/ask-question/question.ts";
 import { PiAgent } from "../ai/pi.ts";
 import { findOperation } from "../connections/registry.ts";
-import { EntityStore } from "../entities/store.ts";
 import { checkWorkflow } from "../workflow/catalog.ts";
 import { diffWorkflows, isUnchanged } from "../workflow/changes.ts";
 import type { Permissions, Workflow } from "../workflow/model.ts";
@@ -56,7 +55,6 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
 ) {
   const host = yield* AutomationHost;
   const storage = host.storage;
-  const entities = yield* EntityStore;
   const index = yield* AutomationIndex;
   const pi = yield* PiAgent;
   const { classify } = yield* Classifier;
@@ -378,15 +376,6 @@ export const makeDesignSession = Effect.fn("Automation.makeDesignSession")(funct
       return yield* new AutomationError({
         message: `Unknown operations: ${unknown.join(", ")}`,
       });
-    }
-    const roles = yield* entities.listRoles;
-    const unknownRoles = Object.values(permissions).flatMap((permission) =>
-      permission === "auto" || roles.some((role) => role.name === permission.ask)
-        ? []
-        : [permission.ask],
-    );
-    if (unknownRoles.length > 0) {
-      return yield* new AutomationError({ message: `No role ${unknownRoles.join(", ")}` });
     }
     return yield* storage
       .transaction(

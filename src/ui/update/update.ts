@@ -34,7 +34,6 @@ import {
   Directory,
   type Model,
   Page,
-  RoleChoices,
   RunDetail,
   RunNotice,
   RunStart,
@@ -395,12 +394,6 @@ export const update = (model: Model, message: Message) =>
     }),
     FailedLoadAutomations: ({ error }) => ({
       model: modifyFields(model, { directory: () => Directory.Unavailable({ error }) }),
-    }),
-    SucceededLoadRoles: ({ roles }) => ({
-      model: modifyFields(model, { roles: () => RoleChoices.Ready({ roles }) }),
-    }),
-    FailedLoadRoles: ({ error }) => ({
-      model: modifyFields(model, { roles: () => RoleChoices.Unavailable({ error }) }),
     }),
     SucceededLoadConnections: ({ live }) => ({
       model: modifyFields(model, { liveConnections: () => live }),

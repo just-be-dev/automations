@@ -80,7 +80,6 @@ export const assistant: Call<typeof Input.Type, typeof Output.Type> = {
             catalog: {
               types: yield* f.entities.listTypes,
               templates: yield* f.entities.listTemplates,
-              roles: yield* f.entities.listRoles,
             },
           });
           // As the studio does: the reply is recorded, and a draft only when the planner made one.

@@ -265,7 +265,7 @@ describe("diffWorkflows", () => {
       workflowOf([post("welcome", "#general")], {
         name: "Welcome engineers",
         trigger: { kind: "entity", entity: "employee", fields: ["start_date"] },
-        permissions: { "slack.sendMessage": { ask: "hr" }, "email.send": "auto" },
+        permissions: { "slack.sendMessage": "ask", "email.send": "auto" },
       }),
     );
     expect(changes).toEqual({
@@ -306,7 +306,7 @@ describe("unsavedChanges", () => {
   const after = workflowOf(
     [agent("draft", "Write a warm note"), post("welcome", "#eng-team", "Welcome them")],
     {
-      permissions: { "slack.sendMessage": { ask: "hr" } },
+      permissions: { "slack.sendMessage": "ask" },
     },
   );
   const changes = diffWorkflows(before, after);

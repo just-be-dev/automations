@@ -32,7 +32,6 @@ import { Event, SuppliedEvent } from "../events/model.ts";
 import { Events } from "../events/service.ts";
 import {
   changedFields,
-  isEmailField,
   type EntityData,
   type EntityType,
   type Subject,
@@ -50,7 +49,7 @@ import {
 } from "../workflow/model.ts";
 import { MAX_SCHEDULED_RUNS, nextOccurrence, occursAt, tooManyRuns } from "../workflow/schedule.ts";
 import { makeSubjects } from "./subjects.ts";
-import { isApprover, RunId, type Run, type HumanTask, type RunSummary } from "../workflow/run.ts";
+import { RunId, type Run, type HumanTask, type RunSummary } from "../workflow/run.ts";
 import { ExecutionId } from "../workflow/execution.ts";
 import { AutomationError } from "./model.ts";
 import { LocalDevelopment } from "./local-development.ts";
@@ -114,29 +113,6 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
   const { read: readRun, write: writeRun, update: updateRun } = records;
   const localDevelopment = yield* LocalDevelopment;
 
-  /** A role's members as approvers: their names and email addresses, as stored now. */
-  const approversOf = Effect.fn("Automation.approversOf")(function* (roleName: string) {
-    const { types, roles } = yield* catalog;
-    const role = roles.find((candidate) => candidate.name === roleName);
-    if (role === undefined) {
-      return yield* new AutomationError({ message: `No role ${roleName}` });
-    }
-    const members = yield* Effect.forEach(role.members, (member) =>
-      entities.getEntity(member.type, member.id).pipe(
-        Effect.map((found) => {
-          const type = types.find((candidate) => candidate.name === member.type);
-          const email = type?.fields.find(isEmailField);
-          const address = email === undefined ? undefined : found?.data[email.name];
-          const name = type === undefined ? undefined : found?.data[type.title];
-          return typeof address === "string"
-            ? [{ name: typeof name === "string" ? name : member.id, email: address }]
-            : [];
-        }),
-      ),
-    );
-    return { role: role.name, label: role.label, members: members.flat() };
-  });
-
   // Agent steps in a run share one conversation, so later steps can build on earlier answers.
   const conversationLock = Semaphore.makeUnsafe(1);
   const conversationFor = (runId: RunId) =>
@@ -198,31 +174,28 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
     }).pipe(Effect.andThen(tasks.notify(request.runId, request.step.id)));
 
   const requestPermission = (request: PermissionRequest) =>
-    Effect.flatMap(approversOf(request.role), (approvers) =>
-      updateRun(request.runId, (run) => {
-        if (run.tasks.some((task) => task.step === request.step.id)) {
-          return run;
-        }
-        const operation = findOperation(request.step.use)?.title ?? request.step.use;
-        const task: HumanTask = {
-          step: request.step.id,
-          token: request.token,
-          title: request.title,
-          prompt: `${operation} with the details below? Rejecting skips this step and the steps that need its result.`,
-          assignee: null,
-          response: "approval",
-          defaults: {},
-          action: {
-            use: request.step.use,
-            inputs: request.inputs,
-            ...(request.template === undefined ? {} : { template: request.template }),
-          },
-          approvers,
-          status: "open",
-        };
-        return { ...run, tasks: [...run.tasks, task] };
-      }).pipe(Effect.andThen(tasks.notify(request.runId, request.step.id))),
-    );
+    updateRun(request.runId, (run) => {
+      if (run.tasks.some((task) => task.step === request.step.id)) {
+        return run;
+      }
+      const operation = findOperation(request.step.use)?.title ?? request.step.use;
+      const task: HumanTask = {
+        step: request.step.id,
+        token: request.token,
+        title: request.title,
+        prompt: `${operation} with the details below? Rejecting skips this step and the steps that need its result.`,
+        assignee: null,
+        response: "approval",
+        defaults: {},
+        action: {
+          use: request.step.use,
+          inputs: request.inputs,
+          ...(request.template === undefined ? {} : { template: request.template }),
+        },
+        status: "open",
+      };
+      return { ...run, tasks: [...run.tasks, task] };
+    }).pipe(Effect.andThen(tasks.notify(request.runId, request.step.id)));
 
   const stepFailed = (step: string) => (error: { readonly message: string }) =>
     new StepFailed({ step, message: error.message });
@@ -566,7 +539,7 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
 
   /**
    * Answers a run's open human step or permission request. `responder` is the email address of
-   * whoever answers, when the studio knows it; only a role's members may answer for it. Answers
+   * whoever answers, when the studio knows it; anyone who can use the studio may answer. Answers
    * are taken one at a time, so of two people answering at once the second finds the task closed
    * and the task's `decision` names whoever answered first.
    */
@@ -577,12 +550,6 @@ export const makeRuns = Effect.fn("Automation.makeRuns")(function* (workflows: W
       const task = run?.tasks.find((candidate) => candidate.step === stepId);
       if (run === undefined || task === undefined || task.status !== "open") {
         return yield* new AutomationError({ message: "That task isn't waiting for an answer" });
-      }
-      const approvers = task.approvers;
-      if (approvers !== undefined && responder !== undefined && !isApprover(task, responder)) {
-        return yield* new AutomationError({
-          message: `Only members of ${approvers.label} can answer this`,
-        });
       }
       const response: HumanResponse =
         responder === undefined ? answer : { ...answer, respondedBy: responder };

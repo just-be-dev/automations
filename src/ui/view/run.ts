@@ -18,7 +18,6 @@ import {
   type Model,
   type OpenRun,
   Page,
-  readyRoles,
   RunDetail,
   RunNotice,
   RunStart,
@@ -198,7 +197,6 @@ const runBodyView = (openRun: OpenRun, model: Model, h: HtmlBuilder<Message>) =>
             openRun,
             {
               expandedStepIds: model.expandedStepIds,
-              roles: readyRoles(model.roles),
               liveConnections: model.liveConnections,
               waits: {
                 resumesAt,

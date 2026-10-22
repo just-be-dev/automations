@@ -3,13 +3,10 @@ import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
-import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
 import { answerHubLayer } from "../ai/ask-question/answer-hub.ts";
 import { Classifier } from "../ai/classifier.ts";
-import { approvalButtons } from "../channels/slack-approvals.ts";
-import { taskActionOf } from "../channels/slack-interactivity.ts";
 import { PiAgent } from "../ai/pi.ts";
 import {
   SlackSendError,
@@ -53,15 +50,6 @@ const approval: HumanTask = {
       body: `Hi Ada Lovelace,\n\nWelcome to the engineering team! You start on 2026-11-02, and Grace Hopper will be your manager. ${"Bring a laptop. ".repeat(20)}`,
     },
   },
-  approvers: {
-    role: "people_ops",
-    label: "People Ops",
-    members: [
-      { name: "Sam Rivera", email: "sam@example.com" },
-      { name: "Pat Lee", email: "pat@example.com" },
-      { name: "Sam again", email: "SAM@example.com" },
-    ],
-  },
   status: "open",
 };
 
@@ -83,7 +71,7 @@ const checkIn: HumanTask = {
 };
 
 describe("taskMessage", () => {
-  test("an approval names the automation, the role and the recipient, and shows the exact email", () => {
+  test("an approval names the automation and the recipient, and shows the exact email", () => {
     const message = taskMessage({
       automation: "Launch a great first week",
       runId,
@@ -92,7 +80,7 @@ describe("taskMessage", () => {
       link,
     });
     expect(message.text).toBe(
-      "Launch a great first week needs People Ops to approve an email before it goes to Ada Lovelace.",
+      "Launch a great first week needs someone to approve an email before it goes to Ada Lovelace.",
     );
     const [headline, details, actions, ...rest] = message.blocks ?? [];
     expect(rest).toEqual([]);
@@ -100,7 +88,7 @@ describe("taskMessage", () => {
       type: "section",
       text: {
         type: "mrkdwn",
-        text: "*Launch a great first week* needs People Ops to approve an email before it goes to Ada Lovelace.",
+        text: "*Launch a great first week* needs someone to approve an email before it goes to Ada Lovelace.",
       },
     });
     const quote = details?.type === "section" ? details.text.text : "";
@@ -202,11 +190,11 @@ describe("taskMessage", () => {
 });
 
 describe("taskRecipients", () => {
-  test("an approval goes to each member of its role once", () => {
-    expect(taskRecipients(approval)).toEqual([
-      { name: "Sam Rivera", email: "sam@example.com" },
-      { name: "Pat Lee", email: "pat@example.com" },
-    ]);
+  test("an approval goes to no one: anyone in the studio answers it", () => {
+    expect(taskRecipients(approval)).toEqual([]);
+    expect(taskRecipients({ ...approval, notify: "slack", assignee: "ada@example.com" })).toEqual(
+      [],
+    );
   });
 
   test("a human step goes to its assignee only when it notifies on Slack", () => {
@@ -281,64 +269,38 @@ const notifierFor = (store: ReturnType<typeof runWith>, sender: SlackSenderServi
   });
 
 describe("makeTaskNotifier", () => {
-  test("sends each recipient one DM and records it, however often the task is opened", async () => {
-    const store = runWith(approval);
+  test("sends the assignee one DM and records it, however often the task is opened", async () => {
+    const store = runWith(checkIn);
     const slack = fakeSlack();
     const { notify } = notifierFor(store, slack.sender);
-    await Effect.runPromise(Effect.all([notify(runId, "welcome"), notify(runId, "welcome")]));
+    await Effect.runPromise(Effect.all([notify(runId, "check-in"), notify(runId, "check-in")]));
     expect(slack.posts.map((post) => post.to)).toEqual([
-      { kind: "person", email: "sam@example.com" },
-      { kind: "person", email: "pat@example.com" },
+      { kind: "person", email: "grace@example.com" },
     ]);
-    expect(slack.posts[0]?.message.key).toBe("first-week/run-7/welcome");
+    expect(slack.posts[0]?.message.key).toBe("first-week/run-7/check-in");
+    // A check-in is answered in the studio: its DM only links there.
+    const buttons = slack.posts[0]?.message.blocks?.flatMap((block) =>
+      block.type === "actions" ? block.elements.map((element) => element.action_id) : [],
+    );
+    expect(buttons).toEqual(["task.open"]);
     expect(store.current().tasks[0]?.notifications).toEqual([
       {
         via: "slack",
-        to: "sam@example.com",
-        name: "Sam Rivera",
+        to: "grace@example.com",
+        name: "Grace Hopper",
         status: "sent",
         channel: "D-1",
         ts: "1700000000.000001",
       },
-      {
-        via: "slack",
-        to: "pat@example.com",
-        name: "Pat Lee",
-        status: "sent",
-        channel: "D-2",
-        ts: "1700000000.000002",
-      },
     ]);
   });
 
-  test("an approval's DM has Approve and Reject after the link, and clicks name its task", async () => {
+  test("an approval is sent to no one, and records nothing", async () => {
+    const store = runWith(approval);
     const slack = fakeSlack();
-    await Effect.runPromise(notifierFor(runWith(approval), slack.sender).notify(runId, "welcome"));
-    await Effect.runPromise(notifierFor(runWith(checkIn), slack.sender).notify(runId, "check-in"));
-    const buttons = (message: SlackMessage | undefined) =>
-      message?.blocks?.flatMap((block) =>
-        block.type === "actions" ? block.elements.map((element) => element.action_id) : [],
-      );
-    expect(buttons(slack.posts[0]?.message)).toEqual(["task.open", "task.approve", "task.reject"]);
-    // Only a role's approval gets buttons; a check-in is answered in the studio.
-    expect(buttons(slack.posts.at(-1)?.message)).toEqual(["task.open"]);
-    // Slack hands the clicked button back with the message as JSON.
-    const blocks = JSON.parse(JSON.stringify(slack.posts[0]?.message.blocks)) as unknown;
-    const clicked = taskActionOf(
-      new URLSearchParams({
-        payload: JSON.stringify({
-          type: "block_actions",
-          user: { id: "U-sam" },
-          container: { channel_id: "D-1", message_ts: "1700000000.000001" },
-          response_url: "https://hooks.slack.com/actions/1",
-          message: { blocks },
-          actions: [approvalButtons({ automation: "first-week", run: runId, step: "welcome" })[1]],
-        }),
-      }).toString(),
-    );
-    expect(Option.map(clicked, (action) => [action.task, action.approved])).toEqual(
-      Option.some([{ automation: "first-week", run: "run-7", step: "welcome" }, false]),
-    );
+    await Effect.runPromise(notifierFor(store, slack.sender).notify(runId, "welcome"));
+    expect(slack.posts).toEqual([]);
+    expect(store.current().tasks[0]).toEqual(approval);
   });
 
   test("a delivery left sending finds the message it already posted instead of posting again", async () => {
@@ -367,15 +329,13 @@ describe("makeTaskNotifier", () => {
     expect(missing.current().tasks[0]?.notifications?.[0]?.status).toBe("sent");
   });
 
-  test("a recipient Slack refuses is recorded as failed, and the others still get it", async () => {
-    const store = runWith(approval);
-    const slack = fakeSlack({ fail: "sam@example.com" });
+  test("a recipient Slack refuses is recorded as failed, and isn't tried again", async () => {
+    const store = runWith(checkIn);
+    const slack = fakeSlack({ fail: "grace@example.com" });
     const { notify } = notifierFor(store, slack.sender);
-    await Effect.runPromise(notify(runId, "welcome"));
-    await Effect.runPromise(notify(runId, "welcome"));
-    expect(slack.posts.map((post) => post.to)).toEqual([
-      { kind: "person", email: "pat@example.com" },
-    ]);
+    await Effect.runPromise(notify(runId, "check-in"));
+    await Effect.runPromise(notify(runId, "check-in"));
+    expect(slack.posts).toEqual([]);
     expect(
       store.current().tasks[0]?.notifications?.map(({ to, status, error }) => ({
         to,
@@ -384,11 +344,10 @@ describe("makeTaskNotifier", () => {
       })),
     ).toEqual([
       {
-        to: "sam@example.com",
+        to: "grace@example.com",
         status: "failed",
         error: "Slack users.lookupByEmail: no one in the Slack workspace has that email address",
       },
-      { to: "pat@example.com", status: "sent", error: undefined },
     ]);
   });
 
@@ -434,7 +393,7 @@ describe("task notifications in a run", () => {
   const saved: Workflow = {
     name: "Launch a great first week",
     trigger: { kind: "manual", subject: "employee" },
-    permissions: { "email.send": { ask: "people_ops" } },
+    permissions: { "email.send": "ask" },
     steps: [
       {
         id: "welcome",
@@ -540,9 +499,6 @@ describe("task notifications in a run", () => {
           },
         ],
         templates: [welcome],
-        roles: [
-          { name: "people_ops", label: "People Ops", members: [{ type: "employee", id: "sam" }] },
-        ],
       }),
       Layer.succeed(AutomationHost, host),
       Layer.succeed(SlackSender, slack),
@@ -554,7 +510,7 @@ describe("task notifications in a run", () => {
   const execution = (advances: ReadonlyArray<string>) =>
     Schema.decodeUnknownEffect(ExecutionId)(advances[0]);
 
-  test("an approval and a check-in each DM their people once, linked to the run", async () => {
+  test("an approval DMs no one, and a check-in DMs its assignee once, linked to the run", async () => {
     const slack = fakeSlack();
     const h = harness(slack.sender);
     const run = await Effect.runPromise(
@@ -565,18 +521,17 @@ describe("task notifications in a run", () => {
         const started = yield* app.start("ada");
         const executionId = yield* execution(h.advances);
         yield* app.callbacks.advance({ executionId });
+        expect(slack.posts).toEqual([]);
+        yield* app.respond(started.id, "welcome", { approved: true }, "sam@example.com");
+        yield* app.callbacks.advance({ executionId });
 
         // A crash before the request Activity's exit was journaled makes the replay open the
         // task again; it must not send it again.
         const journaled = [...h.data().keys()].filter((key) =>
-          key.includes(":activity:welcome/approval-request:"),
+          key.includes(":activity:check-in/request:"),
         );
         expect(journaled).toHaveLength(1);
         for (const key of journaled) yield* h.host.storage.delete(key);
-        yield* app.callbacks.advance({ executionId });
-        expect(slack.posts).toHaveLength(1);
-
-        yield* app.respond(started.id, "welcome", { approved: true }, "sam@example.com");
         yield* app.callbacks.advance({ executionId });
         return yield* app.run(started.id);
       }).pipe(Effect.provide(h.layer)),
@@ -584,29 +539,17 @@ describe("task notifications in a run", () => {
     expect(run?.status).toBe("waiting");
     expect(slack.posts.map(({ to, message }) => [to, message.text])).toEqual([
       [
-        { kind: "person", email: "sam@example.com" },
-        "Launch a great first week needs People Ops to approve an email before it goes to Ada Lovelace.",
-      ],
-      [
         { kind: "person", email: "grace@example.com" },
         "Launch a great first week needs your answers for Ada Lovelace: Ask the manager how it's going",
       ],
     ]);
-    const details = slack.posts[0]?.message.blocks?.[1];
-    expect(details?.type === "section" ? details.text.text : "").toBe(
-      [
-        ">Template: Engineering welcome email",
-        ">Subject: Welcome to engineering, Ada Lovelace",
-        ">Body: Hi Ada Lovelace, welcome to the engineering team! Grace Hopper will be your manager.",
-      ].join("\n"),
-    );
-    const button = slack.posts[1]?.message.blocks?.at(-1);
+    const button = slack.posts[0]?.message.blocks?.at(-1);
     expect(button?.type === "actions" ? button.elements[0]?.url : undefined).toBe(
       `https://studio.example.com/?automation=first-week&run=${run?.id}`,
     );
     expect(
       run?.tasks.map((task) => task.notifications?.map(({ to, status }) => [to, status])),
-    ).toEqual([[["sam@example.com", "sent"]], [["grace@example.com", "sent"]]]);
+    ).toEqual([undefined, [["grace@example.com", "sent"]]]);
     expect(run?.tasks[0]?.action?.template).toBe("Engineering welcome email");
   });
 
@@ -624,8 +567,11 @@ describe("task notifications in a run", () => {
           automationId: "first-week",
           origin: "http://localhost:5173",
         });
-        yield* app.start("ada");
-        yield* app.callbacks.advance({ executionId: yield* execution(h.advances) });
+        const started = yield* app.start("ada");
+        const executionId = yield* execution(h.advances);
+        yield* app.callbacks.advance({ executionId });
+        yield* app.respond(started.id, "welcome", { approved: true }, undefined);
+        yield* app.callbacks.advance({ executionId });
       }).pipe(Effect.provide(h.layer)),
     );
     const button = slack.posts[0]?.message.blocks?.at(-1);

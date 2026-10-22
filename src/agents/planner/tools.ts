@@ -159,22 +159,12 @@ export const plannerTools = (
     {
       name: "set_permissions",
       description:
-        'Sets the permission of each operation given, by operation ID: "auto", or {"ask":"<role>"}. Others stay as they are.',
+        'Sets the permission of each operation given, by operation ID: "auto", or "ask". Others stay as they are.',
       parameters: objectOf(
         {
           permissions: {
             type: "object",
-            additionalProperties: {
-              anyOf: [
-                { type: "string", enum: ["auto"] },
-                {
-                  type: "object",
-                  properties: { ask: { type: "string" } },
-                  required: ["ask"],
-                  additionalProperties: false,
-                },
-              ],
-            },
+            additionalProperties: { type: "string", enum: ["auto", "ask"] },
           },
         },
         ["permissions"],
@@ -195,7 +185,7 @@ export const plannerTools = (
     {
       name: "check_workflow",
       description:
-        "Lists everything still wrong with the workflow: its shape, and how it fits the entity types, templates, connections, and roles.",
+        "Lists everything still wrong with the workflow: its shape, and how it fits the entity types, templates and connections.",
       parameters: objectOf({}),
       execute: () =>
         Effect.gen(function* () {

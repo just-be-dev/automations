@@ -8,7 +8,7 @@ import * as Schema from "effect/Schema";
 import { AssistantThread } from "../src/assistant/model.ts";
 import { AutomationSummary } from "../src/automation/model.ts";
 import { type ChangeAction, ChangeDecision, ChangeProposal } from "../src/changes/model.ts";
-import { EntityRecord, EntityType, Role } from "../src/entities/model.ts";
+import { EntityRecord, EntityType } from "../src/entities/model.ts";
 import { Template } from "../src/entities/templates.ts";
 import { messageOf } from "../src/error.ts";
 import { Workflow } from "../src/workflow/model.ts";
@@ -20,7 +20,6 @@ import {
   fallbackId,
   newHire,
   people,
-  roles,
   startDateFrom,
   templates,
 } from "./seed.ts";
@@ -30,16 +29,16 @@ import {
  *
  *   mise run demo:reset
  *
- * It deletes every assistant thread and every automation with its runs, restores the employee type, the people, the People
- * Ops role and the welcome templates, deletes every other entity, type, role and template, and
- * saves the fallback onboarding workflow. Entity, type and template writes go through
+ * It deletes every assistant thread and every automation with its runs, restores the sample
+ * employee type, the people and the welcome templates, deletes every other entity, type and
+ * template, and saves the fallback onboarding workflow. Entity, type and template writes go through
  * `/api/changes`, prepared and then approved, so the studio validates them as it does a person's.
  * A write that would change nothing is skipped, so running it again changes only the new hire's
  * start date when the calendar has moved on.
  *
  * People's addresses come from `.env` (`DEMO_ADA_EMAIL` and the others in `seed.ts`), and the
- * Studio URL from `STUDIO_URL` or the local Alchemy state. It says whether `DEV_USER_EMAIL`, who
- * you are in the local studio, can approve the welcome email. It refuses any host but this machine.
+ * Studio URL from `STUDIO_URL` or the local Alchemy state. It says who you approve as: anyone in
+ * the studio may approve, and a local studio knows you by `DEV_USER_EMAIL`. It refuses any host but this machine.
  */
 
 class ResetError extends Schema.TaggedError<ResetError>()("ResetError", {
@@ -51,7 +50,6 @@ const fail = (message: string) => new ResetError({ message });
 const StackOutput = Schema.Struct({ url: Schema.String });
 const Connections = Schema.Struct({ live: Schema.Array(Schema.String) });
 const Removed = Schema.Struct({ removed: Schema.String });
-const Deleted = Schema.Struct({ deleted: Schema.String });
 const Draft = Schema.Struct({ draft: Workflow });
 const Saved = Schema.Struct({ saved: Workflow });
 const Threads = Schema.Struct({ threads: Schema.Array(AssistantThread) });
@@ -204,7 +202,7 @@ const program = Effect.gen(function* () {
     done.push(`Deleted ${listed.length} automation${listed.length === 1 ? "" : "s"}`);
   }
 
-  // The type, then the people in it, then the role that names them.
+  // The type, then the people in it.
   const types = yield* get("/api/entities/types", Schema.Array(EntityType));
   if (
     !same(
@@ -221,24 +219,6 @@ const program = Effect.gen(function* () {
       done.push(yield* change({ kind: "putEntity", type: employeeType.name, id, data }));
     }
   }
-  // Role writes are direct; the studio has no proposal for them.
-  const storedRoles = yield* get("/api/roles", Schema.Array(Role));
-  for (const role of roles) {
-    if (
-      !same(
-        storedRoles.find((stored) => stored.name === role.name),
-        role,
-      )
-    ) {
-      yield* call("PUT", `/api/roles/${role.name}`, Role, role);
-      done.push(`Save role ${role.name}`);
-    }
-  }
-  for (const role of storedRoles.filter((stored) => !roles.some((r) => r.name === stored.name))) {
-    yield* call("DELETE", `/api/roles/${role.name}`, Deleted);
-    done.push(`Delete role ${role.name}`);
-  }
-
   const storedTemplates = yield* get("/api/templates", Schema.Array(Template));
   for (const template of templates) {
     if (

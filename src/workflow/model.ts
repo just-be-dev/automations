@@ -765,13 +765,25 @@ export const operationsUsed = (steps: ReadonlyArray<Step>) => [
 ];
 
 /**
- * Whether a run performs an operation on its own (`"auto"`), or waits each time until a member of
- * a role approves it (`{ "ask": "<role>" }`).
+ * Workflows saved while approvals named a role stored `{ "ask": "<role>" }`, in drafts, saved
+ * snapshots and the payloads of runs in flight. It reads as `"ask"`: there are no roles, so anyone
+ * who can use the studio approves.
  */
-export const Permission = Schema.Union([
-  Schema.Literal("auto"),
-  Schema.Struct({ ask: EntityName }),
-]);
+const AskedRole = Schema.Struct({ ask: Schema.String }).pipe(
+  Schema.decodeTo(
+    Schema.Literal("ask"),
+    SchemaTransformation.transform({
+      decode: () => "ask" as const,
+      encode: () => ({ ask: "anyone" }),
+    }),
+  ),
+);
+
+/**
+ * Whether a run performs an operation on its own (`"auto"`), or waits each time until someone in
+ * the studio approves it (`"ask"`).
+ */
+export const Permission = Schema.Union([Schema.Literals(["auto", "ask"]), AskedRole]);
 export type Permission = typeof Permission.Type;
 
 /**

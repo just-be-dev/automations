@@ -181,10 +181,7 @@ const responderName = (email: string, task: Option.Option<HumanTask>) => {
     if (same(Option.getOrUndefined(textField(assignee ?? undefined, "email")))) {
       return personName(assignee);
     }
-    return Option.map(
-      Option.fromNullishOr(found.approvers?.members.find((member) => same(member.email))),
-      (member) => firstWord(member.name),
-    );
+    return Option.none();
   });
   return Option.getOrElse(known, () => recipientName(email));
 };
@@ -253,13 +250,10 @@ const lastTaskOf = (run: Run, step: Step) =>
   Array.findLast(run.tasks, (task) => task.step === step.id);
 
 const waitingOnTask = (task: HumanTask) =>
-  task.approvers !== undefined
-    ? `Waiting for ${task.approvers.label}`
-    : Option.match(personName(task.assignee), {
-        onNone: () =>
-          task.response === "approval" ? "Waiting for approval" : "Waiting for an answer",
-        onSome: (name) => `Waiting for ${name}`,
-      });
+  Option.match(personName(task.assignee), {
+    onNone: () => (task.response === "approval" ? "Waiting for approval" : "Waiting for an answer"),
+    onSome: (name) => `Waiting for ${name}`,
+  });
 
 const waitingSummary = (step: Step, run: Run, resumesAt: Readonly<Record<string, number>>) =>
   Option.match(openTaskOf(run, step), {
@@ -302,15 +296,7 @@ export const stepProgress = (
       maybeSummary: doneSummary(step, runStep.record, lastTaskOf(run, step)),
     })),
     Match.when("skipped", () => progress("skipped", "Skipped")),
-    Match.when("declined", () =>
-      Option.match(
-        Option.flatMap(lastTaskOf(run, step), (task) => Option.fromNullishOr(task.approvers)),
-        {
-          onNone: () => progress("declined", "Declined"),
-          onSome: (approvers) => progress("declined", `Declined by ${approvers.label}`),
-        },
-      ),
-    ),
+    Match.when("declined", () => progress("declined", "Declined")),
     Match.when("running", () =>
       isActive(run)
         ? progress("running", hasLanes(step) ? undefined : "Running…")

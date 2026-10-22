@@ -650,7 +650,7 @@ test("invalid IDs and saving without a draft return errors without requests", ()
   });
 });
 
-test("the URL picks which automation opens and loads it with the automation list and roles", () => {
+test("the URL picks which automation opens and loads it with the automation list", () => {
   const opened = init(
     { theme: "System", shortcutModifier: "Meta" },
     studioUrl("automation=orders"),
@@ -660,7 +660,6 @@ test("the URL picks which automation opens and loads it with the automation list
   expect(opened.commands?.map((command) => command.name)).toEqual([
     "LoadAutomation",
     "LoadAutomations",
-    "LoadRoles",
     "LoadConnections",
     "LoadDevelopment",
     "RestoreAssistant",
@@ -671,7 +670,6 @@ test("the URL picks which automation opens and loads it with the automation list
   expect(overview.commands?.map((command) => command.name)).toEqual([
     "LoadOverview",
     "LoadAutomations",
-    "LoadRoles",
     "LoadConnections",
     "LoadDevelopment",
     "RestoreAssistant",

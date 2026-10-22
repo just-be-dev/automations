@@ -106,8 +106,6 @@ describe("entity store MCP", () => {
       "get_entity",
       "put_entity",
       "delete_entity",
-      "list_roles",
-      "define_role",
       "decide_change",
     ]);
     expect(tools.every((tool) => (tool.inputSchema as { type?: string }).type === "object")).toBe(
@@ -135,37 +133,6 @@ describe("entity store MCP", () => {
         },
       },
     });
-  });
-
-  test("defines and lists roles, whose members must have an email", async () => {
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const call = (name: string, args: unknown) =>
-          answerMcp({
-            jsonrpc: "2.0",
-            id: 1,
-            method: "tools/call",
-            params: { name, arguments: args },
-          });
-        const ops = { name: "ops", label: "Ops", members: [{ type: "employee", id: "sam" }] };
-        expect(yield* call("define_role", { role: ops })).toMatchObject({
-          result: { isError: false, structuredContent: { role: ops } },
-        });
-        expect(
-          yield* call("define_role", {
-            role: { ...ops, members: [{ type: "employee", id: "ada" }] },
-          }),
-        ).toMatchObject({
-          result: {
-            isError: true,
-            content: [{ text: "employee ada has no email" }],
-          },
-        });
-        expect(yield* call("list_roles", {})).toMatchObject({
-          result: { isError: false, structuredContent: { roles: [ops] } },
-        });
-      }).pipe(Effect.provide(handlers)),
-    );
   });
 
   test("reports store and argument problems as tool errors", async () => {

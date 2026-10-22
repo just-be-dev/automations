@@ -14,7 +14,6 @@ import {
   EntityRecord,
   EntityType,
   InvalidEntity,
-  Role,
 } from "../entities/model.ts";
 import { EntityStore, EntityStoreError } from "../entities/store.ts";
 import { ChangeDecision, ChangeProposal } from "../changes/model.ts";
@@ -111,32 +110,13 @@ const PutEntity = Tool.make("put_entity", {
 
 const DeleteEntity = Tool.make("delete_entity", {
   description:
-    "Proposes deleting an entity; does not delete. Review the proposal with the person, then use decide_change. Approval may start automations triggered by entity.deleted. Fails while a role lists the entity as a member, or another entity links to it.",
+    "Proposes deleting an entity; does not delete. Review the proposal with the person, then use decide_change. Approval may start automations triggered by entity.deleted. Fails while another entity links to it.",
   parameters: Schema.Struct({ ...EntityParams.fields, ...ProposalRequest }),
   success: ChangeProposal,
   failure: EntityFailure,
 })
   .annotate(Tool.Title, "Delete entity")
   .annotate(Tool.Destructive, true);
-
-const ListRoles = Tool.make("list_roles", {
-  description:
-    "Lists the roles. A role is a named group of people who approve the operations an automation asks first about. Its members are employees, by type (`employee`) and ID, each with an `email`.",
-  success: Schema.Struct({ roles: Schema.Array(Role) }),
-  failure: EntityFailure,
-})
-  .annotate(Tool.Title, "List roles")
-  .annotate(Tool.Readonly, true);
-
-const DefineRole = Tool.make("define_role", {
-  description:
-    "Creates a role or replaces one with the same name. Names are snake_case. Every member must be a stored employee with an email. Approval tasks already open keep the members they had.",
-  parameters: Schema.Struct({ role: Role }),
-  success: Schema.Struct({ role: Role }),
-  failure: EntityFailure,
-})
-  .annotate(Tool.Title, "Define role")
-  .annotate(Tool.Idempotent, true);
 
 const DecideChange = Tool.make("decide_change", {
   description:
@@ -154,8 +134,6 @@ export const EntityTools = Toolkit.make(
   GetEntity,
   PutEntity,
   DeleteEntity,
-  ListRoles,
-  DefineRole,
   DecideChange,
 );
 
@@ -194,8 +172,6 @@ export const EntityToolHandlers = EntityTools.toLayer(
         changes
           .prepare(owner, { kind: "deleteEntity", type, id }, requestIdOf(requestId))
           .pipe(Effect.mapError(changeFailure)),
-      list_roles: () => Effect.map(store.listRoles, (roles) => ({ roles })),
-      define_role: ({ role }) => Effect.map(store.putRole(role), (stored) => ({ role: stored })),
       decide_change: ({ proposalId, approved }) =>
         changes.decide(owner, proposalId, approved).pipe(Effect.mapError(changeFailure)),
     });
@@ -255,7 +231,7 @@ export const jsonRpcError = (
 ): JsonRpcResponse => ({ jsonrpc: "2.0", id, error: { code, message } });
 
 const instructions =
-  "Reads the studio's entity store and proposes changes to entity types and records. Mutation tools return proposals without committing. Show the exact details and consequences to the person and use decide_change only after explicit confirmation or cancellation. Role writes remain direct. A role's members can't be deleted or lose their email.";
+  "Reads the studio's entity store and proposes changes to entity types and records. Mutation tools return proposals without committing. Show the exact details and consequences to the person and use decide_change only after explicit confirmation or cancellation.";
 
 const describeTool = (tool: Tool.Any) => ({
   name: tool.name,

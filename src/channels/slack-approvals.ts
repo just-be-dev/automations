@@ -6,14 +6,14 @@ import * as Schema from "effect/Schema";
 import { Automations } from "../automation/service.ts";
 import type { SlackButton } from "../connections/slack.ts";
 import { messageOf } from "../error.ts";
-import { isApprover, RunId, type HumanTask } from "../workflow/run.ts";
+import { RunId, type HumanTask } from "../workflow/run.ts";
 
 /**
  * A click travels in two hops. The public Channels Worker checks Slack's signature, turns the
  * click into a `SlackTaskAction`, queues it, and acknowledges at once (`slack-interactivity.ts`).
  * The private Api takes it off the queue and runs `decideFromSlack`: it looks up the clicker's
- * email address and answers through `Automation.respond`, which accepts only the role's members,
- * the same check the studio makes with the Access email.
+ * email address and answers through `Automation.respond` as that person, as the studio does with
+ * the Access email. Anyone who can answer in the studio may answer here.
  *
  * Slack may deliver a click more than once, and people click twice. Deciding is idempotent: the
  * first answer closes the task, and every later click of either button finds it closed and
@@ -126,7 +126,10 @@ const slackTime = (at: number) => {
   };
 };
 
-/** "Approved by Grace Hopper", naming a role member by name and anyone else by email address. */
+/**
+ * "Approved by ada@example.com". A task opened while approvals named a role recorded its members,
+ * so one of them is named by name.
+ */
 export const decisionLine = (task: HumanTask) => {
   const decision = task.decision;
   if (decision === undefined) return { mrkdwn: "Already answered", plain: "Already answered" };
@@ -189,15 +192,14 @@ const refusals = {
   noEmail:
     "Slack has no email address for you, so the studio can't check that you may answer this. Open it in the studio instead.",
   gone: "That task isn't waiting for an answer",
-  noRole: "Answer this one in the studio.",
+  notApproval: "Answer this one in the studio.",
 };
 
 /**
  * Decides the task one click names, as the person who clicked. A closed task, decided by this
- * click or an earlier one, redraws the message from its recorded decision. Someone who may not
- * answer is told why, only they see it, and the message stays. Those refusals come from the task
- * as recorded, and `respond` checks the role again. Any other failure fails the effect, so the
- * queue retries the whole click, which repeats nothing.
+ * click or an earlier one, redraws the message from its recorded decision. A click that can't be
+ * answered from Slack is told why, only they see it, and the message stays. Any other failure
+ * fails the effect, so the queue retries the whole click, which repeats nothing.
  */
 export const decideFromSlack = Effect.fn("SlackApprovals.decide")(function* (
   action: SlackTaskAction,
@@ -219,13 +221,10 @@ export const decideFromSlack = Effect.fn("SlackApprovals.decide")(function* (
   const task = yield* taskNow;
   if (task?.status === "closed") return yield* redraw(task);
   if (task === undefined) return yield* refuse(refusals.gone);
-  if (task.approvers === undefined) return yield* refuse(refusals.noRole);
-  // Never answer without an email address: `respond` checks the role only for a known responder.
+  if (task.response !== "approval") return yield* refuse(refusals.notApproval);
+  // Never answer without an email address: the decision records who answered.
   const email = yield* slack.emailOf(action.user);
   if (email === undefined) return yield* refuse(refusals.noEmail);
-  if (!isApprover(task, email)) {
-    return yield* refuse(`Only members of ${task.approvers.label} can answer this`);
-  }
   const answered = yield* automation
     .respond(runId, action.task.step, { approved: action.approved }, email)
     .pipe(Effect.result);

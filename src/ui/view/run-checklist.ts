@@ -10,7 +10,6 @@ import { button } from "@/components/ui/button";
 import { componentName } from "@/lib/component";
 import { icon } from "@/lib/icons";
 import { cn } from "@/lib/utils";
-import type { Role } from "../../entities.ts";
 import type { Run, Step } from "../../workflow.ts";
 import { Message } from "../message.ts";
 import type { OpenRun } from "../model.ts";
@@ -276,7 +275,6 @@ export const runChecklistView = (
   openRun: OpenRun,
   options: {
     readonly expandedStepIds: ReadonlyArray<string>;
-    readonly roles: ReadonlyArray<Role>;
     readonly liveConnections: ReadonlyArray<string>;
     readonly waits: RunWaits;
   },
@@ -289,7 +287,6 @@ export const runChecklistView = (
       scope: "run",
       expandedStepIds: options.expandedStepIds,
       permissions: run.workflow.permissions ?? {},
-      roles: options.roles,
       liveConnections: options.liveConnections,
       maybeChanges: Option.none(),
     },

@@ -10,7 +10,7 @@
     "calendar.findTimes": "auto",
     "calendar.createEvent": "auto",
     "slack.sendMessage": "auto",
-    "email.send": { "ask": "people_ops" }
+    "email.send": "ask"
   },
   "steps": [
     {

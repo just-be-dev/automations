@@ -59,7 +59,10 @@ export const HumanTask = Schema.Struct({
       template: Schema.optionalKey(Schema.String),
     }),
   ),
-  /** The role and its members when the request opened. Only these members may answer for it. */
+  /**
+   * The role and its members when the request opened, on tasks opened while approvals named a
+   * role. Kept so those runs still read; anyone in the studio may answer them now.
+   */
   approvers: Schema.optionalKey(
     Schema.Struct({
       role: Schema.String,
@@ -80,11 +83,6 @@ export const HumanTask = Schema.Struct({
   status: Schema.Literals(["open", "closed"]),
 });
 export interface HumanTask extends Schema.Schema.Type<typeof HumanTask> {}
-
-/** Whether this email address is one of the members an approval task recorded when it opened. */
-export const isApprover = (task: HumanTask, email: string) =>
-  task.approvers?.members.some((member) => member.email.toLowerCase() === email.toLowerCase()) ===
-  true;
 
 /** `stopped` is a run a stop step ended. */
 export const RunStatus = Schema.Literals(["running", "waiting", "completed", "failed", "stopped"]);

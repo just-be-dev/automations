@@ -77,14 +77,6 @@ export const catalog: Catalog = {
       },
     },
   ],
-  roles: [
-    {
-      name: "people_ops",
-      label: "People Ops",
-      members: [{ type: "employee", id: "pat" }],
-    },
-    { name: "legal", label: "Legal", members: [{ type: "employee", id: "lee" }] },
-  ],
 };
 
 /** What an agent or decide step's run holds when the step starts. */

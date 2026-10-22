@@ -8,14 +8,14 @@ import type {
   SlackMessage,
   SlackSenderService,
 } from "../connections/slack.ts";
-import { approvalButtons } from "../channels/slack-approvals.ts";
 import type { HumanTask, RunId, TaskNotification } from "../workflow/run.ts";
 import type { StoredRun } from "./run-store.ts";
 import { runUrl, type StudioLink } from "./studio-link.ts";
 
 /**
- * A task reaches people in Slack when the deployment has a bot token: the members of the role an
- * ask-first action waits on, and a human step's assignee when the step says `notify: "slack"`.
+ * A task reaches people in Slack when the deployment has a bot token: a human step's assignee
+ * when the step says `notify: "slack"`. An ask-first action names no one, so it's answered in the
+ * studio.
  * Without a token nothing is sent, and the task only records `notify` as before. Email `notify`
  * stays recorded and unsent, because the email connection is simulated.
  *
@@ -48,16 +48,15 @@ const personOf = (value: Schema.Json): TaskRecipient | undefined => {
 };
 
 /**
- * Who a task is sent to: an approval's role members, as recorded when it opened, or a human
- * step's assignee when the step notifies on Slack. Each address appears once.
+ * Who a task is sent to: a human step's assignee, when the step notifies on Slack. A permission
+ * request names no one, since anyone in the studio may approve it, so it's sent to no one. Each
+ * address appears once.
  */
 export const taskRecipients = (task: HumanTask): ReadonlyArray<TaskRecipient> => {
   const people =
-    task.approvers !== undefined
-      ? task.approvers.members
-      : task.notify === "slack" && task.assignee !== null
-        ? [personOf(task.assignee)].filter((person) => person !== undefined)
-        : [];
+    task.action === undefined && task.notify === "slack" && task.assignee !== null
+      ? [personOf(task.assignee)].filter((person) => person !== undefined)
+      : [];
   const seen = new Set<string>();
   return people.filter((person) => {
     const key = person.email.toLowerCase();
@@ -121,16 +120,15 @@ const headline = (
 ) => {
   const forSubject = subject === null ? "" : ` for ${text(subject)}`;
   if (task.action !== undefined) {
-    const role = text(task.approvers?.label ?? "someone");
     const noun = approvalNoun[task.action.use];
     const to = task.action.inputs["to"];
     const recipient = to === undefined ? "" : readable(to);
     if (noun === undefined) {
-      return `${strong(automation)} needs ${role} to approve ${strong(task.title)}${forSubject}.`;
+      return `${strong(automation)} needs someone to approve ${strong(task.title)}${forSubject}.`;
     }
     return recipient === ""
-      ? `${strong(automation)} needs ${role} to approve ${noun}${forSubject}.`
-      : `${strong(automation)} needs ${role} to approve ${noun} before it goes to ${text(recipient)}.`;
+      ? `${strong(automation)} needs someone to approve ${noun}${forSubject}.`
+      : `${strong(automation)} needs someone to approve ${noun} before it goes to ${text(recipient)}.`;
   }
   const wants = task.response === "approval" ? "your approval" : "your answers";
   return `${strong(automation)} needs ${wants}${forSubject}: ${strong(task.title)}`;
@@ -325,10 +323,6 @@ export const makeTaskNotifier = ({
             automationId === undefined || origin === undefined
               ? undefined
               : { automationId, origin },
-          // Only a role's approvals get buttons: a click is checked against the role's members.
-          ...(task.approvers === undefined || automationId === undefined
-            ? {}
-            : { actions: approvalButtons({ automation: automationId, run: runId, step }) }),
         }),
         key: taskMessageKey(automationId, runId, step),
       };

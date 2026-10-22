@@ -9,7 +9,7 @@ import { planDraft } from "../../src/agents/planner/planner.ts";
 import { plannerTools } from "../../src/agents/planner/tools.ts";
 import { Question } from "../../src/ai/ask-question/question.ts";
 import type { AgentTool, PromptOptions } from "../../src/ai/pi.ts";
-import { EntityType, Role } from "../../src/entities/model.ts";
+import { EntityType } from "../../src/entities/model.ts";
 import { Template } from "../../src/entities/templates.ts";
 import {
   actionTemplates,
@@ -33,18 +33,16 @@ import { catalog } from "../fixtures.ts";
 const Catalog = Schema.Struct({
   types: Schema.Array(EntityType),
   templates: Schema.Array(Template),
-  roles: Schema.Array(Role),
 });
 
 export const PlannerInput = Schema.Struct({
   message: Schema.String,
   draft: Schema.optionalKey(Workflow),
-  /** Replaces parts of the People Ops store in `fixtures.ts`, such as `roles: []` for none. */
+  /** Replaces parts of the sample store in `fixtures.ts`, such as `templates: []` for none. */
   catalog: Schema.optionalKey(
     Schema.Struct({
       types: Schema.optionalKey(Catalog.fields.types),
       templates: Schema.optionalKey(Catalog.fields.templates),
-      roles: Schema.optionalKey(Catalog.fields.roles),
     }),
   ),
 });

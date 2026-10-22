@@ -112,8 +112,8 @@ export const taskMetaView = (
     [
       ...assigneeView(task.assignee, h),
       ...Option.match(approvalDecision(task), {
-        onSome: (decision) => [decisionView(task, decision, h)],
-        onNone: () => (task.approvers === undefined ? [] : [approversView(task.approvers, h)]),
+        onSome: (decision) => [decisionView(decision, h)],
+        onNone: () => [],
       }),
       ...notificationsView(task, liveConnections, h),
     ],
@@ -131,19 +131,12 @@ const approvalDecision = (task: HumanTask) =>
     : Option.none<Decision>();
 
 /**
- * "Approved by Grace Hopper, People Ops · Fri, Oct 16 at 10:14 AM": the approver by the name
- * their role recorded for them, or by address. An answer from no known person, as in a local
- * studio without `DEV_USER_EMAIL`, names no one.
+ * "Approved by ada@example.com · Fri, Oct 16 at 10:14 AM": the approver by address. An answer from
+ * no known person, as in a local studio without `DEV_USER_EMAIL`, names no one.
  */
-const decisionView = (task: HumanTask, decision: Decision, h: HtmlBuilder<Message>) => {
+const decisionView = (decision: Decision, h: HtmlBuilder<Message>) => {
   const verb = decision.approved === true ? "Approved" : "Rejected";
-  const role = task.approvers?.label;
-  const by = Option.map(Option.fromNullishOr(decision.by), (email) => {
-    const member = task.approvers?.members.find(
-      (candidate) => candidate.email.toLowerCase() === email.toLowerCase(),
-    );
-    return { email, name: member?.name ?? email };
-  });
+  const by = Option.map(Option.fromNullishOr(decision.by), (email) => ({ email, name: email }));
   return h.span(
     [
       componentName("approval-decision"),
@@ -151,11 +144,10 @@ const decisionView = (task: HumanTask, decision: Decision, h: HtmlBuilder<Messag
     ],
     [
       ...Option.match(by, {
-        onNone: () => [role === undefined ? verb : `${verb} for ${role}`],
+        onNone: () => [verb],
         onSome: ({ name }) => [
           `${verb} by `,
           h.span([h.Class(cn(chipClass, "text-foreground"))], [name]),
-          ...(role === undefined ? [] : [`, ${role}`]),
         ],
       }),
       ` · ${dayTimeText(decision.at)}`,
@@ -269,22 +261,6 @@ const taskActionView = (
           ),
         ),
       ),
-    ],
-  );
-
-const approversView = (approvers: NonNullable<HumanTask["approvers"]>, h: HtmlBuilder<Message>) =>
-  h.span(
-    [
-      componentName("approvers"),
-      h.Title(Array.map(approvers.members, (member) => member.email).join(", ")),
-    ],
-    [
-      "Approved by ",
-      h.span([h.Class(cn(chipClass, "text-foreground"))], [approvers.label]),
-      ...Array.match(approvers.members, {
-        onEmpty: () => [" (no members)"],
-        onNonEmpty: (members) => [` (${Array.map(members, (member) => member.name).join(", ")})`],
-      }),
     ],
   );
 

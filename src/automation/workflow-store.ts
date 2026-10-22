@@ -12,12 +12,11 @@ import { AutomationError } from "./model.ts";
 import { makeSubjects } from "./subjects.ts";
 import { STUDIO_LINK_KEY, StudioLink } from "./studio-link.ts";
 
-/** The entity types, templates, and roles a workflow is checked against, as they are now. */
+/** The entity types and templates a workflow is checked against, as they are now. */
 export const catalogOf = (entities: EntityStore["Service"]) =>
   Effect.all({
     types: entities.listTypes,
     templates: entities.listTemplates,
-    roles: entities.listRoles,
   });
 
 /** Draft and saved snapshots share the same storage and current catalog. */

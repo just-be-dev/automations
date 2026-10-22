@@ -564,21 +564,19 @@ describe("RunAutomation", () => {
       Effect.gen(function* () {
         const executionId = yield* start(harness, {
           ...workflow(welcome, agent("after")),
-          permissions: { "email.send": { ask: "people_ops" } },
+          permissions: { "email.send": "ask" },
         });
         expect(yield* outcome(executionId)).toBe("suspended");
         expect(harness.calls).toEqual([]);
         expect(
-          harness.permissionRequests.map(({ step, role, title, inputs }) => ({
+          harness.permissionRequests.map(({ step, title, inputs }) => ({
             step: step.id,
-            role,
             title,
             inputs,
           })),
         ).toEqual([
           {
             step: "welcome",
-            role: "people_ops",
             title: "Welcome Ada",
             inputs: { to: "grace", subject: "Hi", body: "Ada starts soon" },
           },
@@ -621,7 +619,7 @@ describe("RunAutomation", () => {
               ],
             },
           ),
-          permissions: { "email.send": { ask: "people_ops" } },
+          permissions: { "email.send": "ask" },
         });
         yield* respond(harness, harness.permissionRequests[0], { approved: false });
         return yield* finalSteps(executionId);

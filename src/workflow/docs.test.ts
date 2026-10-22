@@ -1,9 +1,10 @@
-/** Keeps the documented DSL examples valid against their entity types, roles, and migration-seeded templates. */
+/** Keeps the documented DSL examples valid against their example entity type and the demo's templates. */
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { checkWorkflow } from "./catalog.ts";
-import { EntityType, Role } from "../entities/model.ts";
+import { templates } from "../../demo/seed.ts";
+import { EntityType } from "../entities/model.ts";
 import { checkTemplate, Template } from "../entities/templates.ts";
 import { decodeWorkflow } from "./model.ts";
 
@@ -24,35 +25,21 @@ const hasKey = (key: string) => (block: unknown) =>
 const documented = async () => {
   const blocks = jsonBlocks(await read("../../docs/workflow-dsl.md"));
   const employee = Schema.decodeUnknownSync(EntityType)(blocks.find(hasKey("title")));
-  const role = Schema.decodeUnknownSync(Role)(blocks.find(hasKey("members")));
-  return { blocks, employee, role };
+  return { blocks, employee };
 };
 
-/** The templates a migration seeds, read back from its SQL string literals. */
-const seededTemplates = (sql: string) =>
-  [...sql.matchAll(/'(\{.*?\})', 0\)/g)].map(([, literal]) =>
-    Schema.decodeUnknownSync(Template)(JSON.parse((literal ?? "").replaceAll("''", "'"))),
-  );
-
-test("the DSL reference's example checks against its employee type and role, which the migrations seed", async () => {
-  const { blocks, employee, role } = await documented();
+test("the DSL reference's example checks against its example employee type", async () => {
+  const { blocks, employee } = await documented();
   const workflow = await Effect.runPromise(
     decodeWorkflow(blocks[0]).pipe(
-      Effect.flatMap((decoded) =>
-        checkWorkflow({ types: [employee], templates: [], roles: [role] }, decoded),
-      ),
+      Effect.flatMap((decoded) => checkWorkflow({ types: [employee], templates: [] }, decoded)),
     ),
   );
   expect(workflow.trigger).toMatchObject({ kind: "entity", entity: "employee" });
-  expect(await read("../../migrations/0002_entities.sql")).toContain(
-    `'${JSON.stringify(employee)}'`,
-  );
-  expect(await read("../../migrations/0004_roles.sql")).toContain(`'${JSON.stringify(role)}'`);
 });
 
-test("the documented template is seeded, and the match example checks against the seeds", async () => {
+test("the documented template is the demo's, and the match example checks against the demo's", async () => {
   const { blocks, employee } = await documented();
-  const templates = seededTemplates(await read("../../migrations/0003_templates.sql"));
   for (const template of templates) {
     await Effect.runPromise(checkTemplate([employee], template));
   }
@@ -64,26 +51,19 @@ test("the documented template is seeded, and the match example checks against th
       trigger: { kind: "entity", entity: "employee" },
       steps: [blocks.find(hasKey("match"))],
       permissions: { "email.send": "auto" },
-    }).pipe(
-      Effect.flatMap((decoded) =>
-        checkWorkflow({ types: [employee], templates, roles: [] }, decoded),
-      ),
-    ),
+    }).pipe(Effect.flatMap((decoded) => checkWorkflow({ types: [employee], templates }, decoded))),
   );
   expect(workflow.steps[0]).toMatchObject({ kind: "action", use: "email.send" });
 });
 
-test("the README's first-week workflow checks against the seeded catalog", async () => {
-  const { employee, role } = await documented();
-  const templates = seededTemplates(await read("../../migrations/0003_templates.sql"));
+test("the README's first-week workflow checks against the demo's catalog", async () => {
+  const { employee } = await documented();
   const workflow = await Effect.runPromise(
     decodeWorkflow(JSON.parse(await read("../../docs/examples/first-week.json"))).pipe(
-      Effect.flatMap((decoded) =>
-        checkWorkflow({ types: [employee], templates, roles: [role] }, decoded),
-      ),
+      Effect.flatMap((decoded) => checkWorkflow({ types: [employee], templates }, decoded)),
     ),
   );
-  expect(workflow.permissions?.["email.send"]).toEqual({ ask: "people_ops" });
+  expect(workflow.permissions?.["email.send"]).toBe("ask");
 });
 
 test("the documented timed triggers decode and check against the employee type", async () => {
@@ -99,9 +79,7 @@ test("the documented timed triggers decode and check against the employee type",
         trigger,
         steps: [{ id: "a", title: "A", kind: "agent", instruction: "Do it" }],
       }).pipe(
-        Effect.flatMap((decoded) =>
-          checkWorkflow({ types: [employee], templates: [], roles: [] }, decoded),
-        ),
+        Effect.flatMap((decoded) => checkWorkflow({ types: [employee], templates: [] }, decoded)),
       ),
     );
   }

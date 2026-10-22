@@ -87,15 +87,7 @@ const harness = () => {
         data: { name: "Sam", email: "sam@example.com" },
         updatedAt: 0,
       },
-      // Role members are employees.
-      {
-        type: "employee",
-        id: "sam-at-work",
-        data: { name: "Sam", email: "sam@example.com" },
-        updatedAt: 0,
-      },
     ],
-    roles: [{ name: "ops", label: "Ops", members: [{ type: "employee", id: "sam-at-work" }] }],
   });
   const classified: Array<ClassifyRequest> = [];
   const lock = Semaphore.makeUnsafe(1);
@@ -1075,12 +1067,12 @@ describe("Automation application without a platform", () => {
     );
   });
 
-  test("records and authorizes approval tasks, then resumes on the same durable journal", async () => {
+  test("records approval tasks anyone may answer, then resumes on the same durable journal", async () => {
     const h = harness();
     const saved: Workflow = {
       name: "Approval",
       trigger: { kind: "manual" },
-      permissions: { "slack.sendMessage": { ask: "ops" } },
+      permissions: { "slack.sendMessage": "ask" },
       steps: [
         {
           id: "send",
@@ -1099,20 +1091,20 @@ describe("Automation application without a platform", () => {
         const executionId = yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances[0]);
         yield* app.callbacks.advance({ executionId });
         const waiting = yield* app.run(started.id);
-        const rejected = yield* app
-          .respond(started.id, "send", { approved: true }, "other@example.com")
-          .pipe(Effect.flip);
         const reopened = yield* makeAutomation();
         yield* reopened.respond(started.id, "send", { approved: true }, "SAM@example.com");
+        // Answered once: a second answer finds it closed.
+        const again = yield* reopened
+          .respond(started.id, "send", { approved: false }, "other@example.com")
+          .pipe(Effect.flip);
         yield* reopened.callbacks.advance({ executionId });
-        return { waiting, rejected, finished: yield* reopened.run(started.id) };
+        return { waiting, again, finished: yield* reopened.run(started.id) };
       }).pipe(Effect.provide(h.layer)),
     );
     expect(result.waiting?.status).toBe("waiting");
-    expect(result.waiting?.tasks[0]?.approvers?.members).toEqual([
-      { name: "Sam", email: "sam@example.com" },
-    ]);
-    expect(result.rejected.message).toBe("Only members of Ops can answer this");
+    expect(result.waiting?.tasks[0]).toMatchObject({ status: "open", response: "approval" });
+    expect(result.waiting?.tasks[0]?.approvers).toBeUndefined();
+    expect(result.again.message).toBe("That task isn't waiting for an answer");
     expect(result.finished?.status).toBe("completed");
     expect(result.finished?.tasks[0]?.status).toBe("closed");
     expect(result.finished?.tasks[0]?.decision).toMatchObject({
@@ -1128,7 +1120,7 @@ describe("Deciding approval tasks from Slack", () => {
   const saved: Workflow = {
     name: "Approval",
     trigger: { kind: "manual" },
-    permissions: { "slack.sendMessage": { ask: "ops" } },
+    permissions: { "slack.sendMessage": "ask" },
     steps: [
       {
         id: "send",
@@ -1178,7 +1170,7 @@ describe("Deciding approval tasks from Slack", () => {
     return { task: ref, approved, user, channel: `D-${user}`, ts: "1.0", responseUrl: url, blocks };
   };
 
-  test("only a role member's click decides; others hear why, and the task stays open", async () => {
+  test("a click from someone Slack has no email for doesn't decide; they hear why", async () => {
     const h = harness();
     const slack = workspace();
     const result = await Effect.runPromise(
@@ -1193,14 +1185,11 @@ describe("Deciding approval tasks from Slack", () => {
             Effect.provideService(Automations, { get: () => app }),
             Effect.provideService(SlackWorkspace, slack.service),
           );
-        // Not in the role, and no email address at all: neither may answer.
-        yield* decide(click(started.id, "U-eve", true));
         yield* decide(click(started.id, "U-bot", true));
         return yield* app.run(started.id);
       }).pipe(Effect.provide(h.layer)),
     );
     expect(slack.ephemeral).toEqual([
-      { url: "https://hooks.slack.com/U-eve", text: "Only members of Ops can answer this" },
       {
         url: "https://hooks.slack.com/U-bot",
         text: "Slack has no email address for you, so the studio can't check that you may answer this. Open it in the studio instead.",
@@ -1233,7 +1222,7 @@ describe("Deciding approval tasks from Slack", () => {
           concurrency: "unbounded",
         });
         yield* decide(rejected);
-        // A non-member clicking after it's decided just sees the decision.
+        // Someone else clicking after it's decided just sees the decision.
         yield* decide(click(started.id, "U-eve", true));
         yield* app.callbacks.advance({ executionId });
         return yield* app.run(started.id);
@@ -1252,7 +1241,7 @@ describe("Deciding approval tasks from Slack", () => {
     const texts = new Set(slack.updates.map((update) => update.text));
     expect(texts.size).toBe(1);
     const decision = task?.decision?.approved === false ? "Rejected" : "Approved";
-    expect([...texts][0]).toBe(`${decision} by Sam on 2026-10-14 10:05 UTC`);
+    expect([...texts][0]).toBe(`${decision} by SAM@example.com on 2026-10-14 10:05 UTC`);
     expect(JSON.stringify(slack.updates.map((update) => update.blocks))).not.toContain(
       "task.approve",
     );
@@ -1334,7 +1323,7 @@ describe("Deciding approval tasks from Slack", () => {
     expect(result.run?.tasks[0]?.decision?.approved).toBe(true);
     expect(h.advances).toHaveLength(2);
     expect(slack.updates.map((update) => update.text.split(" on ")[0])).toEqual([
-      "Approved by Sam",
+      "Approved by SAM@example.com",
     ]);
     expect(slack.ephemeral).toEqual([]);
   });

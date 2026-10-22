@@ -47,8 +47,8 @@ import { ExecutionValues } from "./execution.ts";
  *   action's match picks its case from the resolved values, before its Activity. Templates are
  *   expanded before a run starts (`expandTemplates`), so an action that still uses one fails.
  * - An action whose operation the workflow's permissions set to ask first parks on a
- *   DurableDeferred until a member of the role approves or declines it with `respondToHuman`. A
- *   declined action records nothing.
+ *   DurableDeferred until someone approves or declines it with `respondToHuman`. A declined action
+ *   records nothing.
  * - A step that needs a value from a step that didn't run (see `stepNeeds`) is skipped, and
  *   records nothing either, so the steps that need it are skipped in turn.
  * - parallel branches run concurrently and merge what they recorded.
@@ -102,13 +102,11 @@ export interface HumanRequest {
   readonly defaults: Readonly<Record<string, string>>;
 }
 
-/** Asks a role's members whether an action step may perform its operation with these inputs. */
+/** Asks whether an action step may perform its operation with these inputs. */
 export interface PermissionRequest {
   readonly runId: RunId;
   readonly token: DurableDeferred.Token;
   readonly step: ActionStep;
-  /** The role whose members approve it. */
-  readonly role: string;
   /** The step's title with its templates filled in. */
   readonly title: string;
   readonly inputs: Readonly<Record<string, Schema.Json>>;
@@ -301,7 +299,6 @@ const runResolved = (
           !(yield* askPermission(
             step,
             state,
-            permission.ask,
             renderTemplate(step.title, values),
             inputs,
             source?.templateLabel ?? step.templateLabel,
@@ -485,7 +482,6 @@ const askHuman = Effect.fnUntraced(function* (
 const askPermission = Effect.fnUntraced(function* (
   step: ActionStep,
   state: ExecutionValues,
-  role: string,
   title: string,
   inputs: Record<string, Schema.Json>,
   template: string | undefined,
@@ -500,7 +496,6 @@ const askPermission = Effect.fnUntraced(function* (
       runId: state.runId,
       token,
       step,
-      role,
       title,
       inputs,
       ...(template === undefined ? {} : { template }),

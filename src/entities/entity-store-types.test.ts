@@ -1,14 +1,7 @@
 /** Checks the translation between entity-store schemas and automations' types and roles. */
 import { describe, expect, test } from "bun:test";
 import type { StoreSchema, TypeInfo } from "./entity-store-api.ts";
-import {
-  planTypeWrite,
-  roleData,
-  roleFromEntity,
-  toEntityData,
-  toEntityType,
-  type TypeWrite,
-} from "./entity-store-types.ts";
+import { planTypeWrite, toEntityData, toEntityType, type TypeWrite } from "./entity-store-types.ts";
 import type { EntityType } from "./model.ts";
 
 const employee: EntityType = {
@@ -154,10 +147,9 @@ describe("entity-store schemas as entity types", () => {
     expect(toEntityType(info("thing", { fields: { tags: { type: "json" } } }))).toBeUndefined();
   });
 
-  test("leaves out types automations can't name, and the role type", () => {
+  test("leaves out types automations can't name", () => {
     const schema = { fields: { name: { type: "string" } } };
     expect(toEntityType(info("Office-Space", schema))).toBeUndefined();
-    expect(toEntityType(info("role", schema))).toBeUndefined();
     expect(toEntityType(info("office_space", schema))?.name).toBe("office_space");
   });
 
@@ -218,28 +210,6 @@ describe("entity-store schemas as entity types", () => {
     expect(
       refused({ ...type, fields: [...type.fields, { name: "tags", label: "Tags", type: "text" }] }),
     ).toBe("employee.tags exists in entity-store as a field automations can't edit");
-  });
-});
-
-describe("roles as entities", () => {
-  test("a role round-trips through a role entity whose members are employees", () => {
-    const role = {
-      name: "people_ops",
-      label: "People Ops",
-      members: [
-        { type: "employee", id: "grace" },
-        { type: "employee", id: "mary@example.com" },
-      ],
-    };
-    expect(roleData(role)).toEqual({ label: "People Ops", members: ["grace", "mary@example.com"] });
-    expect(roleFromEntity(role.name, roleData(role))).toEqual(role);
-    expect(roleFromEntity("people_ops", { label: "Ops" })).toEqual({
-      name: "people_ops",
-      label: "Ops",
-      members: [],
-    });
-    expect(roleFromEntity("People-Ops", { label: "Ops", members: [] })).toBeUndefined();
-    expect(roleFromEntity("ops", { members: [] })).toBeUndefined();
   });
 });
 

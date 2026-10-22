@@ -1,8 +1,8 @@
 /**
- * The entity store as the rest of automations uses it. Entity types, entities and roles live in
+ * The entity store as the rest of automations uses it. Entity types and entities live in
  * entity-store, reached through `EntityStoreApi`; templates and trigger subscriptions stay in
  * automations' own storage. This module applies automations' rules on top: type and field names,
- * role members who can approve, and the dependencies that keep a type from being deleted.
+ * and the dependencies that keep a type from being deleted.
  */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -16,26 +16,14 @@ import {
   type TypeInfo,
   type WriteMeta,
 } from "./entity-store-api.ts";
-import {
-  planTypeWrite,
-  ROLE_MEMBER_TYPE,
-  ROLE_TYPE,
-  roleData,
-  roleFromEntity,
-  roleSchema,
-  toEntityData,
-  toEntityType,
-  type TypeWrite,
-} from "./entity-store-types.ts";
+import { planTypeWrite, toEntityData, toEntityType, type TypeWrite } from "./entity-store-types.ts";
 import {
   checkEntityData,
   checkEntityType,
   InvalidEntity,
-  isEmailField,
   type EntityData,
   type EntityRecord,
   type EntityType,
-  type Role,
   type Subject,
 } from "./model.ts";
 import { checkTemplate, type InvalidTemplate, type Template } from "./templates.ts";
@@ -130,7 +118,7 @@ export class EntityStore extends Context.Service<
     ) => Effect.Effect<EntityType, EntityStoreError | InvalidEntity>;
     /**
      * Checks that a type can be deleted, and whether there is one. Nothing may depend on it: no
-     * entities, no other type's `ref` field, template slot or role member, and no saved automation
+     * entities, no other type's `ref` field or template slot, and no saved automation
      * watching it.
      */
     readonly checkDeleteType: (
@@ -169,7 +157,7 @@ export class EntityStore extends Context.Service<
     /**
      * Deletes an entity and returns what it held, or `undefined` when there was none. Nothing is
      * notified here: entity-store's change queue reaches automations, which publishes
-     * `entity.deleted`. An entity others link to, such as a role's member, can't be deleted.
+     * `entity.deleted`. An entity others link to can't be deleted.
      */
     readonly deleteEntity: (
       type: string,
@@ -212,14 +200,6 @@ export class EntityStore extends Context.Service<
     ) => Effect.Effect<Template, EntityStoreError | InvalidTemplate>;
     /** Deletes a template. Saved workflows that use it fail their check when they next start. */
     readonly deleteTemplate: (name: string) => Effect.Effect<void, EntityStoreError>;
-    readonly listRoles: Effect.Effect<ReadonlyArray<Role>, EntityStoreError>;
-    /** Creates or replaces a role, once every member is a stored employee with an email. */
-    readonly putRole: (role: Role) => Effect.Effect<Role, EntityStoreError | InvalidEntity>;
-    /**
-     * Deletes a role. Saved workflows that ask it fail their check when they next start, and
-     * approval tasks already open keep the members they recorded.
-     */
-    readonly deleteRole: (name: string) => Effect.Effect<void, EntityStoreError>;
   }
 >()("automations/EntityStore") {}
 
@@ -291,14 +271,6 @@ const orMissing =
         () => Effect.succeed(undefined),
       ),
     );
-
-/** RFC 7386 for a flat record, as entity-store applies `upsertEntity`'s patch to it. */
-const mergePatch = (target: EntityData, patch: EntityData): EntityData =>
-  Object.fromEntries(
-    Object.entries({ ...target, ...patch }).filter(
-      ([name, value]) => !(name in patch && value === null),
-    ),
-  );
 
 /** Builds the service over entity-store and automations' own catalog storage. */
 export const makeEntityStore = (
@@ -389,30 +361,6 @@ export const makeEntityStore = (
       return items;
     }).pipe(orMissing("TypeNotFound"), Effect.mapError(storeError));
 
-  const listRoles = allEntities(ROLE_TYPE).pipe(
-    Effect.map((entities) =>
-      (entities ?? []).flatMap((entity) => {
-        const role = roleFromEntity(entity.id, entity.data);
-        return role === undefined ? [] : [role];
-      }),
-    ),
-  );
-
-  /**
-   * The names of the roles with a member of `type`, or with that one entity when `id` is given.
-   * Their members must stay people who can approve: stored, with an email address.
-   */
-  const rolesWith = (type: string, id?: string) =>
-    Effect.map(listRoles, (roles) =>
-      roles
-        .filter((role) =>
-          role.members.some(
-            (member) => member.type === type && (id === undefined || member.id === id),
-          ),
-        )
-        .map((role) => role.name),
-    );
-
   const getEntity = Effect.fn("EntityStore.getEntity")(function* (typeName: string, id: string) {
     const found = yield* readEntity(id);
     if (found.kind !== "live" || found.entity.type !== typeName) {
@@ -423,23 +371,12 @@ export const makeEntityStore = (
   });
 
   const planType = Effect.fn("EntityStore.planType")(function* (type: EntityType) {
-    if (type.name === ROLE_TYPE) {
-      return yield* new InvalidEntity({
-        message: `${ROLE_TYPE} is reserved for roles; choose another type name`,
-      });
-    }
     const infos = yield* typeInfos;
     const others = infos.flatMap((info) => {
       const other = info.name === type.name ? undefined : toEntityType(info);
       return other === undefined ? [] : [other];
     });
     yield* checkEntityType(others, type);
-    const roles = yield* rolesWith(type.name);
-    if (roles.length > 0 && !type.fields.some(isEmailField)) {
-      return yield* new InvalidEntity({
-        message: `${type.name} needs a text field named email: roles have members of it (${roles.join(", ")})`,
-      });
-    }
     const existing = infos.find((info) => info.name === type.name);
     const plan = planTypeWrite(existing, type);
     if (plan.kind === "refused") {
@@ -496,13 +433,11 @@ export const makeEntityStore = (
       .listEntities(name, { limit: 1 })
       .pipe(orMissing("TypeNotFound"), Effect.mapError(storeError));
     const watchers = yield* catalog.subscribers(name);
-    const roles = yield* rolesWith(name);
     const problems = [
       ...((entities?.items.length ?? 0) === 0 ? [] : ["it still has entities"]),
       ...(referrers.length === 0 ? [] : [`${referrers.join(", ")} points to it`]),
       ...(slots.length === 0 ? [] : [`template slots point to it: ${slots.join(", ")}`]),
       ...(watchers.length === 0 ? [] : [`automations watch it: ${watchers.join(", ")}`]),
-      ...(roles.length === 0 ? [] : [`roles have members of it: ${roles.join(", ")}`]),
     ];
     if (problems.length > 0) {
       return yield* new InvalidEntity({ message: `Can't delete ${name}: ${problems.join("; ")}` });
@@ -527,15 +462,6 @@ export const makeEntityStore = (
       });
     }
     const before = found.kind === "live" ? toRecord(type, found.entity) : undefined;
-    const email = mergePatch(before?.data ?? {}, data)["email"];
-    if (typeof email !== "string" || email === "") {
-      const roles = yield* rolesWith(typeName, id);
-      if (roles.length > 0) {
-        return yield* new InvalidEntity({
-          message: `${typeName} ${id} needs an email: it is a member of ${roles.join(", ")}`,
-        });
-      }
-    }
     // entity-store's own dry run: every check its write makes, and the data it would store.
     const checked = yield* api
       .checkEntity(typeName, id, { patch: data })
@@ -557,12 +483,6 @@ export const makeEntityStore = (
     const before = yield* getEntity(typeName, id);
     if (before === undefined) {
       return undefined;
-    }
-    const roles = yield* rolesWith(typeName, id);
-    if (roles.length > 0) {
-      return yield* new InvalidEntity({
-        message: `Can't delete ${typeName} ${id}: it is a member of ${roles.join(", ")}. Take it out of them first.`,
-      });
     }
     // entity-store refuses to delete what others link to, so say who before anyone confirms.
     const { items, nextCursor } = yield* api
@@ -752,56 +672,5 @@ export const makeEntityStore = (
       return template;
     }),
     deleteTemplate: catalog.deleteTemplate,
-    listRoles,
-    putRole: Effect.fn("EntityStore.putRole")(function* (role: Role) {
-      const type = yield* typeOf(ROLE_MEMBER_TYPE);
-      const problems = yield* Effect.forEach(role.members, (member) =>
-        Effect.gen(function* () {
-          if (member.type !== ROLE_MEMBER_TYPE) {
-            return [
-              `Role members are ${ROLE_MEMBER_TYPE}s, so ${member.type} ${member.id} can't be one`,
-            ];
-          }
-          if (type === undefined || !type.fields.some(isEmailField)) {
-            return [`${ROLE_MEMBER_TYPE} has no email field, so it can't have members`];
-          }
-          const found = yield* getEntity(member.type, member.id);
-          if (found === undefined) {
-            return [`No ${member.type} ${member.id}`];
-          }
-          const email = found.data["email"];
-          return typeof email === "string" && email !== ""
-            ? []
-            : [`${member.type} ${member.id} has no email`];
-        }),
-      );
-      if (problems.flat().length > 0) {
-        return yield* new InvalidEntity({ message: [...new Set(problems.flat())].join("; ") });
-      }
-      if ((yield* typeInfo(ROLE_TYPE)) === undefined) {
-        yield* api
-          .createType({ name: ROLE_TYPE, description: "Roles", schema: roleSchema })
-          .pipe(orMissing("TypeAlreadyExists"), Effect.mapError(refusal));
-      }
-      yield* api.upsertEntity(ROLE_TYPE, role.name, { patch: roleData(role) }).pipe(
-        Effect.mapError((error) =>
-          error.code === "EntityTypeMismatch"
-            ? new InvalidEntity({
-                message: `${role.name} is already used by ${String(error.details["actual"])} ${role.name}; choose another role name`,
-              })
-            : refusal(error),
-        ),
-      );
-      return role;
-    }),
-    deleteRole: Effect.fn("EntityStore.deleteRole")(function* (name: string) {
-      const found = yield* readEntity(name);
-      if (found.kind !== "live" || found.entity.type !== ROLE_TYPE) {
-        return;
-      }
-      yield* api
-        .deleteEntity(name, { expectedRev: found.entity.rev })
-        .pipe(orMissing("EntityNotFound", "EntityDeleted"), Effect.mapError(storeError));
-    }),
   });
 };

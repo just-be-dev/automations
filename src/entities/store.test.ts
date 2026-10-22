@@ -123,75 +123,6 @@ describe("EntityStore", () => {
     );
     expect(subscribers).toEqual(["onboarding"]);
   });
-
-  test("keeps roles whose members are stored employees with an email", async () => {
-    const ops = { name: "ops", label: "Ops", members: [{ type: "employee", id: "sam" }] };
-    const roles = await runWithPeople(
-      Effect.gen(function* () {
-        const entities = yield* EntityStore;
-        yield* entities.putRole(ops);
-        return yield* entities.listRoles;
-      }),
-    );
-    expect(roles).toEqual([ops]);
-    const invalid = await runWithPeople(
-      EntityStore.use((entities) =>
-        entities.putRole({
-          name: "ops",
-          label: "Ops",
-          members: [
-            { type: "employee", id: "ada" },
-            { type: "person", id: "nobody" },
-          ],
-        }),
-      ).pipe(Effect.flip),
-    );
-    expect(invalid.message).toBe(
-      "employee ada has no email; Role members are employees, so person nobody can't be one",
-    );
-  });
-
-  test("a role's members stay people with an email until they leave it", async () => {
-    const attempts = await runWithPeople(
-      Effect.gen(function* () {
-        const entities = yield* EntityStore;
-        yield* entities.putRole({
-          name: "ops",
-          label: "Ops",
-          members: [{ type: "employee", id: "sam" }],
-        });
-        const failure = (effect: Effect.Effect<unknown, { readonly message: string }>) =>
-          effect.pipe(
-            Effect.flip,
-            Effect.map((error) => error.message),
-          );
-        return {
-          deleteMember: yield* failure(entities.deleteEntity("employee", "sam")),
-          clearEmail: yield* failure(entities.putEntity("employee", "sam", { email: null })),
-          dropEmailField: yield* failure(entities.putType(employee)),
-          deleteType: yield* failure(entities.deleteType("employee")),
-          kept: yield* entities.getEntity("employee", "sam"),
-          renamed: yield* entities.putEntity("employee", "sam", { name: "Samuel" }),
-          left: yield* entities
-            .putRole({ name: "ops", label: "Ops", members: [] })
-            .pipe(Effect.andThen(entities.deleteEntity("employee", "sam"))),
-        };
-      }),
-    );
-    expect(attempts.deleteMember).toBe(
-      "Can't delete employee sam: it is a member of ops. Take it out of them first.",
-    );
-    expect(attempts.clearEmail).toBe("employee sam needs an email: it is a member of ops");
-    expect(attempts.dropEmailField).toBe(
-      "employee needs a text field named email: roles have members of it (ops)",
-    );
-    expect(attempts.deleteType).toBe(
-      "Can't delete employee: it still has entities; roles have members of it: ops",
-    );
-    expect(attempts.kept?.data).toEqual({ name: "Sam", email: "sam@example.com" });
-    expect(attempts.renamed.after.data).toEqual({ name: "Samuel", email: "sam@example.com" });
-    expect(attempts.left?.id).toBe("sam");
-  });
 });
 
 describe("EntityStore types", () => {
@@ -285,22 +216,16 @@ describe("EntityStore types", () => {
 });
 
 describe("EntityStore over entity-store", () => {
-  test("entity IDs are unique across types, and a role's name takes one too", async () => {
-    const problems = await runWithPeople(
+  test("entity IDs are unique across types", async () => {
+    const taken = await runWithPeople(
       Effect.gen(function* () {
         const entities = yield* EntityStore;
         yield* entities.putType({ ...employee, name: "contractor" });
-        const taken = yield* Effect.flip(entities.putEntity("contractor", "ada", { name: "Ada" }));
-        const role = yield* Effect.flip(
-          entities.putRole({ name: "ada", label: "Ada", members: [] }),
-        );
-        return { taken: taken.message, role: role.message };
+        return (yield* Effect.flip(entities.putEntity("contractor", "ada", { name: "Ada" })))
+          .message;
       }),
     );
-    expect(problems.taken).toBe(
-      "ada is already used by employee ada; entity IDs are unique across types",
-    );
-    expect(problems.role).toBe("ada is already used by employee ada; choose another role name");
+    expect(taken).toBe("ada is already used by employee ada; entity IDs are unique across types");
   });
 
   test("a conditional write fails on another revision and writes nothing", async () => {

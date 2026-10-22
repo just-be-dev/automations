@@ -1,11 +1,12 @@
 /** Checks workflow references, branch ordering, operation inputs, templates, and role permissions against a catalog. */
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import { describeCatalog, workflowProblems, type Catalog } from "./catalog.ts";
 import { findOperation } from "../connections/registry.ts";
 import type { EntityType } from "../entities/model.ts";
 import type { Template } from "../entities/templates.ts";
-import { decodeWorkflow, operationsUsed } from "./model.ts";
+import { decodeWorkflow, operationsUsed, Workflow } from "./model.ts";
 
 const employee: EntityType = {
   name: "employee",
@@ -39,9 +40,6 @@ const engineering: Template = {
 const catalog: Catalog = {
   types: [employee],
   templates: [welcome, engineering],
-  roles: [
-    { name: "people_ops", label: "People Ops", members: [{ type: "employee", id: "grace" }] },
-  ],
 };
 
 /** The problems with a workflow of these steps, whose operations all run automatically. */
@@ -360,7 +358,28 @@ describe("workflowProblems", () => {
     ).toEqual(["Step late comes after stop step halt, so it never runs"]);
   });
 
-  test("every operation used needs a permission, and asks name roles that exist", () => {
+  test("a permission asked of a role, as workflows saved before stored it, asks first", async () => {
+    const workflow = await Effect.runPromise(
+      decodeWorkflow({
+        name: "Mail",
+        trigger: { kind: "manual" },
+        steps: [
+          {
+            id: "mail",
+            title: "Mail",
+            kind: "action",
+            use: "email.send",
+            with: { to: "a@example.com", subject: "Hi", body: "Hello" },
+          },
+        ],
+        permissions: { "email.send": { ask: "people_ops" } },
+      }),
+    );
+    expect(workflow.permissions).toEqual({ "email.send": "ask" });
+    expect(Schema.encodeSync(Workflow)(workflow).permissions).toEqual({ "email.send": "ask" });
+  });
+
+  test("every operation used needs a permission", () => {
     const check = (permissions: unknown) =>
       workflowProblems(
         catalog,
@@ -381,16 +400,11 @@ describe("workflowProblems", () => {
           }),
         ),
       );
-    expect(check({ "email.send": { ask: "people_ops" } })).toEqual([]);
+    expect(check({ "email.send": "ask" })).toEqual([]);
     expect(check({ "email.send": "auto", "fax.send": "auto" })).toEqual([
       "permissions names unknown operation fax.send",
     ]);
-    expect(check({})).toEqual([
-      'permissions needs one for email.send: "auto", or {"ask":"<role>"}',
-    ]);
-    expect(check({ "email.send": { ask: "finance" } })).toEqual([
-      "permissions for email.send ask unknown role finance (roles: people_ops)",
-    ]);
+    expect(check({})).toEqual(['permissions needs one for email.send: "auto", or "ask"']);
   });
 
   test("checks the trigger and refs in workflows without a subject", () => {
@@ -460,7 +474,7 @@ test("describes object types and operations for the planner", () => {
   expect(description).toContain(
     "Slots: hire → employee (New hire), team text (Team). Fills body; fits email.send.",
   );
-  expect(description).toContain("- people_ops (People Ops): 1 member");
+  expect(description).not.toContain("Roles");
 });
 
 test("event refs work in conditions and nested steps only for event workflows", () => {

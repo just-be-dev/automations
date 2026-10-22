@@ -2,7 +2,7 @@
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { checkEntityData, EntityType, Role } from "../src/entities/model.ts";
+import { checkEntityData, EntityType } from "../src/entities/model.ts";
 import { Template } from "../src/entities/templates.ts";
 import { checkWorkflow } from "../src/workflow/catalog.ts";
 import {
@@ -12,7 +12,6 @@ import {
   fallback,
   newHire,
   people,
-  roles,
   startDateFrom,
   templates,
 } from "./seed.ts";
@@ -60,34 +59,25 @@ test("people get configured addresses, or placeholders that go nowhere", () => {
   }
 });
 
-test("every manager and role member is a seeded person who comes first", () => {
+test("every manager is a seeded person who comes first", () => {
   const ids = people.map((each) => each.id);
   people.forEach((each, index) => {
     const manager = each.data("2026-11-02")["manager"];
     if (typeof manager === "string") expect(ids.indexOf(manager)).toBeLessThan(index);
   });
-  for (const role of roles) {
-    Schema.decodeSync(Role)(role);
-    for (const member of role.members) expect(ids).toContain(member.id);
-  }
 });
 
 test("the fallback workflow checks against the seeded catalog", () => {
-  const checked = Effect.runSync(
-    checkWorkflow({ types: [employeeType], templates, roles }, fallback),
-  );
+  const checked = Effect.runSync(checkWorkflow({ types: [employeeType], templates }, fallback));
   expect(checked.name).toBe("Launch a great first week");
-  expect(checked.permissions?.["email.send"]).toEqual({ ask: "people_ops" });
+  expect(checked.permissions?.["email.send"]).toBe("ask");
 });
 
-test("the reset says whether the local studio's user approves for People Ops", () => {
+test("the reset says who the local studio's user approves as", () => {
   const seeded = employees({ DEMO_GRACE_EMAIL: "Me@Example.com" }, "2026-11-02");
   expect(approverNote("me@example.com", seeded)).toBe(
-    "You are Grace Hopper (me@example.com) and approve for People Ops.",
+    "You approve as Grace Hopper (me@example.com).",
   );
-  expect(approverNote("katherine@example.com", seeded)).toContain("isn't in People Ops");
-  expect(approverNote("someone@example.com", seeded)).toContain(
-    "Set DEMO_GRACE_EMAIL to someone@example.com",
-  );
-  expect(approverNote(undefined, seeded)).toContain("Set DEV_USER_EMAIL and DEMO_GRACE_EMAIL");
+  expect(approverNote("someone@example.com", seeded)).toBe("You approve as someone@example.com.");
+  expect(approverNote(undefined, seeded)).toContain("Set DEV_USER_EMAIL");
 });

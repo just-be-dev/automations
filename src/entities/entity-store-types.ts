@@ -1,6 +1,5 @@
 /**
- * Translates between entity-store's schemas and automations' entity types and roles, in both
- * directions. Pure: the store layer reads and writes, this only decides what the shapes mean.
+ * Translates between entity-store's schemas and automations' entity types, in both directions. Pure: the store layer reads and writes, this only decides what the shapes mean.
  *
  * Reading, a field maps by its kind: `string` is text (or a date or datetime by its `format`),
  * `enum` is text, `number`, `boolean`, and `link` is a ref. `nullable` maps as what it holds.
@@ -16,13 +15,7 @@ import {
   type EntityField,
   type EntityType,
   type FieldType,
-  type Role,
 } from "./model.ts";
-
-/** Roles are entities of this type, so it isn't one of automations' entity types. */
-export const ROLE_TYPE = "role";
-/** The only type a role's members may have. */
-export const ROLE_MEMBER_TYPE = "employee";
 
 const isName = Schema.is(EntityName);
 
@@ -89,14 +82,13 @@ const titleable = (schema: StoreSchema, field: EntityField | undefined) => {
 
 /**
  * The entity type automations sees for an entity-store type at its latest version, or `undefined`
- * when automations can't use it: its name isn't snake_case, it is the role type, or no field is
- * visible. Its label is the schema's description, then the type's, then its name. Its title is
+ * when automations can't use it: its name isn't snake_case, or no field is visible. Its label is the schema's description, then the type's, then its name. Its title is
  * the schema's `title`, then a text field named `name`, then the first text field (an enum's
  * values aren't names), then the first field.
  */
 export const toEntityType = (info: TypeInfo): EntityType | undefined => {
   const version = latest(info);
-  if (version === undefined || !isName(info.name) || info.name === ROLE_TYPE) {
+  if (version === undefined || !isName(info.name)) {
     return undefined;
   }
   const fields = visibleFields(version.schema);
@@ -277,44 +269,3 @@ export const planTypeWrite = (existing: TypeInfo | undefined, type: EntityType):
     ? { kind: "unchanged" }
     : { kind: "version", schema, lens: { ops } };
 };
-
-/** The schema of the `role` type: a label, and employees as members. */
-export const roleSchema: StoreSchema = {
-  description: "A named group of employees who approve what an automation asks first about",
-  title: "label",
-  fields: {
-    label: { type: "string", minLength: 1, description: "Label" },
-    members: {
-      type: "array",
-      items: { type: "link", to: ROLE_MEMBER_TYPE },
-      description: "Members",
-    },
-  },
-};
-
-const RoleData = Schema.Struct({
-  label: Schema.String,
-  members: Schema.optionalKey(Schema.Array(Schema.String)),
-});
-
-/** A `role` entity as a role, or `undefined` when its ID or data can't be one. */
-export const roleFromEntity = (id: string, data: Schema.Json): Role | undefined => {
-  const decoded = Schema.decodeUnknownOption(RoleData)(data);
-  if (decoded._tag === "None" || !isName(id) || decoded.value.label === "") {
-    return undefined;
-  }
-  return {
-    name: id,
-    label: decoded.value.label,
-    members: (decoded.value.members ?? []).map((member) => ({
-      type: ROLE_MEMBER_TYPE,
-      id: member,
-    })),
-  };
-};
-
-/** A role's data as a `role` entity. */
-export const roleData = (role: Role): Record<string, Schema.Json> => ({
-  label: role.label,
-  members: role.members.map((member) => member.id),
-});

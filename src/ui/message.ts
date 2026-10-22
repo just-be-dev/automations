@@ -3,7 +3,6 @@ import * as Schema from "effect/Schema";
 import { defineMessageUnion } from "foldkit/message";
 import { UrlRequest } from "foldkit/navigation";
 import { Url } from "foldkit/url";
-import { Role } from "../entities.ts";
 import {
   PendingChat,
   Permission,
@@ -57,8 +56,6 @@ export const Message = defineMessageUnion({
   },
   SucceededLoadAutomations: { automations: Schema.Array(AutomationSummary) },
   FailedLoadAutomations: { error: Schema.String },
-  SucceededLoadRoles: { roles: Schema.Array(Role) },
-  FailedLoadRoles: { error: Schema.String },
   SucceededLoadConnections: { live: Schema.Array(Schema.String) },
   FailedLoadConnections: { error: Schema.String },
   SucceededLoadDevelopment: { isLocal: Schema.Boolean },

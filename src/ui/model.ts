@@ -14,7 +14,6 @@ import {
   Workflow,
   WorkflowChanges,
 } from "../workflow.ts";
-import { Role } from "../entities.ts";
 import { SubjectOption } from "./api.ts";
 import { EventInput, TaskAnswer } from "./domain/index.ts";
 import { Entities, Overview, Templates, Traces } from "./page/index.ts";
@@ -49,16 +48,6 @@ export const listedName = (directory: Directory, automationId: string) =>
     Array.findFirst(listedAutomations(directory), (automation) => automation.id === automationId),
     (automation) => automation.name,
   );
-
-export const RoleChoices = defineTaggedUnion({
-  Loading: {},
-  Ready: { roles: Schema.Array(Role) },
-  Unavailable: { error: Schema.String },
-});
-export type RoleChoices = typeof RoleChoices.Type;
-
-export const readyRoles = (choices: RoleChoices): ReadonlyArray<Role> =>
-  RoleChoices.guards.Ready(choices) ? choices.roles : [];
 
 export const SubjectChoices = defineTaggedUnion({
   NotNeeded: {},
@@ -147,7 +136,6 @@ export const Model = Schema.Struct({
   page: Page,
   automationId: Schema.String,
   directory: Directory,
-  roles: RoleChoices,
   /** Connections the registry simulates but this deployment really connects, such as `"email"` or `"slack"`. */
   liveConnections: Schema.Array(Schema.String),
   /** Local development (`GET /api/dev`), where waits can be resumed early. False until it says so. */

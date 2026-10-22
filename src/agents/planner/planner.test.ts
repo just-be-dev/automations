@@ -29,7 +29,6 @@ const catalog: Catalog = {
     },
   ],
   templates: [],
-  roles: [],
 };
 
 const draft: Workflow = {
@@ -242,11 +241,9 @@ describe("the planner's tools", () => {
 
   test("set permissions", async () => {
     const copy = workingCopy(planOf(draft));
-    await Effect.runPromise(
-      copy.call("set_permissions", { permissions: { "email.send": { ask: "ops" } } }),
-    );
+    await Effect.runPromise(copy.call("set_permissions", { permissions: { "email.send": "ask" } }));
     expect((await Effect.runPromise(copy.plan)).permissions).toEqual({
-      "email.send": { ask: "ops" },
+      "email.send": "ask",
     });
   });
 });

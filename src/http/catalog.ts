@@ -1,4 +1,4 @@
-/** Routes role and template management and reports which listed automations use a template. */
+/** Routes template reads and connections, and reports which listed automations use a template. */
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
@@ -9,12 +9,11 @@ import { AutomationIndex } from "../automation/index.ts";
 import { LiveConnections } from "../connections/live.ts";
 import type { TemplateUsage } from "../automation/model.ts";
 import { Automations } from "../automation/service.ts";
-import { EntityName, Role } from "../entities/model.ts";
+import { EntityName } from "../entities/model.ts";
 import { EntityStore } from "../entities/store.ts";
 import { messageOf } from "../error.ts";
-import { BadRequest, limitedBody, NotFound, pathParams, respond } from "./response.ts";
+import { NotFound, pathParams, respond } from "./response.ts";
 
-const RoleParams = Schema.Struct({ role: EntityName });
 const TemplateParams = Schema.Struct({ name: EntityName });
 
 /**
@@ -56,7 +55,7 @@ const templateUsage = Effect.fn("Catalog.templateUsage")(function* (name: string
   return usage;
 });
 
-/** Roles and approved wording available to the planner and new runs. */
+/** Approved wording available to the planner and new runs, and which connections are live. */
 export const catalogRoutes = Layer.mergeAll(
   HttpRouter.add(
     "GET",
@@ -66,39 +65,6 @@ export const catalogRoutes = Layer.mergeAll(
         return { live: yield* LiveConnections };
       }),
     ),
-  ),
-  HttpRouter.addAll(
-    [
-      HttpRouter.route("GET", "/", respond(EntityStore.use((entities) => entities.listRoles))),
-      HttpRouter.route(
-        "PUT",
-        "/:role",
-        respond(
-          Effect.gen(function* () {
-            const { role } = yield* pathParams(RoleParams);
-            const body = yield* limitedBody(Role);
-            if (body.name !== role) {
-              return yield* new BadRequest({ message: "The role's name must match the URL" });
-            }
-            const entities = yield* EntityStore;
-            return yield* entities.putRole(body);
-          }),
-        ),
-      ),
-      HttpRouter.route(
-        "DELETE",
-        "/:role",
-        respond(
-          Effect.gen(function* () {
-            const { role } = yield* pathParams(RoleParams);
-            const entities = yield* EntityStore;
-            yield* entities.deleteRole(role);
-            return { deleted: role };
-          }),
-        ),
-      ),
-    ],
-    { prefix: "/api/roles" },
   ),
   HttpRouter.addAll(
     [

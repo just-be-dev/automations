@@ -1,6 +1,6 @@
 /** The demo's known state: its people, entity type, templates, role, and saved onboarding workflow. */
 import * as Schema from "effect/Schema";
-import type { EntityData, EntityType, Role } from "../src/entities/model.ts";
+import type { EntityData, EntityType } from "../src/entities/model.ts";
 import type { Template } from "../src/entities/templates.ts";
 import { Workflow } from "../src/workflow/model.ts";
 import onboarding from "./onboarding.json" with { type: "json" };
@@ -32,7 +32,7 @@ const person = (id: string, data: Person["data"]): Person => ({
   data,
 });
 
-/** Managers come before their reports, and members before the roles that name them. */
+/** Managers come before their reports. */
 export const people: ReadonlyArray<Person> = [
   person("grace", () => ({
     name: "Grace Hopper",
@@ -100,43 +100,26 @@ export const employeeType: EntityType = {
   ],
 };
 
-/** People Ops approves the welcome email. Grace approves in the storyboard; Mary is the team. */
-export const roles: ReadonlyArray<Role> = [
-  {
-    name: "people_ops",
-    label: "People Ops",
-    members: [
-      { type: "employee", id: "grace" },
-      { type: "employee", id: "mary" },
-    ],
-  },
-];
-
 /**
- * What the reset tells the presenter about approving as themselves. A local studio knows them
- * only by `DEV_USER_EMAIL`; they approve the welcome email when that address is one of People
- * Ops' people, which in the storyboard means giving Grace their address.
+ * What the reset tells the presenter about approving. Anyone in the studio may approve; a local
+ * studio knows the presenter only by `DEV_USER_EMAIL`, and records approvals under it.
  */
 export const approverNote = (
   devUser: string | undefined,
   seeded: ReadonlyArray<{ readonly id: string; readonly data: EntityData }>,
 ) => {
   if (devUser === undefined) {
-    return "Approvals in the studio name no one. Set DEV_USER_EMAIL and DEMO_GRACE_EMAIL to your address, restart dev, and reset again.";
+    return "Approvals in the studio name no one. Set DEV_USER_EMAIL to your address, restart dev, and reset again.";
   }
   const you = seeded.find(
     (each) => String(each.data["email"]).toLowerCase() === devUser.toLowerCase(),
   );
-  const role = roles.find((each) => each.name === "people_ops");
-  const approves =
-    you !== undefined && role?.members.some((member) => member.id === you.id) === true;
-  if (you === undefined || !approves || role === undefined) {
-    return `You are ${devUser}, who isn't in People Ops, so the studio won't let you approve. Set DEMO_GRACE_EMAIL to ${devUser} and reset again.`;
-  }
-  return `You are ${String(you.data["name"])} (${devUser}) and approve for ${role.label}.`;
+  return you === undefined
+    ? `You approve as ${devUser}.`
+    : `You approve as ${String(you.data["name"])} (${devUser}).`;
 };
 
-/** The two welcome emails the migrations seed, word for word. */
+/** The two welcome emails, which the reset writes through the studio. */
 export const templates: ReadonlyArray<Template> = [
   {
     name: "engineering_welcome_email",

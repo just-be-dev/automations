@@ -6,7 +6,6 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { Command, Http } from "foldkit";
 import { load, pushUrl } from "foldkit/navigation";
-import { Role } from "../entities.ts";
 import { SuppliedEvent } from "../events/model.ts";
 import {
   PendingChat,
@@ -88,15 +87,6 @@ export const LoadAutomations = Command.define("LoadAutomations", {
     Effect.catch((error) =>
       Effect.succeed(Message.FailedLoadAutomations({ error: errorText(error) })),
     ),
-    Effect.provide(Http.layer),
-  ),
-});
-
-export const LoadRoles = Command.define("LoadRoles", {
-  messages: [Message.SucceededLoadRoles, Message.FailedLoadRoles],
-  execute: requestJson("/api/roles", Schema.Array(Role)).pipe(
-    Effect.map((roles) => Message.SucceededLoadRoles({ roles })),
-    Effect.catch((error) => Effect.succeed(Message.FailedLoadRoles({ error: errorText(error) }))),
     Effect.provide(Http.layer),
   ),
 });

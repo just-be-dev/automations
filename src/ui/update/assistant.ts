@@ -3,7 +3,7 @@ import { Command, Update } from "foldkit";
 import { modifyFields } from "foldkit/struct";
 import type { PageContext } from "../../assistant/model.ts";
 import * as Assistant from "../assistant/index.ts";
-import { LoadAutomation, LoadAutomations, LoadRoles, NavigateInternal } from "../command.ts";
+import { LoadAutomation, LoadAutomations, NavigateInternal } from "../command.ts";
 import {
   Message,
   toAssistantMessage,
@@ -91,7 +91,6 @@ export const refreshResources = (model: Model): Update.Return<Model, Message> =>
   model,
   commands: [
     LoadAutomations(),
-    LoadRoles(),
     ...Page.match(model.page, {
       Overview: ({ overview }) =>
         Command.mapMessages(

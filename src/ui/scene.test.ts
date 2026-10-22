@@ -201,7 +201,7 @@ test("the draft marks what the agent's latest reply changed until the draft is s
       welcome("#eng-team", "Welcome them in #eng-team"),
       { id: "done", kind: "stop", title: "Finish", reason: "Everyone knows" },
     ],
-    permissions: { "slack.sendMessage": { ask: "ops" } },
+    permissions: { "slack.sendMessage": "ask" },
   };
   const replied = automationLoaded({
     maybeDraft: Option.some(after),
@@ -686,68 +686,45 @@ test("email message cards retain the recipient and subject, preserve line breaks
   );
 });
 
-const roles = [
-  { name: "people_ops", label: "People Ops", members: [{ type: "employee", id: "grace" }] },
-  { name: "finance", label: "Finance", members: [] },
-];
-
-const withRoles = (model: Model, listed: typeof roles = roles) =>
-  update(model, Message.SucceededLoadRoles({ roles: listed })).model;
-
 const permissionButton = (name: string) =>
   within(role("group", { name: "Send a Slack message permission" }), role("button", { name }));
 
-test("asking first picks a role to approve, and the approver can be changed", () => {
-  const asking = (ask: string): Workflow => ({
-    ...onboarding,
-    permissions: { "slack.sendMessage": { ask } },
-  });
+test("an operation can ask first, and be allowed again", () => {
   scene(
     { update, view },
-    given(withRoles(withDraft({ ...onboarding, permissions: { "slack.sendMessage": "auto" } }))),
+    given(withDraft({ ...onboarding, permissions: { "slack.sendMessage": "auto" } })),
     expect(role("list", { name: "Permissions" })).toContainText("Send a Slack message"),
     expect(permissionButton("Allow")).toHaveAttr("aria-pressed", "true"),
-    expect(role("combobox", { name: "Send a Slack message approver" })).not.toExist(),
     click(permissionButton("Ask first")),
     Command.expectExact(
-      SetPermission({
-        ...requestArgs,
-        operation: "slack.sendMessage",
-        permission: { ask: "people_ops" },
-      }),
+      SetPermission({ ...requestArgs, operation: "slack.sendMessage", permission: "ask" }),
     ),
     Command.resolve(
       SetPermission,
-      Message.SucceededSetPermission({ revision: 0, draft: asking("people_ops") }),
+      Message.SucceededSetPermission({
+        revision: 0,
+        draft: { ...onboarding, permissions: { "slack.sendMessage": "ask" } },
+      }),
     ),
     expect(permissionButton("Ask first")).toHaveAttr("aria-pressed", "true"),
-    expect(role("combobox", { name: "Send a Slack message approver" })).toHaveValue("people_ops"),
-    expect(text("Asks People Ops")).toExist(),
-    change(role("combobox", { name: "Send a Slack message approver" }), "finance"),
+    expect(permissionButton("Ask first")).toHaveAttr(
+      "title",
+      "Ask first: Waits until someone approves it",
+    ),
+    expect(text("Asks first")).toExist(),
+    expect(text("Permission updated. Save the draft to use it in runs.")).toExist(),
+    click(permissionButton("Allow")),
     Command.expectExact(
-      SetPermission({
-        ...requestArgs,
-        operation: "slack.sendMessage",
-        permission: { ask: "finance" },
-      }),
+      SetPermission({ ...requestArgs, operation: "slack.sendMessage", permission: "auto" }),
     ),
     Command.resolve(
       SetPermission,
-      Message.SucceededSetPermission({ revision: 0, draft: asking("finance") }),
+      Message.SucceededSetPermission({
+        revision: 0,
+        draft: { ...onboarding, permissions: { "slack.sendMessage": "auto" } },
+      }),
     ),
-    expect(text("Asks Finance")).toExist(),
-    expect(text("Permission updated. Save the draft to use it in runs.")).toExist(),
-  );
-});
-
-test("without roles, nothing can ask first", () => {
-  scene(
-    { update, view },
-    given(
-      withRoles(withDraft({ ...onboarding, permissions: { "slack.sendMessage": "auto" } }), []),
-    ),
-    expect(permissionButton("Ask first")).toBeDisabled(),
-    expect(permissionButton("Ask first")).toHaveAttr("title", "Ask first: Add a role to ask first"),
+    expect(permissionButton("Allow")).toHaveAttr("aria-pressed", "true"),
   );
 });
 
@@ -789,7 +766,7 @@ test("a run shows declined and skipped steps, and why a stop step ended it", () 
 
 test("a permission request shows what the action will send and sends the approval", () => {
   const waiting = runOf({
-    workflow: { ...onboarding, permissions: { "slack.sendMessage": { ask: "people_ops" } } },
+    workflow: { ...onboarding, permissions: { "slack.sendMessage": "ask" } },
     steps: {
       approve: { status: "done", record: { approved: true } },
       laptop: { status: "done" },
@@ -817,11 +794,10 @@ test("a permission request shows what the action will send and sends the approva
     { update, view },
     given(withOpenRun(waiting)),
     expect(text(permissionTask.prompt)).toExist(),
-    expect(text("Approved by People Ops (Grace Hopper)")).toExist(),
     expect(role("list", { name: "Send a Slack message details" })).toHaveText(
       "to: Sam Park <sam@example.com>text: Ari Cho starts on 2026-11-02",
     ),
-    expect(role("button", { name: /Tell the manager.*Waiting for People Ops/ })).toExist(),
+    expect(role("button", { name: /Tell the manager.*Waiting for approval/ })).toExist(),
     click(role("button", { name: "Approve" })),
     Command.expectExact(
       AnswerTask({ ...requestArgs, runId: "run-1", step: "notify", answer: { approved: true } }),
@@ -834,9 +810,8 @@ test("a permission request shows what the action will send and sends the approva
     expect(role("region", { name: /Open task/ })).not.toExist(),
     expect(text("Answer sent.")).toExist(),
     click(role("button", { name: /Tell the manager/ })),
-    expect(decision).toContainText("Approved by Grace Hopper, People Ops · Fri, Oct 16"),
+    expect(decision).toContainText("Approved by Grace@example.com · Fri, Oct 16"),
     expect(decision).toHaveAttr("title", "Grace@example.com"),
-    expect(text("Approved by People Ops (Grace Hopper)")).not.toExist(),
   );
 });
 
@@ -1090,7 +1065,7 @@ test("a run reads as a checklist of the saved plan, with details a click away", 
     trigger: { kind: "manual", subject: "employee" },
     permissions: {
       "calendar.findTimes": "auto",
-      "email.send": { ask: "people_ops" },
+      "email.send": "ask",
       "slack.sendMessage": "auto",
       "calendar.createEvent": "auto",
     },
@@ -1191,7 +1166,7 @@ test("a run reads as a checklist of the saved plan, with details a click away", 
     expect(role("button", { name: /Give the manager a heads-up, Done.*Sent to Grace/ })).toExist(),
     expect(role("button", { name: /Welcome them in #eng-team, Done, Posted$/ })).toExist(),
     expect(
-      role("button", { name: /Send the right welcome email, Waiting, Waiting for People Ops/ }),
+      role("button", { name: /Send the right welcome email, Waiting, Waiting for approval/ }),
     ).toExist(),
     expect(role("button", { name: /Book their first conversation, Not started$/ })).toExist(),
     expect(role("button", { name: /Give them three days to settle in, Not started$/ })).toExist(),

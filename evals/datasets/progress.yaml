@@ -24,9 +24,9 @@ cases:
       picks timing: { phrase: timing }
   people:
     input: >-
-      Who approves the email? People Ops is responsible for anything sent to new hires, so
-      email.send should ask people_ops. The manager needs to confirm the meeting time, so a human
-      step assigned to employee.manager, notified on Slack.
+      Who approves the email? Anything sent to new hires should wait for someone to approve it, so
+      email.send should ask first. The manager needs to confirm the meeting time, so a human step
+      assigned to employee.manager, notified on Slack.
     checks:
       picks people: { phrase: people }
   paths:
@@ -94,10 +94,10 @@ cases:
       one.
     checks:
       picks messages: { phrase: messages }
-  checking-role:
+  checking-permission:
     input: >-
-      The check reports that the role people_ops doesn't exist. The catalog has hr_admins instead,
-      so I'll switch the permission to that and run the check again.
+      The check reports that email.send has no permission. Anything sent to people should wait for
+      approval, so I'll set it to ask and run the check again.
     checks:
       picks checking or people: { phrase: { $oneOf: [checking, people] } }
   people-or-messages:
