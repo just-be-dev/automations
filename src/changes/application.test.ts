@@ -557,7 +557,6 @@ test("proposals prepared before entity-store keep their receipts, and the rest m
     types: [],
     entities: [],
     templates: [],
-    roles: [],
     subscriptions: {},
     uses: [],
   };

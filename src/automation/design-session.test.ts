@@ -53,7 +53,7 @@ test("stable chat IDs survive completion and never answer an unrelated planner q
       yield* Effect.gen(function* () {
         const session = yield* makeDesignSession({
           read: () => Effect.succeed(undefined),
-          catalog: Effect.succeed({ types: [], templates: [], roles: [] }),
+          catalog: Effect.succeed({ types: [], templates: [] }),
           save: () => Effect.die("Never save"),
           studioLink: Effect.succeed(undefined),
           triggerSince: Effect.succeed(undefined),
@@ -137,7 +137,7 @@ test("stopping a planner turn marks it stopped, drops its working copy, and abor
       yield* Effect.gen(function* () {
         const session = yield* makeDesignSession({
           read: () => Effect.succeed(undefined),
-          catalog: Effect.succeed({ types: [], templates: [], roles: [] }),
+          catalog: Effect.succeed({ types: [], templates: [] }),
           save: () => Effect.die("Never save"),
           studioLink: Effect.succeed(undefined),
           triggerSince: Effect.succeed(undefined),

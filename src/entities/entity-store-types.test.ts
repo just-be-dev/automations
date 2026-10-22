@@ -1,4 +1,4 @@
-/** Checks the translation between entity-store schemas and automations' types and roles. */
+/** Checks the translation between entity-store schemas and automations' types. */
 import { describe, expect, test } from "bun:test";
 import type { StoreSchema, TypeInfo } from "./entity-store-api.ts";
 import { planTypeWrite, toEntityData, toEntityType, type TypeWrite } from "./entity-store-types.ts";

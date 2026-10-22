@@ -1192,7 +1192,7 @@ describe("Deciding approval tasks from Slack", () => {
     expect(slack.ephemeral).toEqual([
       {
         url: "https://hooks.slack.com/U-bot",
-        text: "Slack has no email address for you, so the studio can't check that you may answer this. Open it in the studio instead.",
+        text: "Slack has no email address for you, so the studio can't record who answered. Open it in the studio instead.",
       },
     ]);
     expect(slack.updates).toEqual([]);

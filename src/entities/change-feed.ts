@@ -37,7 +37,8 @@ export const changeKey = (seq: number) => `entity-store:${seq}`;
  * A failure fails the message so the queue retries it. Messages that can never be delivered are
  * dropped with a warning: one that isn't a change; one whose change is gone, because its type was
  * deleted, or was replaced by a later change at the same revision; and one whose data can't be
- * presented at its type's latest version. Changes to roles and to types automations can't use publish nothing.
+ * presented at its type's latest version. Changes to types automations
+ * can't use publish nothing.
  */
 export const deliverEntityChange = Effect.fn("EntityChanges.deliver")(function* (input: unknown) {
   const message = Schema.decodeUnknownOption(ChangeEvent)(input);

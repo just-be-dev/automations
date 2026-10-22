@@ -1,4 +1,4 @@
-/** Checks the entity store over a fake entity-store: merging, revisions, subscriptions, and deletion constraints for types, templates, and roles. */
+/** Checks the entity store over a fake entity-store: merging, revisions, subscriptions, and deletion constraints for types and templates. */
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import type { EntityType } from "./model.ts";
@@ -15,7 +15,7 @@ const employee: EntityType = {
   ],
 };
 
-/** Employees with an email, who can be members of roles. */
+/** Employees with an email, so they are people. */
 const staff: EntityType = {
   ...employee,
   fields: [...employee.fields, { name: "email", label: "Email", type: "text" }],
@@ -33,7 +33,7 @@ const run = <A, E>(effect: Effect.Effect<A, E, EntityStore>) =>
     ),
   );
 
-/** A store whose employees have emails, so they can be members of roles. */
+/** A store whose employees have emails, so they are people. */
 const runWithPeople = <A, E>(effect: Effect.Effect<A, E, EntityStore>) =>
   Effect.runPromise(
     effect.pipe(

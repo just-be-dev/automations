@@ -190,7 +190,7 @@ export class SlackDecisionError extends Schema.TaggedError<SlackDecisionError>()
 
 const refusals = {
   noEmail:
-    "Slack has no email address for you, so the studio can't check that you may answer this. Open it in the studio instead.",
+    "Slack has no email address for you, so the studio can't record who answered. Open it in the studio instead.",
   gone: "That task isn't waiting for an answer",
   notApproval: "Answer this one in the studio.",
 };
