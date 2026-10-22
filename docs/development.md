@@ -14,11 +14,21 @@ mise run format-check
 mise run dev    # alchemy dev: local Workers, Durable Object, and Vite with hot reload
 ```
 
-`mise run dev` runs everything locally on stage `dev_$USER` and prints the Studio URL. Dev mode skips Cloudflare Access, but it needs Cloudflare credentials for Workers AI. Run `bun alchemy profile edit --add Cloudflare` once, or set `ALCHEMY_PROFILE` to a profile that already has them.
+`mise run dev` runs everything locally on stage `dev_$USER` and prints the Studio URL. Dev mode skips Cloudflare Access, but it needs Cloudflare credentials for Workers AI. Run `bun alchemy profile edit --add Cloudflare` once, or set `ALCHEMY_PROFILE` to a profile that already has them. It also needs entity-store running locally: see [below](#running-entity-store-alongside).
 
 Local development also offers **Resume now** on a run's step that waits on a clock, so a three-day wait takes seconds in a demo. It fires the clock through the same operation as the scheduled `clock` callback, and that delivery later changes nothing. Only `alchemy dev` on a `dev_` stage enables it: each Worker's Init reads `ALCHEMY_DEV` on such a stage, which binds it into the Worker. A deploy binds nothing, so `GET /api/dev` answers `{ "local": false }` and the resume route answers 404 like an unknown route. The Automation object refuses too.
 
 Without Access, a local studio doesn't know who you are, so anyone can answer an approval and the answer names no one. Set `DEV_USER_EMAIL` in `.env` to your address and restart dev to answer as yourself. Every request from your browser, `curl` or the demo reset then carries that address, as if Access had sent it, so only a role's members can approve and the run records who did. The Api reads it only when local development is on, so a deploy ignores it. Assistant sessions belong to that address too, so the assistant panel starts a fresh conversation the first time.
+
+### Running entity-store alongside
+
+automations keeps no entities of its own. Entity types, entities and roles live in entity-store, a separate Alchemy stack ([architecture](../ARCHITECTURE.md#entity-store-is-the-system-of-record-for-entities)), so a local studio needs a local entity-store:
+
+1. In your entity-store checkout, run its `alchemy dev`, on the same stage as here (`dev_$USER` by default).
+2. Set `ENTITY_STORE_DIR` in this checkout's `.env` to that checkout.
+3. Run `mise run dev` here. It first runs `mise run dev:entity-store`, which links entity-store's local Alchemy state into `.alchemy/state/entity-store`, so this stack's reference to entity-store's Api Worker resolves to the one its `alchemy dev` serves. It stops and says what to do if entity-store's state isn't there yet.
+
+Both `alchemy dev` processes register their Workers in Alchemy's local dev registry (`~/.local/state/alchemy/registry`), so the service binding reaches `EntityStoreRpc` in the other process. Changes flow the other way through a queue: under `alchemy dev`, automations declares a local queue named `entity-store-dev_$USER-changes` and consumes it, and entity-store's local producer delivers to whichever process consumes that name. A change entity-store sends while automations' dev isn't running is dropped with a warning there, so no automation hears of it; its change log still lists it (`GET /api/changes` on entity-store). A fresh local entity-store is empty: `mise run demo:reset` creates the demo's type, people and role through the studio.
 
 If an existing OAuth profile has expired, run `bun alchemy profile refresh --profile default --provider Cloudflare` and follow the sign-in flow.
 
@@ -102,7 +112,7 @@ It works through the studio's own HTTP API, in this order:
 
 Entity, type, and template writes are prepared and approved through `/api/changes`, so the studio validates them as it does a person's edit. Role writes are direct, as they are for everyone. Deleting threads first means no assistant turn drafts or proposes anything mid-reset, and deleting automations next means none of these writes starts a run. A write that would change nothing is skipped, so running the reset twice leaves the same state. Ada starts on the first Monday at least two weeks after today, so the story never goes stale.
 
-The people, role, and templates are in [`demo/seed.ts`](../demo/seed.ts). The type and templates match what the migrations seed, which a test checks. The fallback, [`demo/onboarding.json`](../demo/onboarding.json), is the storyboard's plan after its edit: it welcomes engineers in `#eng-team` instead of `#general`. If the live planner misbehaves on stage, open `/?automation=first-week` and run it on Ada. The reset prints that link.
+The people, role, and templates are in [`demo/seed.ts`](../demo/seed.ts). The type and templates match what the migrations seed into automations' D1 (whose entity tables are no longer read), which a test checks. The fallback, [`demo/onboarding.json`](../demo/onboarding.json), is the storyboard's plan after its edit: it welcomes engineers in `#eng-team` instead of `#general`. If the live planner misbehaves on stage, open `/?automation=first-week` and run it on Ada. The reset prints that link.
 
 `mise run slides` opens the talk's slide deck, [`docs/demo/deck/index.html`](demo/deck/index.html), in the browser. It's one self-contained file, so it needs no server. [`docs/demo/script.md`](demo/script.md) is the live part's script: what to say to the studio agent, and where to click.
 
@@ -143,9 +153,22 @@ The first deploy offers to bootstrap Alchemy's Cloudflare-hosted state store. Al
 - `Api` has no public URL. Studio forwards `/api/*` to it over a service binding.
 - `Channels` takes Slack's webhooks, deployed only when Slack is configured ([Slack](#slack)).
 
-It also creates `AutomationsDatabase`, a D1 database that lists the automations and holds the entity types, the entities, the templates, and which automations subscribe to each type. Alchemy applies the migrations in `migrations/` on every deploy. They seed an `employee` type, two employees, and two welcome-email templates.
+Deploy entity-store first, on the same stage. automations finds it by Alchemy reference to the `entity-store` stack in the shared Cloudflare state store: `Api` and its Durable Objects bind entity-store's Api Worker by its `EntityStoreRpc` entrypoint, and `Api` consumes entity-store's `entity-store-<stage>-changes` queue.
 
-The `Events` Cloudflare Queue accepts named events from the API, automation actions and confirmed entity writes. `Api` consumes it, routes `entity.put` commands through `ChangeCoordinator`, then delivers each event to the automation directory. It acknowledges individual messages only after successful fan-out, retries failures (10 retries, 30-second backoff), and dead-letters exhausted messages to `automations-<stage>-failed-events`. Inspect failed deliveries in the Api logs and the queue dashboard; dead-letter replay is manual. The prototype visits every listed automation rather than maintaining a separate event subscription index.
+It also creates `AutomationsDatabase`, a D1 database that lists the automations and holds the templates and which automations subscribe to each type. Alchemy applies the migrations in `migrations/` on every deploy. They seed two welcome-email templates. The `entity_types`, `entities` and `roles` tables they also create are left in place but no longer read; [copy them to entity-store](#moving-entities-to-entity-store) once.
+
+The `Events` Cloudflare Queue accepts named events from the API, automation actions and entity-store's changes. `Api` consumes it, routes `entity.put` commands through `ChangeCoordinator`, then delivers each event to the automation directory. `Api` also consumes entity-store's change queue: it publishes each change's `entity.created`, `entity.updated` or `entity.deleted` to `Events` and notifies the automations watching the type. Both consumers acknowledge individual messages only after successful delivery, retry failures (10 retries, 30-second backoff), and dead-letter exhausted messages to `automations-<stage>-failed-events`. Inspect failed deliveries in the Api logs and the queue dashboard; dead-letter replay is manual. The prototype visits every listed automation rather than maintaining a separate event subscription index.
+
+### Moving entities to entity-store
+
+A stage that ran before entity-store keeps its entity types, entities and roles in `AutomationsDatabase`. [`scripts/entity-store-migration/migrate.ts`](../scripts/entity-store-migration/migrate.ts) copies them into entity-store over its HTTP API:
+
+```sh
+bun scripts/entity-store-migration/migrate.ts \
+  --source d1:<account-id>/<database-id> --target https://<entity-store host>/
+```
+
+It reads D1 with `CLOUDFLARE_API_TOKEN` (or `--source <export.json>`), and authenticates to a deployed entity-store with `ENTITY_STORE_ACCESS_CLIENT_ID` and `ENTITY_STORE_ACCESS_CLIENT_SECRET`. It prints the writes it would make and changes nothing until you add `--apply`. It refuses before writing anything if entity-store can't hold the data: an ID two types share (entity-store's IDs are unique across types), a type named `role`, or a role member that isn't an employee. Values of fields a type no longer has, and refs to missing entities, are left out and listed. Its writes carry `meta` `{ "source": "migration" }`, which automations' change consumer skips, so copying starts no automations. Running it again is safe. It doesn't touch automations' tables.
 
 Deploys also create a 30-day Access service token for machine testing. Send it as `CF-Access-Client-Id` / `CF-Access-Client-Secret`, and read it with `bun alchemy state`. Never commit it.
 
@@ -171,7 +194,7 @@ The chat composer has a microphone button next to Send for English dictation. Al
 
 Dictation requires HTTPS (or localhost) and AudioWorklet support. The browser streams mono PCM16 over a same-origin WebSocket to the private API, which relays it to Workers AI's `@cf/deepgram/nova-3` with interim results, punctuation, and model-improvement opt-out. Audio is processed by Cloudflare/Deepgram; the studio neither stores nor logs it. The transcript becomes ordinary chat text only when sent. No browser API key, Deepgram account, RealtimeKit room, or AI Gateway setup is needed. Local streaming needs the same valid Cloudflare profile as other Workers AI calls.
 
-Entity, type, and template mutations require review of the exact proposed change and its consequences. Manual actions show a confirmation dialog; assistant actions show the same proposal inline. Cancel leaves the data and your form untouched. Approval applies only that proposal, not later changes. If data or dependencies changed while awaiting approval, prepare a fresh proposal. Retrying an applied decision returns its receipt; entity notifications use a stable key so a resumed decision does not start the same run twice. Consequence checks currently snapshot the tenant catalog, so unrelated edits can also invalidate a proposal.
+Entity, type, and template mutations require review of the exact proposed change and its consequences. Manual actions show a confirmation dialog; assistant actions show the same proposal inline. Cancel leaves the data and your form untouched. Approval applies only that proposal, not later changes. If data or dependencies changed while awaiting approval, prepare a fresh proposal. Retrying an applied decision returns its receipt. An entity change is checked against the entity's revision, type and watchers, a type change against the type, and a template change against the template and the automations that use it; a change to any of them makes the proposal stale. An entity write is applied only at the revision you reviewed, so one that loses a race to another writer fails as stale instead of overwriting.
 
 Under **Permissions**, the draft lists every connection operation it uses. Each one is set to allow (it runs automatically) or ask first, with the role whose members approve it, such as the seeded People Ops. The agent suggests these, and you can change any of them; save the draft to apply them to new runs. [Permissions](workflow-dsl.md#permissions) describes approval tasks and what declining does.
 
@@ -195,11 +218,11 @@ curl -X POST "$STUDIO_URL/api/changes/<proposal-id>/decision" \
   -d '{"approved":true}'
 ```
 
-Only the confirmed decision writes the entity. Its `result.triggered` lists the runs or subscriber errors. Send `approved:false` to cancel. People answer human steps from the run in the studio, or with `POST .../tasks/:stepId`.
+Only the confirmed decision writes the entity; its `result` is the entity as written. The automations watching the type hear of it from entity-store's change queue a moment later, so the decision doesn't list the runs it starts: look for them on the overview. Send `approved:false` to cancel. People answer human steps from the run in the studio, or with `POST .../tasks/:stepId`.
 
 ### Named events
 
-An automation can listen for `entity.created`, `entity.updated`, `entity.deleted`, or any custom name using an [event trigger](workflow-dsl.md#event), and publish with [`events.emit`](workflow-dsl.md#publishing-events-and-entity-commands). Confirmed HTTP, MCP and assistant entity writes emit the lifecycle facts. Event listeners run asynchronously, so a change decision's `result.triggered` lists only entity-triggered runs.
+An automation can listen for `entity.created`, `entity.updated`, `entity.deleted`, or any custom name using an [event trigger](workflow-dsl.md#event), and publish with [`events.emit`](workflow-dsl.md#publishing-events-and-entity-commands). Every committed entity write emits the lifecycle facts, including writes made in entity-store directly. Both they and entity triggers run asynchronously, after the write.
 
 Publish an authenticated event with a tenant-unique ID. Keep that ID and payload unchanged when retrying; each automation starts at most one run for it, including after restart:
 
@@ -240,7 +263,7 @@ Manage templates on the studio's **Templates** page (`/templates`), which also l
 | `PUT /api/automations/:id/draft`                             | Replace the draft with a workflow that checks against the catalog, such as a saved copy                                                                   |
 | `DELETE /api/automations/:id`                                | Delete an automation with its draft, conversation, and runs; runs in flight stop                                                                          |
 | `POST /api/automations/:id/permissions`                      | Set which operations ask which role first (`{ "permissions": { "email.send": { "ask": "people_ops" } } }`)                                                |
-| `GET /api/roles`, `PUT /api/roles/:name`                     | List or define roles (`{ "name", "label", "members": [{ "type", "id" }] }`)                                                                               |
+| `GET /api/roles`, `PUT /api/roles/:name`                     | List or define roles (`{ "name", "label", "members": [{ "type": "employee", "id" }] }`)                                                                   |
 | `DELETE /api/roles/:name`                                    | Delete a role. Saved workflows that ask it fail their check when they next start                                                                          |
 | `POST /api/automations/:id/start`                            | Start a run by hand (`{ "subject": "<id>" }`)                                                                                                             |
 | `GET /api/automations/:id/runs/:runId`                       | Inspect a run, its steps, its tasks, and when each waiting wait step resumes (`resumesAt`)                                                                |
@@ -276,7 +299,7 @@ Each assistant thread response is an `AssistantState`; while it is `working`, po
 
 ### Entity store
 
-`/entities` in the studio (**Entity store** in the sidebar, under Templates) is a debug page for the entity store. Define entity types field by field, then create, edit, and delete their entities. Saving an entity is an ordinary entity write, so it starts the saved automations that watch its type.
+`/entities` in the studio (**Entity store** in the sidebar, under Templates) is a debug page for the entity store, which lives in entity-store. Define entity types field by field, then create, edit, and delete their entities. Saving an entity is an ordinary entity write, so it starts the saved automations that watch its type, a moment after the save.
 
 `/api/mcp` serves the same store to agents over MCP's Streamable HTTP transport. Its tools are `list_entity_types`, `define_entity_type`, `delete_entity_type`, `list_entities`, `get_entity`, `put_entity`, `delete_entity`, `list_roles`, `define_role`, and `decide_change`. Entity/type mutation tools return a proposal without writing. They take an optional `requestId`: retrying a call with the same one returns the same proposal instead of preparing another. Present it to the person before calling `decide_change` with its `proposalId` and `approved` decision. Role tools write directly. The built-in assistant uses application tools directly, not MCP. The server is stateless: it assigns no session, answers in JSON, and supports protocol revisions 2024-11-05 through 2025-11-25. With `mise run dev`:
 
@@ -288,7 +311,7 @@ Deployed stages sit behind Access, so send the service token as headers (`--head
 
 ## README demo
 
-The [first-week example](examples/first-week.json) is a schema- and catalog-validated workflow using the migration-seeded employee type, welcome templates, and People Ops role. A run needs an employee with a start date and a manager. The seeded Ada record starts without a date; the execution check supplied `2026-11-02` in disposable local data.
+The [first-week example](examples/first-week.json) is a schema- and catalog-validated workflow using the demo's employee type and People Ops role, and the migration-seeded welcome templates. A run needs an employee with a start date and a manager. The seeded Ada record starts without a date; the execution check supplied `2026-11-02` in disposable local data.
 
 The README screenshot (`docs/images/first-week.png`) was captured from `mise run dev` at a 1440 × 1860 viewport in light mode, with the studio agent open beside the draft and no run panel. After `mise run demo:reset`, the fallback `first-week` automation was deleted so the sidebar lists only the new one. Then the README's two requests were sent to the studio agent on one thread, unedited, and the planner (Claude Sonnet through AI Gateway) drafted and refined the workflow live. Nothing in the conversation, the draft, or the UI was scripted or retouched. The draft was not saved or run.
 

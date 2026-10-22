@@ -9,7 +9,7 @@ This is a single-tenant Cloudflare application. [Development and operations](doc
 3. [Automations and the planner](#an-automation-is-one-durable-object): how a conversation becomes a saved workflow.
 4. [The workflow engine](#the-workflow-engine-replays-a-run-from-its-journal): how a run executes, suspends and resumes.
 5. [The studio assistant](#the-studio-assistant-proposes-it-never-applies): the studio-wide agent.
-6. [Changes](#every-data-change-goes-through-one-coordinator) and [events](#events-flow-through-one-queue): confirmed writes and the event pipeline.
+6. [Entities](#entity-store-is-the-system-of-record-for-entities), [changes](#every-data-change-goes-through-one-coordinator) and [events](#events-flow-through-one-queue): where entities live, confirmed writes, and the event pipeline.
 7. [Browser](#browser-state-and-server-state-have-separate-lifecycles), [limits](#guarantees-have-deliberate-limits) and [principles](#principles-for-changes).
 
 ## Cloudflare hosts the application, not its business rules
@@ -44,24 +44,27 @@ This is a single-tenant Cloudflare application. [Development and operations](doc
 │ drafts, runs, journal   conversation, receipts    proposals, receipts   │
 └───────────────────────────────────┬─────────────────────────────────────┘
                                     ▼
-             ┌──────────────────────┐   ┌──────────────────────┐
-             │ D1                   │   │ Workers AI           │
-             │ directory + catalog  │   │ pi models, namer,    │
-             │ + subscriptions      │   │ clef, dictation      │
-             └──────────────────────┘   └──────────────────────┘
+┌───────────────────────┐ ┌───────────────────────┐ ┌───────────────────────┐
+│ entity-store          │ │ D1                    │ │ Workers AI            │
+│ its own stack · types │ │ directory, templates  │ │ pi models, namer,     │
+│ entities, roles       │ │ + subscriptions       │ │ clef, dictation       │
+└───────────┬───────────┘ └───────────────────────┘ └───────────────────────┘
+            │ change queue: every committed entity write, consumed by Api
+            ▼
+  Api Worker: entity.* facts to the Events queue, entity triggers
 ```
 
 `alchemy.run.ts` re-exports [the Cloudflare stack](src/platform/cloudflare/stack.ts). Alchemy declares infrastructure and hosts the Effect implementations in one program. The `Studio` Worker serves the browser app behind Cloudflare Access in deployed stages; [its edge entry](src/platform/cloudflare/edge.ts) only forwards `/api/*` to `Api`. `Api` has `workersDev: false` and no public URL.
 
 The Durable Objects call each other, so the tier in the diagram is not flat:
 
-| Host                | D1   | Workers AI | Publishes events | Calls over RPC                                      |
-| ------------------- | ---- | ---------- | ---------------- | --------------------------------------------------- |
-| `Api` Worker        | ✓    | ✓          | ✓ (and consumes) | AutomationAgent, StudioAssistant, ChangeCoordinator |
-| `AutomationAgent`   | ✓    | ✓          | ✓                | none                                                |
-| `StudioAssistant`   | ✓    | ✓          | none             | AutomationAgent, ChangeCoordinator                  |
-| `ChangeCoordinator` | ✓    | none       | ✓                | AutomationAgent, through `EntitySubscribers`        |
-| `ChannelMailbox`    | none | none       | ✓                | none                                                |
+| Host                | D1   | Workers AI | Publishes events | Calls over RPC                                                    |
+| ------------------- | ---- | ---------- | ---------------- | ----------------------------------------------------------------- |
+| `Api` Worker        | ✓    | ✓          | ✓ (and consumes) | AutomationAgent, StudioAssistant, ChangeCoordinator, entity-store |
+| `AutomationAgent`   | ✓    | ✓          | ✓                | entity-store                                                      |
+| `StudioAssistant`   | ✓    | ✓          | none             | AutomationAgent, ChangeCoordinator, entity-store                  |
+| `ChangeCoordinator` | ✓    | none       | none             | AutomationAgent (template uses), entity-store                     |
+| `ChannelMailbox`    | none | none       | ✓                | none                                                              |
 
 When Slack is configured, a third Worker, [`Channels`](src/platform/cloudflare/channels.ts), takes Slack's webhooks through [effect-channels](https://github.com/humanlayer/effect-channels), and clicks on an approval DM's buttons. It is public because Slack must reach it, and it serves only signature-checked Slack routes. [Events](#events-flow-through-one-queue) describes what it publishes, and [approving from Slack](#approvals-from-slack-go-through-respond) where clicks go.
 
@@ -93,17 +96,17 @@ When Slack is configured, a third Worker, [`Channels`](src/platform/cloudflare/c
 
 Dependencies point from the Cloudflare adapters into the application and domain modules, never back. [The boundary test](src/platform/boundary.test.ts) checks every module outside `ui/` and `platform/`: none may import Alchemy, `cloudflare:*`, `@cloudflare/*`, `agents`, or `src/platform/`, or name native types such as `D1Database` or `DurableObjectStorage`. Alchemy binding declarations run at plan time and cold start; storage, AI, and callbacks are used only inside request or instance handlers.
 
-| Owner                     | Responsibility                                                                  | Implementation                                                                                               |
-| ------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| Browser application       | Navigation, editable forms, workflow rendering, run panels, polling             | [`src/ui/`](src/ui/AGENTS.md)                                                                                |
-| API request               | Boundary validation, identity, per-request service composition                  | [`src/http/`](src/http/api.ts), [`api.ts`](src/platform/cloudflare/api.ts)                                   |
-| Automation                | Design session, saved snapshot, runs, durable callbacks, pi conversations       | [`src/automation/`](src/automation/application.ts), [`automation.ts`](src/platform/cloudflare/automation.ts) |
-| Planner and namer         | Planner instructions, working copy and tools; naming new automations            | [`src/agents/`](src/agents/planner/planner.ts), [`planning.ts`](src/automation/planning.ts)                  |
-| Workflow execution        | Replay journal, completed activities, clocks, deferred answers                  | [`durable-engine.ts`](src/workflow/durable-engine.ts), [`interpreter.ts`](src/workflow/interpreter.ts)       |
-| Assistant session         | Conversation, typed tools, questions, confirmations, delegated design           | [`src/assistant/`](src/assistant/session.ts), [`assistant.ts`](src/platform/cloudflare/assistant.ts)         |
-| Tenant change coordinator | Validated proposals, stale-decision checks, recovery, receipts                  | [`src/changes/`](src/changes/application.ts), [`changes.ts`](src/platform/cloudflare/changes.ts)             |
-| Tenant catalog            | Entity types and records, templates, roles, subscriptions, automation directory | [`EntityStore`](src/entities/store.ts), [`AutomationIndex`](src/automation/index.ts), D1 adapters            |
-| Events                    | Event model, publishing, queue delivery, Slack ingress                          | [`src/events/`](src/events/delivery.ts), [`src/channels/`](src/channels/slack.ts)                            |
+| Owner                     | Responsibility                                                                      | Implementation                                                                                               |
+| ------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Browser application       | Navigation, editable forms, workflow rendering, run panels, polling                 | [`src/ui/`](src/ui/AGENTS.md)                                                                                |
+| API request               | Boundary validation, identity, per-request service composition                      | [`src/http/`](src/http/api.ts), [`api.ts`](src/platform/cloudflare/api.ts)                                   |
+| Automation                | Design session, saved snapshot, runs, durable callbacks, pi conversations           | [`src/automation/`](src/automation/application.ts), [`automation.ts`](src/platform/cloudflare/automation.ts) |
+| Planner and namer         | Planner instructions, working copy and tools; naming new automations                | [`src/agents/`](src/agents/planner/planner.ts), [`planning.ts`](src/automation/planning.ts)                  |
+| Workflow execution        | Replay journal, completed activities, clocks, deferred answers                      | [`durable-engine.ts`](src/workflow/durable-engine.ts), [`interpreter.ts`](src/workflow/interpreter.ts)       |
+| Assistant session         | Conversation, typed tools, questions, confirmations, delegated design               | [`src/assistant/`](src/assistant/session.ts), [`assistant.ts`](src/platform/cloudflare/assistant.ts)         |
+| Tenant change coordinator | Validated proposals, stale-decision checks, recovery, receipts                      | [`src/changes/`](src/changes/application.ts), [`changes.ts`](src/platform/cloudflare/changes.ts)             |
+| Tenant catalog            | Entity types, records and roles (entity-store); templates, subscriptions, directory | [`EntityStore`](src/entities/store.ts), [`AutomationIndex`](src/automation/index.ts), adapters               |
+| Events                    | Event model, publishing, queue delivery, Slack ingress                              | [`src/events/`](src/events/delivery.ts), [`src/channels/`](src/channels/slack.ts)                            |
 
 `AutomationHost` treats persistence and durable job scheduling as one capability: writes and scheduling commit or roll back together. `AssistantHost` requires the same guarantee for its turns, confirmations and answers. Application tests substitute an in-memory host and scripted `PiAgent`; production hosts supply SQLite storage, Alchemy callbacks, and Workers AI.
 
@@ -141,12 +144,12 @@ Dependencies point from the Cloudflare adapters into the application and domain 
 │               └──────────────────────────────────────────────────────┘  │
 └────────────────────────────────────┬────────────────────────────────────┘
                                      ▼
-                 D1: EntityStore, AutomationIndex · Events queue
+      EntityStore (entity-store + D1), AutomationIndex (D1) · Events queue
 ```
 
 [The automation facade](src/automation/application.ts) composes two independent lifecycles: [design sessions](src/automation/design-session.ts) and [runs](src/automation/runs.ts). Both use [the workflow store](src/automation/workflow-store.ts); neither imports the other. The facade merges their callbacks and joins their reads.
 
-Each automation's Durable Object holds its draft, saved workflow, chat exchanges, pending planning work, run records, the replay journal, and pi conversations. D1 holds what must be listed across automations: the directory, because Cloudflare cannot enumerate Durable Object names, plus entity types and records, templates, roles, and subscriptions.
+Each automation's Durable Object holds its draft, saved workflow, chat exchanges, pending planning work, run records, the replay journal, and pi conversations. D1 holds what must be listed across automations: the directory, because Cloudflare cannot enumerate Durable Object names, plus templates and subscriptions. Entity types, entities and roles live in [entity-store](#entity-store-is-the-system-of-record-for-entities).
 
 ### Creation names the automation, then sends the first message
 
@@ -299,7 +302,7 @@ Four triggers call `beginRun`, and each picks a deterministic run ID so a redeli
 | Trigger         | Entry point     | Run ID                                    |
 | --------------- | --------------- | ----------------------------------------- |
 | Manual          | `start`         | random                                    |
-| Entity change   | `entityChanged` | `entity-change:<proposalId>`              |
+| Entity change   | `entityChanged` | `entity-entity:<id>:<rev>`                |
 | Named event     | `eventReceived` | `event-<eventId>`                         |
 | Schedule / date | `tick`          | `scheduled-<at>` or `scheduled-<at>-<id>` |
 
@@ -471,6 +474,14 @@ A confirmation is recorded before `Changes.decide` runs. If the object restarts 
 
 Stopping writes the turn's end first: decided changes are settled, waiting proposals cancelled, open receipts finished as stopped, and the turn set idle in one transaction. Only then does it stop a delegated planner (`Automations.stopChat`) and abort pi, so anything that finishes late finds the turn over and writes nothing. Clearing stops the turn, then erases the object like removing an automation does. [Studio assistant](docs/assistant.md) traces both.
 
+## entity-store is the system of record for entities
+
+Entity types, entities and roles live in entity-store, a separate Alchemy stack with its own D1, schema versions and lenses. automations reaches it over a service binding to its `EntityStoreRpc` entrypoint, which isn't routed publicly: having the binding is the authorization. [`EntityStoreApi`](src/entities/entity-store-api.ts) decodes each call's `Result`, and [`EntityStore`](src/entities/store.ts) keeps its role for the rest of the code, adding automations' rules: snake_case names, role members who can approve, and the dependencies that keep a type from being deleted. Templates and trigger subscriptions stay in automations' D1. The old `entity_types`, `entities` and `roles` tables are left in place, unused, until [the data migration](scripts/entity-store-migration/migrate.ts) has copied them.
+
+[The type adapter](src/entities/entity-store-types.ts) reads an entity-store type at its latest version as automations' `EntityType`: `string` is text (or a date or datetime by its format), `enum` is text, `link` is a ref, and `nullable` is what it holds. `array`, `object` and `json` fields, and names that aren't snake_case, are left out, so checks, paths and entity data never see them, and writes leave them alone. Saving a type from automations creates it, or adds a version whose lens adds and removes fields; a field whose kind changes is refused, because only entity-store can author the lens that converts it. Roles are entities of type `role` (the ID is the role's name, members link to employees), so entity-store's link rules stop a member's deletion.
+
+entity-store records a change row with every write, in the same batch, and delivers it at least once, in no particular order, to its change queue. [The Api consumes it](src/entities/change-feed.ts): for each message it reads the change, publishes `entity.created`, `entity.updated` or `entity.deleted` as `entity:<id>:<rev>`, and notifies the automations watching the type under the same key. Every entity write therefore starts automations, whoever made it: the studio, the assistant, MCP, a workflow's `entity.put`, or entity-store's own UI and API. Writes made by automations carry `meta` `{ depth, sourceEventId?, changeId? }`, which entity-store stores without reading, so an event chain keeps its depth across the boundary.
+
 ## Every data change goes through one coordinator
 
 Manual forms, assistant tools, MCP entity and type tools, and `entity.put` events all use the tenant's single [`ChangeCoordinator`](src/changes/application.ts). It serializes `prepare` and `decide`, and stores proposals under `proposal:<id>`.
@@ -483,36 +494,36 @@ Manual forms, assistant tools, MCP entity and type tools, and `entity.put` event
 ┌────────────────────────────┐                                 │
 │ same owner + requestId?    │                                 │
 │ return that proposal       │                                 │
-│ else dry-run on a memory   │                                 │
-│ copy: before/after         │                                 │
-│ snapshots, consequences    │                                 │
+│ else check the action and  │                                 │
+│ read what it touches: the  │                                 │
+│ entity and its revision,   │                                 │
+│ type or template           │                                 │
 └─────────────┬──────────────┘                                 │
               ▼                                                ▼
-┌────────────────────────────┐  approve, snapshot  ┌────────────────────────────┐
-│ pending                    │  still equals before│ applying                   │
+┌────────────────────────────┐  approve, what it   ┌────────────────────────────┐
+│ pending                    │  read is unchanged  │ applying                   │
 │                            │────────────────────▶│ intent persisted           │
-└──────┬──────────────┬──────┘                     └─────────────┬──────────────┘
-       │ decline      │ snapshot changed                         │ recover
-       │              ▼                                          ▼
-       │   ┌────────────────────────────┐          ┌────────────────────────────┐
-       │   │ error: stale               │          │ 1 write D1, unless it      │
-       │   │ stays pending              │          │   already matches after    │
-       │   └────────────────────────────┘          │ 2 notify subscribers       │
-       │                                           │   change:<id> (put only)   │
-       │                                           │ 3 publish entity.created / │
-       │                                           │   updated / deleted        │
-       │                                           └─────────────┬──────────────┘
-       ▼                                                         ▼
+└──┬────────┬────────────────┘                     └─────────────┬──────────────┘
+   │        │ changed since          ▲ write refused             │ settle
+   │        ▼                        │ (person's)                ▼
+   │ ┌────────────────────────────┐  │             ┌────────────────────────────┐
+   │ │ error: stale               │  └─────────────│ landed already? the change │
+   │ │ stays pending              │                │   at its revision has this │
+   │ └────────────────────────────┘                │   changeId: done           │
+   │ decline                                       │ else write with expectedRev│
+   │                                               │   and meta                 │
+   │                                               └─────────────┬──────────────┘
+   ▼                                                             ▼
 ┌────────────────────────────┐                     ┌────────────────────────────┐
 │ terminal: cancelled        │                     │ terminal: applied          │
 └────────────────────────────┘                     └────────────────────────────┘
 ```
 
-Preparation uses production validation against a memory snapshot of the whole catalog, then stores the exact action and consequences. The snapshot includes every type, entity, template, role and subscription, plus each automation's saved trigger and template uses. Approval checks that the snapshot is still current, so even an unrelated edit, or saving an automation, can make a proposal stale.
+Preparation checks the action as its write will, and reads only what it touches: for an entity, its data, revision, type and watchers; for a type, the type; for a template, the template and each automation's template uses. Approval checks that these are unchanged. An entity write then goes to entity-store as `upsertEntity` or `deleteEntity` with the reviewed revision as `expectedRev` (0 for a new entity), so a write that loses a race to another writer fails there instead of overwriting.
 
-D1 data and proposal storage cannot share a transaction. Persisted applying intents, original/expected-state checks, and terminal receipts let recovery continue known writes and block conflicts. Recovery is lazy: the next `prepare` or approval finishes any proposal left applying. A write that finds data matching neither snapshot is a conflict and blocks further changes until resolved.
+entity-store and proposal storage cannot share a transaction. Every write carries the proposal's ID in `meta.changeId`, and a write can only land at the revision after the one it expects, so recovery reads the change at that revision: if it carries this proposal's ID the write landed, otherwise it didn't. Recovery is lazy: the next `prepare` or approval settles any proposal left applying. A person's approved change that can no longer apply goes back to pending with the reason and writes nothing; it holds no other change back. An authorized `entity.put` command is checked again against the newer data, since nobody reviewed a particular version; one entity-store refuses, such as a link to a missing entity, is settled as cancelled with the reason, and the event fails into the dead letters.
 
-Lifecycle events are published from the stored before/after snapshots, and the terminal receipt follows the queue's acceptance. A failed send leaves the intent recoverable under the same event ID. Notifications carry `change:<proposalId>` through [EntitySubscribers](src/entities/subscribers.ts) to deterministic run IDs, preventing a resumed approval from starting a duplicate run. One subscriber's failure does not stop the others.
+Confirmed writes no longer publish anything or start runs themselves; their receipt is `{ entity }` or `{ deleted }`. Lifecycle events and entity triggers follow from entity-store's change queue, keyed by the entity and revision, so a redelivered message, or a write recovered after a restart, starts nothing twice. Proposals stored before entity-store keep their receipts; one without a receipt must be prepared again.
 
 Role writes are direct rather than proposal-based. [Entity MCP](src/http/entity-mcp.ts) mutation tools return proposals, and its `decide_change` tool applies the person's decision. A client that passes a `requestId` can retry a mutation tool without preparing a second proposal.
 
@@ -520,10 +531,12 @@ Role writes are direct rather than proposal-based. [Entity MCP](src/http/entity-
 
 ```diagram
 ┌──────────────┐ ┌───────────────┐ ┌───────────────┐ ┌───────────────────────┐
-│ events.emit  │ │ POST          │ │ Change        │ │ Channels Worker       │
-│ action step  │ │ /api/events   │ │ coordinator   │ │ verify signature      │
+│ events.emit  │ │ POST          │ │ entity-store  │ │ Channels Worker       │
+│ action step  │ │ /api/events   │ │ change queue  │ │ verify signature      │
 │ action:<key> │ │ caller's ID   │ │ entity.*      │ │ ChannelMailbox DO     │
-│ depth + 1    │ │ depth 0       │ │ change:<id>   │ │ per thread, in order  │
+│ depth + 1    │ │ depth 0       │ │ entity:<id>:  │ │ per thread, in order  │
+│              │ │               │ │ <rev>, meta   │ │                       │
+│              │ │               │ │ .depth        │ │                       │
 └──────┬───────┘ └───────┬───────┘ └───────┬───────┘ └───────────┬───────────┘
        │                 │                 │                     │ slack.mention
        │                 │                 │                     │ .message
@@ -540,14 +553,14 @@ Role writes are direct rather than proposal-based. [Entity MCP](src/http/entity-
 ┌──────────────────────────────────┐          ┌──────────────────────────────────┐
 │ ChangeCoordinator.applyEvent     │          │ each automation in the directory │
 │ prepare as applying, approve     │          │ eventReceived                    │
-│ publishes entity.* back to the   │          │ receipt event:<id>               │
-│ queue · notifies subscribers     │          │ run ID event-<id>                │
+│ writes to entity-store at depth  │          │ receipt event:<id>               │
+│ + 1, whose change comes back     │          │ run ID event-<id>                │
 └──────────────────────────────────┘          └──────────────────────────────────┘
 ```
 
-Named events are an application capability in [`src/events/`](src/events/delivery.ts), hosted by a Cloudflare Queue. The private Api Worker consumes the queue. It applies `entity.put` through the tenant change coordinator, then fans every event out through `Automations.eventReceived`. Any failure retries the whole message, which receipts make safe.
+Named events are an application capability in [`src/events/`](src/events/delivery.ts), hosted by a Cloudflare Queue. The private Api Worker consumes the queue. It applies `entity.put` through the tenant change coordinator, then fans every event out through `Automations.eventReceived`. Any failure retries the whole message, which receipts make safe. The Api also consumes entity-store's change queue, with the same retries and dead letters, and publishes each change's lifecycle event to this one.
 
-Every source picks an event ID that is stable across its own retries, so redeliveries reach each automation's receipts and start nothing twice. `events.emit` is a normal permission-controlled action. Authorized `entity.put` commands persist their applying intent during preparation, so a restart before application cannot make the command stale. Event depth follows commands, lifecycle facts and entity-triggered runs, and stops publication at 16 hops. `events.emit` fails a step that would go past the limit, including an `entity.put` at depth 16, whose lifecycle fact could not be published. Delivery drops a command that can never apply, with a warning, rather than retrying it into the dead-letter queue. See [events and entity commands](docs/workflow-dsl.md#publishing-events-and-entity-commands) for authorization and delivery semantics.
+Every source picks an event ID that is stable across its own retries, so redeliveries reach each automation's receipts and start nothing twice. `events.emit` is a normal permission-controlled action. Authorized `entity.put` commands persist their applying intent during preparation, so a restart before application cannot make the command stale. Event depth follows commands, lifecycle facts and entity-triggered runs, and stops publication at 16 hops. A command's write carries its depth + 1 in entity-store's `meta`; the change consumer publishes the lifecycle fact at that depth and gives runs it starts the fact as their origin, so the count survives the round trip. A write made outside automations starts a chain at 0. `events.emit` fails a step that would go past the limit, including an `entity.put` at depth 16, whose lifecycle fact could not be published. Delivery drops a command that can never apply, with a warning, rather than retrying it into the dead-letter queue. See [events and entity commands](docs/workflow-dsl.md#publishing-events-and-entity-commands) for authorization and delivery semantics.
 
 Each Slack thread gets a `ChannelMailbox` Durable Object that stores its events and runs them in order from its alarm, with retries. [Its callbacks](src/channels/slack.ts) only publish `slack.mention`, `slack.message`, and `slack.reaction` under IDs taken from Slack's. A mention also subscribes the mailbox to its thread. The mailbox never touches automations directly. Outgoing Slack messages are a separate path: the `slack.sendMessage` action posts through `SlackSender` when `SLACK_BOT_TOKEN` is set ([setup](docs/slack.md)). With the same sender, [opening a task](src/automation/task-notifications.ts) DMs the role's members or the assignee, linking to the run at the studio origin that `STUDIO_URL` sets or the latest save recorded.
 
@@ -560,10 +573,10 @@ An approval task's DM has **Approve** and **Reject** buttons. [The interactivity
 ## Catalogs and adapters keep validation consistent
 
 - [`src/workflow/model.ts`](src/workflow/model.ts) defines the pure workflow DSL, references, and conditions. [`catalog.ts`](src/workflow/catalog.ts) checks entity references, path ordering, operation inputs, template slots, and permissions.
-- [`src/entities/`](src/entities/store.ts) owns entity models, approved templates, roles, subscriptions, and shared storage validation. The memory store and D1 adapter use the same rules.
+- [`src/entities/`](src/entities/store.ts) owns entity models, approved templates, roles, subscriptions, the entity-store contract and type adapter, and automations' rules on top. The memory store runs the same store code over [an in-memory entity-store](src/entities/entity-store-fake.ts).
 - [`src/connections/registry.ts`](src/connections/registry.ts) describes operations without executing them. The planner, checker, and UI share it. [`runner.ts`](src/connections/runner.ts) executes those operations; [`slack.ts`](src/connections/slack.ts) posts to Slack with a bot token, and [`email.ts`](src/connections/email.ts) is the email sender's contract, which [the Cloudflare adapter](src/platform/cloudflare/email.ts) fills with Email Service.
 - [`src/ai/pi.ts`](src/ai/pi.ts) defines the `PiAgent` conversation contract and tools; [`trace.ts`](src/ai/trace.ts) defines traces. The Cloudflare implementation wraps Promise-based pi-ai and pi-durable in Effect and stores conversations in Durable Object SQLite. [`src/ai/classifier.ts`](src/ai/classifier.ts) defines the clef classifier that picks progress phrases and makes decide steps' decisions. [`workers-ai.ts`](src/platform/cloudflare/workers-ai.ts) selects the pi, classifier and naming models; evals reuse it.
-- [`src/http/entity-mcp.ts`](src/http/entity-mcp.ts) exposes the entity store over stateless MCP JSON-RPC. Handlers run within the request so they retain access to D1; the assistant uses application tools directly, not MCP.
+- [`src/http/entity-mcp.ts`](src/http/entity-mcp.ts) exposes the entity store over stateless MCP JSON-RPC. Handlers run within the request so they retain access to D1 and entity-store; the assistant uses application tools directly, not MCP.
 
 | Use                                 | Model                                                                       |
 | ----------------------------------- | --------------------------------------------------------------------------- |
@@ -590,6 +603,8 @@ Agent replies render Markdown tokens without setting raw HTML. Run results rende
 - Approval tasks record the role's members when opened and check the Access email, or the Slack email of whoever clicked in a DM, when answered. The private API trusts the Studio's identity header; local dev requests carry `DEV_USER_EMAIL` when it is set, and otherwise, like service-token requests, have no email restriction and share the `local` owner. JWT verification and the rest of the security boundary need production review.
 - `http.post` accepts only literal public HTTPS URLs without credentials. Both the catalog and connection runner enforce the URL boundary. It does not forward trace headers. Workflows must not contain secrets.
 - Steps that are declined or skipped record nothing. Dependent steps are skipped; catalog checks guarantee that referenced steps precede their readers on every path.
+- automations' entity rules (snake_case names, role members who are employees with an email, the dependencies that block deleting a type) hold for writes made through automations. A write made in entity-store directly passes only entity-store's own checks, though it still reaches automations through the change queue.
+- entity-store delivers changes at least once and in no set order. A trigger compares the change's own before and after, and run IDs come from the entity and revision, so neither duplicates nor reordering start extra runs; a trigger's condition that reads through a ref sees the referenced entity as it is at delivery.
 - Calendar and `notify: "email"` send nothing in the prototype. Email sends through Cloudflare Email Service only when `EMAIL_FROM` is set ([setup](docs/email.md)), and Slack posts, including task DMs, only when `SLACK_BOT_TOKEN` is set. Neither takes an idempotency key, so a retried step can send twice. A task DM records each recipient before and after posting, and looks for its own key in the DM before posting again. HTTP requests are real.
 
 Application tests use memory implementations and scripted models. UI Story and Scene tests exercise state transitions and accessible views. Native Worker behavior requires local end-to-end checks, and real-model evals measure prompt behavior that scripted tests cannot. See [the development guide](docs/development.md#evals) for commands.

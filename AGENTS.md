@@ -7,7 +7,7 @@ A single-tenant prototype on Cloudflare: you design sequential automations in a 
 Most modules open with a comment saying what they own.
 
 - `alchemy.run.ts`: re-exports `src/platform/cloudflare/stack.ts`: the `Studio` website with Access and the test service token, and `StudioEnv`.
-- `src/platform/cloudflare/`: every Cloudflare implementation: the private `Api` Worker (`api.ts`), the `AutomationAgent`, `StudioAssistant` and `ChangeCoordinator` Durable Objects, the D1 adapters, Workers AI models (`workers-ai.ts`), pi (`pi.ts`, `pi-storage.ts`), the events and Slack actions queues, the Email Service sender (`email.ts`), the Slack `Channels` Worker, and the Studio Worker's entry (`edge.ts`).
+- `src/platform/cloudflare/`: every Cloudflare implementation: the private `Api` Worker (`api.ts`), the `AutomationAgent`, `StudioAssistant` and `ChangeCoordinator` Durable Objects, the entity-store binding and its change queue (`entity-store.ts`), the D1 adapters, Workers AI models (`workers-ai.ts`), pi (`pi.ts`, `pi-storage.ts`), the events and Slack actions queues, the Email Service sender (`email.ts`), the Slack `Channels` Worker, and the Studio Worker's entry (`edge.ts`).
 - `src/http/`: platform-independent routes, composed in `api.ts`: automations and the overview, entities, roles and templates (`catalog.ts`), changes, events, the assistant, dictation (`transcription.ts`), and entity MCP (`entity-mcp.ts`). `response.ts` shares boundary decoding and responses.
 - `src/automation/`: one automation. `application.ts` joins `design-session.ts` (chat, pending replies, drafts) and `runs.ts` (runs, tasks, triggers), which share `workflow-store.ts` (snapshots and save) and `run-store.ts` (run records). `host.ts` is its storage and jobs contract, `service.ts` addresses an automation, and `index.ts` is the D1 directory.
 - `src/agents/planner/`, `src/automation/planning.ts`: the planner: its instructions and `planDraft` (`planner.ts`), the working copy (`plan.ts`) its tools (`tools.ts`) edit, progress phrases, and the stored working copy and questions (`planning.ts`).
@@ -15,7 +15,7 @@ Most modules open with a comment saying what they own.
 - `src/assistant/`: the studio-wide assistant (the studio agent): one session per thread (`session.ts`), its receipts (`ledger.ts`), and the per-person thread directory (`threads.ts`).
 - `src/changes/`: confirmed changes to entities, types and templates.
 - `src/workflow/`: the pure DSL (`model.ts`), the catalog checker (`catalog.ts`), schedules, the run record (`run.ts`), interpreter values (`execution.ts`), the interpreter, the durable engine, and agent-step prompts (`agent-step.ts`).
-- `src/entities/`: entity types and records, templates (`templates.ts`), roles, the `EntityStore` service with its memory layer, and `EntitySubscribers`.
+- `src/entities/`: entity types and records, templates (`templates.ts`), roles, the `EntityStore` service (`store.ts`) with its memory layer (`memory.ts`), and `EntitySubscribers`. entity-store's RPC contract (`entity-store-api.ts`), the type and role adapter (`entity-store-types.ts`), an in-memory entity-store (`entity-store-fake.ts`), the `meta` automations writes (`write-meta.ts`), and the consumer of entity-store's change queue (`change-feed.ts`).
 - `src/connections/`: the pure operation registry (`registry.ts`), shared by the planner, the checker and the UI, and the runner that executes operations.
 - `src/events/`, `src/channels/slack.ts`: named events and their delivery, and Slack ingress.
 - `src/channels/slack-interactivity.ts`, `src/channels/slack-approvals.ts`: Approve and Reject buttons on approval DMs, from the signed click to the decision and the updated message.
@@ -25,15 +25,16 @@ Most modules open with a comment saying what they own.
 - `evals/`: evals of every LLM call against the real models: the tests in `<name>.eval.ts`, and their cases in `datasets/<name>.yaml`. See `docs/development.md#evals`.
 - `demo/`: `mise run demo:reset`, which brings a local studio to the live demo's state through the HTTP API, with its seed (`seed.ts`) and fallback workflow (`onboarding.json`). See `docs/development.md#live-demo`. Keep the seed's type and templates in step with the migrations; `demo/seed.test.ts` checks them.
 - `migrations/`: D1 migrations, applied in numeric order on deploy and under `alchemy dev`.
+- `scripts/`: the data migration to entity-store (`entity-store-migration/`, not run by anything) and `link-entity-store.ts`, which `mise run dev` runs first.
 
 ## Boundaries
 
 - Domain code must not import `src/platform/cloudflare/`, Alchemy, Cloudflare SDKs, or their native globals. `src/platform/boundary.test.ts` checks this.
 - HTTP handlers use `Automations` and `RequestIdentity`, never a Durable Object namespace or Access headers. They decode, call one application operation, and encode; they must not repeat writes the operation owns, such as save's.
-- Code that reads or writes entities depends on `EntityStore`, never on D1. Yield `EntityStoreD1` and `AutomationIndexD1` in the outer Effect, since they bind D1, and provide the layers they return per request or per instance, since they need a `RuntimeContext`.
+- Code that reads or writes entities depends on `EntityStore`, never on D1 or entity-store's binding. Yield `EntityStoreLive` and `AutomationIndexD1` in the outer Effect, since they bind D1 and entity-store, and provide the layers they return per request or per instance, since they need a `RuntimeContext`.
 - `src/platform/cloudflare/workers-ai.ts` imports no Alchemy, so the evals reuse it.
 - `src/platform/cloudflare/edge.ts` only forwards `/api/*` to `Api`. Keep logic out of it.
-- Entity MCP handlers run inside the request, over its `EntityStore` and `Changes`. Don't switch to Effect's `McpServer`: it keeps sessions in memory and runs handlers on a fiber outside the request, where D1 can't be reached.
+- Entity MCP handlers run inside the request, over its `EntityStore` and `Changes`. Don't switch to Effect's `McpServer`: it keeps sessions in memory and runs handlers on a fiber outside the request, where D1 and entity-store can't be reached.
 - pi tools are one extension that only the root conversation selects, so agent steps never see them. Build them before opening pi, so an answer resumed after a restart still has them.
 
 ## Design sessions and the planner
@@ -48,23 +49,33 @@ Most modules open with a comment saying what they own.
 - Progress phrases are read by non-technical users. Keep them plain, and never let them reveal the retry or show the agent's raw reasoning.
 - Creation never fails on naming: the namer falls back to the description's opening words. If the first message can't be sent, the automation stays listed and the response has no `pendingChat`.
 
+## entity-store
+
+- entity-store (a separate repo and Alchemy stack) is the system of record for entity types, entities and roles. automations keeps templates and `entity_subscriptions` in D1. Its `entity_types`, `entities` and `roles` tables are unused but stay until the data migration has run everywhere: never read, write or drop them.
+- `EntityStoreRpc` in `src/entities/entity-store-api.ts` is a contract with entity-store; change it only together with entity-store. Decode every answer. Every method returns a `Result` and never throws for a domain error.
+- Roles are `role` entities (ID = role name, members link to `employee`s), and the `role` type is hidden from automations' types. Entity IDs are unique across types.
+- Saving a type from automations only adds or removes fields (`planTypeWrite`). Refuse a field whose kind changes rather than authoring a lens here.
+- The `meta` automations writes (`{ depth, sourceEventId?, changeId?, source? }`, at most 1 KB) is persisted in entity-store's change log. Keep it compatible.
+- Lifecycle events and entity triggers come only from the change feed: never publish `entity.*` or notify subscribers from a write path. Their key is `entity:<id>:<rev>`, so a redelivered message starts nothing twice. Writes with `meta.source: "migration"`, roles, and types automations can't use publish nothing.
+- An entity trigger ignores a change committed before its workflow's `savedAt`.
+
 ## The assistant and changes
 
 - The studio designs automations only through the assistant: the studio page has no chat, and **New automation** opens an assistant thread. `POST /api/automations` and `/chat` stay for API clients and the demo.
 - A thread is an assistant session. `assistant_threads` in D1 only lists them for the history view; the thread's object is the authority for its conversation and title, and directory writes never fail a turn.
 - Stopping ends the turn in storage before it aborts pi or stops a delegated planner (`stopChat`), so late work finds the turn over. Keep `updateTurn` for writes made while a turn runs, and never let `put` or `finish` reopen a receipt that has a result. A change the person already decided is settled, not dropped.
 - The assistant reads through `EntityStore`, writes only through `Changes`, and delegates drafts to `Automations.chat` with a stable request ID. It never saves or runs workflows. Its host commits storage and reply scheduling together, and its tools are installed before pi resumes.
-- There is one live `ChangeCoordinator` for the tenant. Never instantiate separate coordinators for different writers. D1 and proposal storage cannot share a transaction, so recovery checks original and expected state and blocks conflicting writes.
+- There is one live `ChangeCoordinator` for the tenant. Never instantiate separate coordinators for different writers. entity-store and proposal storage cannot share a transaction, so every entity write from `Changes` is conditioned on the reviewed revision (`expectedRev`, 0 for a new entity) and carries the proposal's ID in `meta.changeId`; recovery reads the change at the write's revision to tell whether it landed. Never write an entity unconditionally from `Changes`. A proposal reads only what its action touches; never snapshot the whole store.
 - Entity, type and template writes over HTTP go through `/api/changes` and `/api/changes/:id/decision`. MCP mutation tools return proposals, and `decide_change` applies the person's decision. Role writes are direct.
-- Entity notifications carry `change:<proposalId>` through every adapter to deterministic run IDs.
+- Entity notifications carry `entity:<id>:<rev>` from the change feed through every adapter to deterministic run IDs.
 - Questions and action confirmations are separate. Never treat free text as approval.
 
 ## Runs and events
 
 - Only the durable engine owns the replay journal. Never seed interpreter working values from a run record. `RunId` and `ExecutionId` are distinct branded strings; decode them without changing their wire values.
 - The interpreter reaches the outside world only through `StepRunner`. Its code outside an Activity reruns on every replay, so keep it deterministic. The engine never keeps a run in memory between events.
-- `events.emit` is a permission-controlled operation. `entity.put` writes through the tenant `ChangeCoordinator`, not a separate writer. Confirmed entity writes publish `entity.created`, `entity.updated` and `entity.deleted` before the terminal receipt, so recovery retries the same event ID.
-- Event chains stop at depth 16, counting entity-triggered runs too.
+- `events.emit` is a permission-controlled operation. `entity.put` writes through the tenant `ChangeCoordinator`, not a separate writer. The Api's consumer of entity-store's change queue publishes `entity.created`, `entity.updated` and `entity.deleted` as `entity:<id>:<rev>`.
+- Event chains stop at depth 16, counting entity-triggered runs too. A command's write carries its depth in `meta.depth`, and the change feed publishes at that depth, so the count survives entity-store.
 - Each automation keeps matched and ignored event receipts, and recovers a run committed before its receipt instead of starting another.
 - Slack ingress callbacks write nothing to Slack and must stay replay-safe. Only they may publish `slack.*`. Keep `docs/slack.md` in step with `docs/slack-app-manifest.json`. The channels `namespace` (`automations`) and mailbox storage are persisted contracts.
 - A Slack button click is only verified and queued on `Channels`; the `Api` decides it off the `SlackActions` queue through `Automation.respond`. Never call `respond` for a click without the clicker's Slack email, and keep deciding idempotent: a repeated click redraws the task's recorded `decision`. The action IDs (`task.approve`, `task.reject`) and the button value (`{ automation, run, step }`) are persisted in sent messages.
@@ -129,8 +140,9 @@ Stick to these `GET` routes unless the user asks for more. `chat` calls Workers 
   - Callback names and payloads are persisted contracts. Keep them compatible: `planReply` `{ automationId, chatId }`, `advance` `{ executionId }`, `clock` `{ executionId, deferredName }`, and `tick` `{ at }` under the job ID `schedule`, and the assistant's `assistantReply` `{ turnId }`.
   - A timed trigger's (`schedule` or `date`) `tick` starts each occurrence's runs under IDs fixed by its time and subject (`scheduled-<at>`, `scheduled-<at>-<entity id>`), so a redelivery finds them instead of starting them again, then books the next occurrence. A date trigger ticks daily at its time. Saving books or cancels the tick in the same transaction as the snapshot.
   - An occurrence never starts only some of its runs: past `MAX_SCHEDULED_RUNS` it starts none and records a failed `scheduled-<at>` run saying why, and save refuses a trigger that already matches more. Keep it that way; don't trim the list.
-- Storage keys are persisted contracts too: `draft`, `saved`, `pendingChat`, `plan` (the planner's working copy for one chat ID, with each `ask_question` call's questions and answer by call ID), `run:<id>`, `studio` (the automation's ID and the studio origin its latest save came from, for task links), `execution:<executionId>` (its run ID), `event:<eventId>` (`{runId}` receipt, with `runId: null` when ignored), `exchange:<000000>`, and `exchangeCount` in `Automation`, `identity`, `assistant` and `tool:<callId>` in `StudioAssistant`, plus the engine's journal under `wf:<executionId>:` (see `src/workflow/durable-engine.ts`). Event runs use `event-<eventId>` and retain the optional original event in their run and execution payloads. A stored value that doesn't decode is a defect, not missing data.
+- Storage keys are persisted contracts too: `draft`, `saved`, `pendingChat`, `plan` (the planner's working copy for one chat ID, with each `ask_question` call's questions and answer by call ID), `run:<id>`, `savedAt` (when `saved` was saved), `studio` (the automation's ID and the studio origin its latest save came from, for task links), `execution:<executionId>` (its run ID), `event:<eventId>` (`{runId}` receipt, with `runId: null` when ignored), `exchange:<000000>`, and `exchangeCount` in `Automation`, `identity`, `assistant` and `tool:<callId>` in `StudioAssistant`, `sequence` and `proposal:<id>` in `ChangeCoordinator` (`version: 2` records; older ones keep only their receipts), plus the engine's journal under `wf:<executionId>:` (see `src/workflow/durable-engine.ts`). Event runs use `event-<eventId>` and retain the optional original event in their run and execution payloads. A stored value that doesn't decode is a defect, not missing data.
 - Activity and deferred names in `src/workflow/interpreter.ts` (`<id>`, `<id>/refs`, `<id>/now`, `<id>/request`, `<id>/outcome`, `<id>/timeout`, `<id>/approval-request`, `<id>/approval`) are journal keys for runs in flight. Renaming one makes a waiting run redo that step.
+- entity-store's Api Worker and change queue are Alchemy refs to the constant stack `entity-store` with no stage (the current one): the queue ref must build the same env key at plan time and cold start. Alchemy's typed service bindings don't take another stack's Worker, so `EntityStoreRpcBinding` registers the raw `service` binding with `entrypoint: "EntityStoreRpc"`. Under `alchemy dev`, refs read entity-store's state through the link `mise run dev:entity-store` makes, and the Api consumes a local queue of the same name, since a ref can't reach another process's dev queue.
 - Never edit an applied D1 migration. Add the next numbered file in `migrations/` instead; Alchemy tracks applied files by hash in `__alchemy_migrations`.
 
 ## Invariants
@@ -152,7 +164,7 @@ Stick to these `GET` routes unless the user asks for more. `chat` calls Workers 
 ## Deploy and dependencies
 
 - Never run `alchemy deploy`, `alchemy destroy`, or `alchemy dev --stage <deployed stage>` unless asked.
-- `alchemy dev` runs locally on stage `dev_$USER`, skips Access, and still needs a Cloudflare profile for Workers AI. Its state lives in the checkout's `.alchemy/state` beside the local data, so each worktree migrates its own database. Deploys use the Cloudflare state store.
+- `alchemy dev` runs locally on stage `dev_$USER`, skips Access, and still needs a Cloudflare profile for Workers AI, and entity-store's `alchemy dev` running on the same stage with `ENTITY_STORE_DIR` set (`docs/development.md#running-entity-store-alongside`). Its state lives in the checkout's `.alchemy/state` beside the local data, so each worktree migrates its own database. Deploys use the Cloudflare state store.
 - Never commit `.alchemy/` or Access service-token secrets.
 - Install dependencies with the mise-pinned bun (`mise exec -- bun`); an older bun rewrites the lockfile.
 - Foldkit, `@foldkit/*`, Vite, and `@effect/platform-*` are pinned exactly on purpose. To upgrade Foldkit, follow `src/ui/AGENTS.md`.

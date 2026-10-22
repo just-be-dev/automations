@@ -243,7 +243,7 @@ Answering stores the answer and schedules `planReply` in one transaction, then w
 
 ### Saving fixes what runs
 
-[`save`](../src/automation/workflow-store.ts) checks the draft and refuses a timed trigger that already matches more than 50 subjects. It stores `saved`, the studio link (`studio`: the automation's ID and the studio origin the save came from, keeping the earlier origin when the save names none), and books or cancels the `tick` job in one transaction, subscribes the automation to its trigger's entity type, then updates the directory, best effort. Runs read only `saved`.
+[`save`](../src/automation/workflow-store.ts) checks the draft and refuses a timed trigger that already matches more than 50 subjects. It stores `saved`, when it was saved (`savedAt`), the studio link (`studio`: the automation's ID and the studio origin the save came from, keeping the earlier origin when the save names none), and books or cancels the `tick` job in one transaction, subscribes the automation to its trigger's entity type, then updates the directory, best effort. Runs read only `saved`.
 
 ### AutomationAgent supplies storage, jobs, and models
 
@@ -252,7 +252,7 @@ Answering stores the answer and schedules `planReply` in one transaction, then w
 │ AutomationAgent · src/platform/cloudflare/automation.ts          │
 │                                                                  │
 │ Outer Effect, at plan time and cold start                        │
-│   DurableObjectState · Workers AI · EntityStoreD1 ·              │
+│   DurableObjectState · Workers AI · EntityStoreLive ·            │
 │   AutomationIndexD1 · EventsQueue · SLACK_BOT_TOKEN ·            │
 │   STUDIO_URL · ALCHEMY_DEV, read only on a dev_ stage ·          │
 │   EMAIL_FROM, EMAIL_FROM_NAME → send_email binding (remote)      │
@@ -282,8 +282,8 @@ Answering stores the answer and schedules `planReply` in one transaction, then w
 ```diagram
 ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐
 │ start           │ │ entityChanged   │ │ eventReceived   │ │ tick {at}       │
-│ POST /:id/start │ │ a confirmed     │ │ Events queue;   │ │ schedule or     │
-│ any trigger;    │ │ entity write    │ │ Api fans out to │ │ date trigger;   │
+│ POST /:id/start │ │ entity-store's  │ │ Events queue;   │ │ schedule or     │
+│ any trigger;    │ │ change queue,   │ │ Api fans out to │ │ date trigger;   │
 │ event data given│ │ via subscribers │ │ every automation│ │ subjects.due    │
 │ id: UUID        │ │ id: entity-<key>│ │ id: event-<id>  │ │ id: scheduled-… │
 └────────┬────────┘ └────────┬────────┘ └────────┬────────┘ └────────┬────────┘
@@ -307,7 +307,7 @@ Answering stores the answer and schedules `planReply` in one transaction, then w
 ```
 
 - `start` serves the Run button. For an event trigger it builds an unpublished event with a fresh ID and requires `when` to hold.
-- `entityChanged` starts a run only for an entity trigger, when the entity is new or a watched field changed, and `when` holds. A confirmed change passes the key `change:<proposalId>`, so the run ID is `entity-change:<proposalId>` and a retried or recovered change finds its run instead of starting another; without a key it is a UUID.
+- `entityChanged` starts a run only for an entity trigger, when the entity is new or a watched field changed, and `when` holds. [The change feed](../src/entities/change-feed.ts) passes the key `entity:<id>:<rev>`, so the run ID is `entity-entity:<id>:<rev>` and a redelivered change finds its run instead of starting another; without a key it is a UUID. It also passes when the change committed, and a change committed before the workflow's `savedAt` starts nothing. A change from an event chain passes its lifecycle event as the run's origin, at the depth its write carried.
 - `tick` starts each due subject's run under `scheduled-<at>` or `scheduled-<at>-<entity id>`, then books the next occurrence. More than 50 due subjects start none and record one failed run.
 - [`beginRun`](../src/automation/runs.ts) derives the `ExecutionId` from the payload (`RunAutomation.executionId`, keyed by run ID). The payload carries the expanded workflow, so template edits never reach a run in flight.
 
@@ -315,8 +315,8 @@ Answering stores the answer and schedules `planReply` in one transaction, then w
 
 ```diagram
 ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-│ events.emit step │  │ confirmed entity │  │ Slack webhook    │
-│ POST /api/events │  │ write: entity.*  │  │ ChannelMailbox   │
+│ events.emit step │  │ entity-store     │  │ Slack webhook    │
+│ POST /api/events │  │ change: entity.* │  │ ChannelMailbox   │
 └────────┬─────────┘  └────────┬─────────┘  └────────┬─────────┘
          └─────────────────────┼─────────────────────┘
                                ▼

@@ -160,7 +160,7 @@ The planner can check its working copy with `check_workflow` while it works. Whe
 
 Starts a run when an entity of that type is created, or when one of `fields` changes. If `fields` is omitted, any field counts. `when` is optional and must hold for the new version. The entity becomes the run's subject, and refs to it start with its type: `employee.…`.
 
-Saving the automation subscribes it to the type in the entity store. Confirmed entity writes ask each subscribed automation whether its trigger matches. Every trigger that names an entity type (`entity`, `schedule` and `date` with their `entity`, and `manual` and `event` with their `subject`) subscribes to it, so the type can't be deleted while a saved automation uses it; only entity triggers start runs through these direct notifications.
+Saving the automation subscribes it to the type in the entity store. Every committed write to an entity of that type, whoever makes it, reaches each subscribed automation through entity-store's change queue, which asks whether its trigger matches. It arrives shortly after the write, at least once and in no set order; the run's ID comes from the entity and its revision, so a redelivered change starts nothing twice. A change committed before the workflow was saved starts nothing. Every trigger that names an entity type (`entity`, `schedule` and `date` with their `entity`, and `manual` and `event` with their `subject`) subscribes to it, so the type can't be deleted while a saved automation uses it; only entity triggers start runs through these direct notifications.
 
 ### `event`
 
@@ -178,7 +178,7 @@ The Run button also starts it by hand, which needs event data and, when the trig
 
 Every event has `{id, name, data, subject?, depth}`. `data` is any JSON value. Runs retain the original event and subject snapshots across replay. Each automation remembers both started and ignored event IDs, so redelivery does not re-evaluate a previously delivered event against a newer workflow. Delivery is asynchronous and at least once, not ordered; it matches the saved workflow present on first delivery.
 
-Confirmed entity writes publish `entity.created`, `entity.updated`, or `entity.deleted`, with `data: {before, after}` (the old/new entity data, or `null`) and the entity snapshot as `subject`. Deletion carries the last snapshot. Only the shared entity writer can publish these facts. Use `entity.created` for creation-only workflows, or `entity.deleted` for removal workflows; the existing `entity` trigger continues to watch creations and updates.
+Every committed entity write publishes `entity.created`, `entity.updated`, or `entity.deleted` as `entity:<id>:<rev>`, with `data: {before, after}` (the old/new entity data, or `null`) and the entity snapshot as `subject`. Deletion carries the last snapshot. That includes writes made in entity-store directly, but not roles or the data migration's writes. Only automations' consumer of entity-store's change queue can publish these facts. Use `entity.created` for creation-only workflows, or `entity.deleted` for removal workflows; the existing `entity` trigger continues to watch creations and updates.
 
 When Slack is configured ([setup](slack.md)), Slack activity arrives as events too. Only the Slack integration can publish `slack.*` names.
 
@@ -243,7 +243,7 @@ Started from the studio or `POST /api/automations/:id/start`. With `subject`, th
 
 ## Entities
 
-An entity type has a `name` and `label`, a `title` field that names an entity when it's shown as text, and fields. A person is an entity whose type has a text field named `email`. Field types are `text`, `number`, `boolean`, `date` (`YYYY-MM-DD`), `datetime`, and `ref`, which holds another entity's ID and names its type in `to`:
+Entity types and entities live in entity-store, which automations reaches over a service binding ([architecture](../ARCHITECTURE.md#entity-store-is-the-system-of-record-for-entities)). An entity type has a `name` and `label`, a `title` field that names an entity when it's shown as text, and fields. A person is an entity whose type has a text field named `email`. Field types are `text`, `number`, `boolean`, `date` (`YYYY-MM-DD`), `datetime`, and `ref`, which holds another entity's ID and names its type in `to`:
 
 ```json
 {
@@ -260,7 +260,9 @@ An entity type has a `name` and `label`, a `title` field that names an entity wh
 }
 ```
 
-`migrations/0002_entities.sql` creates this type and two employees: `grace`, and `ada`, who reports to Grace and has no start date yet.
+The [demo reset](development.md#live-demo) creates this type and its people. An entity's ID is unique across every type, and IDs may contain letters, digits, `_`, `.`, `@` and `-`, so `ada@example.com` works.
+
+automations reads each type at its latest version in entity-store: a `string` is text, or a date or datetime by its format; an `enum` is text; a `link` is a ref; and `nullable` is what it holds. Fields automations can't see into (`array`, `object`, `json`) and names that aren't snake_case are left out: refs and checks can't reach them, and writes leave them as they are. Saving a type from automations adds a version that adds and removes fields; stored entities keep their data and are read in the new version. Changing a field's type is refused here: make that change in entity-store, where a lens can convert stored values.
 
 | Endpoint                         | Purpose                                                                                                          |
 | -------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -270,11 +272,11 @@ An entity type has a `name` and `label`, a `title` field that names an entity wh
 | `POST /api/changes`              | Prepare a change: `{ "action": { "kind": "putType", "type": … } }`, `deleteType`, `putEntity`, or `deleteEntity` |
 | `POST /api/changes/:id/decision` | Confirm or cancel the prepared change with `{ "approved": true }` or `false`                                     |
 
-Entity writes are proposals: preparing one writes nothing, and confirming it applies it. `putEntity` (`{ "kind": "putEntity", "type", "id", "data" }`) merges `data` over the entity, checks it against its type, and starts the runs its change triggers. The assistant and the MCP server propose changes the same way.
+Entity writes are proposals: preparing one writes nothing, and confirming it applies it. `putEntity` (`{ "kind": "putEntity", "type", "id", "data" }`) merges `data` over the entity (`null` clears a field) and checks it against its type. Confirming writes it only if the entity is still at the revision you reviewed; otherwise it fails as stale and writes nothing. The runs the change triggers start shortly after, from entity-store's change queue, so the decision's result is the entity, not its runs. The assistant and the MCP server propose changes the same way.
 
 ### Roles
 
-A role is a named group of people who approve the operations a workflow [asks first](#permissions) about. Its members are entities with an `email` field, by type and ID:
+A role is a named group of people who approve the operations a workflow [asks first](#permissions) about. Its members are employees with an email, by type and ID. entity-store keeps each role as an entity of type `role`, whose ID is the role's name:
 
 ```json
 {
@@ -284,9 +286,9 @@ A role is a named group of people who approve the operations a workflow [asks fi
 }
 ```
 
-`migrations/0004_roles.sql` creates this role. `GET /api/roles` lists roles, `DELETE /api/roles/:name` deletes one, and `PUT /api/roles/:name` creates or replaces one once every member exists and has an email: its type has a text field named `email`, and it's set. The MCP server's `list_roles` and `define_role` tools do the same.
+The demo reset creates this role. `GET /api/roles` lists roles, `DELETE /api/roles/:name` deletes one, and `PUT /api/roles/:name` creates or replaces one once every member is a stored employee with an email. The MCP server's `list_roles` and `define_role` tools do the same.
 
-The store keeps members able to approve. It refuses to delete an entity a role lists, to clear a member's email, to redefine a member's type without an `email` field, and to delete a type a role has members of. Take the member out of the role first. An approval task already open keeps the members it was opened with.
+The store keeps members able to approve. It refuses to delete an entity a role lists (entity-store refuses too, since the role links to it), to clear a member's email, to redefine `employee` without an `email` field, and to delete a type a role has members of. Take the member out of the role first. An approval task already open keeps the members it was opened with.
 
 ## Refs
 
@@ -475,9 +477,9 @@ The built-in command `entity.put` merges a validated update through the same ten
 }
 ```
 
-Permission to emit this command **authorizes the entity write**, with no second confirmation. Use an ask-first role unless automatic writes were explicitly authorized. Unknown types, invalid fields and role-member constraints still fail validation. Duplicate delivery returns the existing receipt instead of overwriting a newer edit. Lifecycle names cannot be emitted by actions or HTTP callers.
+Permission to emit this command **authorizes the entity write**, with no second confirmation. Use an ask-first role unless automatic writes were explicitly authorized. Unknown types, invalid fields and role-member constraints still fail validation. Duplicate delivery returns the existing receipt instead of overwriting a newer edit. A command that finds the entity changed since it was prepared is checked again against the newer data, since nobody reviewed a particular version; one entity-store refuses fails into the dead letters. Lifecycle names cannot be emitted by actions or HTTP callers.
 
-Event chains carry a depth from 0 to 16. Publication increments it; an entity command's resulting fact and entity-triggered runs also increment it. At depth 16, runs may finish but cannot emit again, and entity commands are refused: an `events.emit` step that would publish past the limit, or an `entity.put` at depth 16, fails with "Event chain limit reached". Delivery failures retry and eventually enter a dead-letter queue, but a command that can never apply is dropped with a warning instead. The depth bound stops cycles, not all possible fan-out.
+Event chains carry a depth from 0 to 16. Publication increments it; an entity command's resulting fact and entity-triggered runs also increment it. A command's write carries its depth in entity-store's `meta`, so the fact entity-store's change queue brings back keeps it, and a write made in entity-store directly starts at 0. At depth 16, runs may finish but cannot emit again, and entity commands are refused: an `events.emit` step that would publish past the limit, or an `entity.put` at depth 16, fails with "Event chain limit reached". Delivery failures retry and eventually enter a dead-letter queue, but a command that can never apply is dropped with a warning instead. The depth bound stops cycles, not all possible fan-out.
 
 ### Permissions
 

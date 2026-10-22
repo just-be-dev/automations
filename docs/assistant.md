@@ -39,8 +39,8 @@ The studio assistant, shown as the studio agent, is a page-aware chat that reads
           ┌──────────────────────┬──────────┴───────────┬──────────────────────┐
           ▼                      ▼                      ▼                      ▼
 ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────┐  ┌───────────────────┐
-│ Workers AI        │  │ D1                │  │ AutomationAgent   │  │ ChangeCoordinator │
-│ PLANNER_MODEL     │  │ EntityStoreD1     │  │ per automation    │  │ one per tenant    │
+│ Workers AI        │  │ D1 · entity-store │  │ AutomationAgent   │  │ ChangeCoordinator │
+│ PLANNER_MODEL     │  │ EntityStoreLive   │  │ per automation    │  │ one per tenant    │
 │ NAMING_MODEL      │  │ AutomationIndexD1 │  │ planner + draft   │  │ name "studio"     │
 │                   │  │ AssistantThreadsD1│  │                   │  │                   │
 └───────────────────┘  └───────────────────┘  └───────────────────┘  └───────────────────┘
@@ -218,18 +218,19 @@ Receipts live in the object's storage, not in pi-durable, even though pi already
 │ stored receipt → return it                │
 │ applying → resume recovery                │
 │ cancel → terminal · cancelled             │
-│ snapshot ≠ before → stale ChangeError     │
+│ what it read changed → stale ChangeError  │
 │ otherwise write applying                  │
 └─────────────────────┬─────────────────────┘
                       │
                       ▼
 ┌───────────────────────────────────────────┐
-│ recover                                   │
-│ write EntityStore (D1)                    │
-│ putEntity → notify subscribers with       │
-│   key change:<proposalId>                 │
-│ entity writes → publish entity.*          │
+│ settle                                    │
+│ landed already? (changeId at its rev)     │
+│ else write entity-store with expectedRev  │
+│   and meta { depth, changeId }            │
 │ terminal receipt · applied                │
+│ entity.* and triggers follow from         │
+│   entity-store's change queue             │
 └─────────────────────┬─────────────────────┘
                       │ ChangeDecision
                       ▼
@@ -242,11 +243,11 @@ Receipts live in the object's storage, not in pi-durable, even though pi already
 
 `propose_change` calls `Changes.prepare(owner, action, "<sessionId>:<callId>")`. [`changesLayer`](../src/platform/cloudflare/changes.ts) routes every call to the one object named `studio`, the same one manual forms reach through [`/api/changes`](../src/http/changes.ts). A replayed call finds its proposal by owner and request ID; a different action under the same ID fails.
 
-[Preparation](../src/changes/application.ts) snapshots types, entities, templates, roles, subscriptions and each automation's template uses, applies the action with production validation to a memory store built from that snapshot, and stores `proposal:<id>` with both snapshots, the details and the consequences. The dry run writes nothing to D1, though preparation first finishes any earlier `applying` record. The panel shows the proposal with the same [`changeProposalView`](../src/ui/components/change-proposal.ts) as the manual change dialog.
+[Preparation](../src/changes/application.ts) checks the action as its write will and reads only what it touches: an entity's data, revision, type and watchers; a type; or a template and each automation's template uses. It stores `proposal:<id>` with what it read, the result it expects, the details and the consequences. It writes nothing to entity-store or D1, though preparation first settles any earlier `applying` record. The panel shows the proposal with the same [`changeProposalView`](../src/ui/components/change-proposal.ts) as the manual change dialog.
 
 `confirm` persists `approved` and schedules a reply before calling `Changes.decide`. If that call fails, the reply finds an approved receipt without a result and calls `decide` again; `decide` returns a stored receipt rather than applying twice.
 
-Approval compares a fresh snapshot with `before`, so even an unrelated edit makes the proposal stale. The coordinator writes `applying` before touching D1, then writes the entity store, notifies subscribers under `change:<proposalId>` for entity puts, publishes `entity.created`, `entity.updated` or `entity.deleted` for entity writes, and stores the terminal receipt. A later call resumes an `applying` record, or blocks changes when current data matches neither snapshot. Cancelling stores a terminal `cancelled` receipt; the instructions forbid the assistant to retry it.
+Approval reads the same things again, and fails as stale if any changed. The coordinator writes `applying` before touching entity-store, then writes the entity conditioned on the reviewed revision, with the proposal's ID in `meta`, and stores the terminal receipt. A later call resumes an `applying` record: it looks for the change at the revision the write makes, and if it carries the proposal's ID the write landed. A write entity-store refuses because the entity moved on puts a person's proposal back to pending, unwritten. The coordinator publishes nothing and starts no runs: `entity.created`, `entity.updated` or `entity.deleted`, and entity triggers, follow from entity-store's change queue. Cancelling stores a terminal `cancelled` receipt; the instructions forbid the assistant to retry it.
 
 ## Design is delegated to the automation's planner
 
