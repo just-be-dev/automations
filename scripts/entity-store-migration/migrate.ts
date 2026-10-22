@@ -9,32 +9,30 @@
  * deployed one sits behind Access, so set `ENTITY_STORE_ACCESS_CLIENT_ID` and
  * `ENTITY_STORE_ACCESS_CLIENT_SECRET` to its service token.
  *
- * Without `--apply` it prints what it would write, checks every entity write against the planned
- * types in an in-memory entity-store, lists every failure, and changes nothing. With `--apply` it
- * creates and versions the types, checks every entity write against entity-store itself
- * (`POST /api/types/:type/entities/:id/check`), and writes no entity unless all pass. Entities and
- * roles are only created (`expectedRev: 0`): one that already exists in entity-store is skipped and
- * listed, never overwritten, so running it again creates only what's missing. It stops at the
- * first failed write. automations' own tables are left as they are.
+ * It first looks up every entity and role ID on the target (`GET /api/entities/:id`). entity-store's
+ * IDs are unique across types, so an ID held there by another type, live or deleted, is a clash;
+ * one held by the same type already exists and is left as it is. Without `--apply` it lists
+ * clashes, entities that exist, the writes it would make, and every write the in-memory
+ * entity-store refuses against the planned types, and changes nothing. With `--apply`, any clash
+ * or refusal stops it before it creates or versions a single type, so it never leaves half a
+ * copy; then it creates and versions the types, checks every entity write against entity-store
+ * itself (`POST /api/types/:type/entities/:id/check`), and writes no entity unless all pass.
+ * Entities and roles are only created (`expectedRev: 0`), never overwritten, so running it again
+ * creates only what's missing. It stops at the first failed write. automations' own tables are
+ * left as they are. The migration itself is in `run.ts`.
  *
  * An export is `{ "entity_types": [{ "definition" }], "entities": [{ "type", "id", "data" }],
  * "roles": [{ "definition" }] }`, with `definition` and `data` as the JSON strings D1 holds.
  */
 import * as BunRuntime from "@effect/platform-bun/BunRuntime";
 import * as Config from "effect/Config";
-import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { messageOf } from "../../src/error.ts";
-import { TypeInfo, TypeSummary } from "../../src/entities/entity-store-api.ts";
 import { EntityData, EntityType, Role } from "../../src/entities/model.ts";
-import { checkLocally, describeStep, MIGRATION_META, planMigration, type Source } from "./plan.ts";
-
-class MigrationError extends Schema.TaggedError<MigrationError>()("MigrationError", {
-  message: Schema.String,
-}) {}
-const fail = (message: string) => new MigrationError({ message });
+import type { Source } from "./plan.ts";
+import { fail, migrate, Refusal, type Answer, type Target } from "./run.ts";
 
 const Rows = Schema.Struct({
   entity_types: Schema.Array(Schema.Struct({ definition: Schema.fromJsonString(EntityType) })),
@@ -125,7 +123,7 @@ const readSource = Effect.fn("Migration.readSource")(function* (source: string) 
   return toSource(yield* Schema.decodeEffect(Schema.fromJsonString(Rows))(text));
 });
 
-/** entity-store's HTTP API, failing with the `{ error, code }` it returns. */
+/** entity-store's HTTP API: its answer, or the `{ code, error }` it refuses with. */
 const makeTarget = Effect.fn("Migration.target")(function* (origin: string) {
   const clientId = yield* Config.option(Config.String("ENTITY_STORE_ACCESS_CLIENT_ID"));
   const clientSecret = yield* Config.option(Config.String("ENTITY_STORE_ACCESS_CLIENT_SECRET"));
@@ -136,167 +134,47 @@ const makeTarget = Effect.fn("Migration.target")(function* (origin: string) {
     })),
     Option.getOrElse(() => ({})),
   );
-  /** The answer, or `{ refused }` with entity-store's `{ code, error }` when it says no. */
-  const attempt = <A>(
-    method: string,
-    path: string,
-    schema: Schema.Codec<A, unknown>,
-    body?: unknown,
-  ) =>
-    fetchJson(`${method} ${path}`, new URL(path, origin).toString(), {
-      method,
-      headers: { ...access, ...(body === undefined ? {} : { "content-type": "application/json" }) },
-      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    }).pipe(
-      Effect.flatMap(({ ok, status, json }) =>
-        ok
-          ? Schema.decodeUnknownEffect(schema)(json).pipe(
-              Effect.map((value) => ({ value, refused: undefined })),
-              Effect.mapError((error) => fail(`${method} ${path} answered ${error.message}`)),
-            )
-          : Schema.decodeUnknownEffect(Refusal)(json).pipe(
-              Effect.map((refused) => ({ value: undefined, refused })),
-              Effect.mapError(() =>
-                fail(`${method} ${path} failed (${status}): ${JSON.stringify(json)}`),
+  const target: Target = {
+    attempt: <A>(method: string, path: string, schema: Schema.Codec<A, unknown>, body?: unknown) =>
+      fetchJson(`${method} ${path}`, new URL(path, origin).toString(), {
+        method,
+        headers: {
+          ...access,
+          ...(body === undefined ? {} : { "content-type": "application/json" }),
+        },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      }).pipe(
+        Effect.flatMap(({ ok, status, json }) =>
+          ok
+            ? Schema.decodeUnknownEffect(schema)(json).pipe(
+                Effect.map((value): Answer<A> => ({ value, refused: undefined })),
+                Effect.mapError((error) => fail(`${method} ${path} answered ${error.message}`)),
+              )
+            : Schema.decodeUnknownEffect(Refusal)(json).pipe(
+                Effect.map((refused): Answer<A> => ({ value: undefined, refused })),
+                Effect.mapError(() =>
+                  fail(`${method} ${path} failed (${status}): ${JSON.stringify(json)}`),
+                ),
               ),
-            ),
+        ),
       ),
-    );
-  const call = <A>(
-    method: string,
-    path: string,
-    schema: Schema.Codec<A, unknown>,
-    body?: unknown,
-  ) =>
-    attempt(method, path, schema, body).pipe(
-      Effect.flatMap(({ value, refused }) =>
-        refused === undefined
-          ? Effect.succeed(value as A)
-          : Effect.fail(fail(`${method} ${path} failed: ${refused.code}: ${refused.error}`)),
-      ),
-    );
-  return { attempt, call };
+  };
+  return target;
 });
-
-const Refusal = Schema.Struct({ code: Schema.String, error: Schema.String });
-const Created = Schema.Struct({ entity: Schema.Struct({ rev: Schema.Int }) });
-
-const entityPath = (type: string, id: string) =>
-  `/api/types/${type}/entities/${encodeURIComponent(id)}`;
 
 const program = Effect.gen(function* () {
   const source = argument("source");
   const target = argument("target");
-  const apply = process.argv.includes("--apply");
   if (source === undefined || target === undefined) {
     return yield* fail(
       "Usage: migrate.ts --source <export.json | d1:<account>/<database>> --target <entity-store URL> [--apply]",
     );
   }
-  const { attempt, call } = yield* makeTarget(target);
-  const rows = yield* readSource(source);
-  const { items } = yield* call(
-    "GET",
-    "/api/types",
-    Schema.Struct({ items: Schema.Array(TypeSummary) }),
+  yield* migrate(
+    yield* makeTarget(target),
+    yield* readSource(source),
+    process.argv.includes("--apply"),
   );
-  const existing = yield* Effect.forEach(items, (summary) =>
-    call("GET", `/api/types/${summary.name}`, TypeInfo),
-  );
-  const plan = planMigration(rows, existing);
-  yield* Console.log(
-    `${rows.types.length} types, ${rows.entities.length} entities and ${rows.roles.length} roles; ${plan.steps.length} writes.`,
-  );
-  for (const note of plan.notes) yield* Console.log(`  note: ${note}`);
-  if (plan.problems.length > 0) {
-    return yield* fail(`Fix these in automations first:\n  ${plan.problems.join("\n  ")}`);
-  }
-  const local = yield* Effect.promise(() => checkLocally(plan, existing));
-  if (local.length > 0) {
-    return yield* fail(
-      `entity-store would refuse these; fix them in automations first:\n  ${local.join("\n  ")}`,
-    );
-  }
-  if (!apply) {
-    for (const step of plan.steps) yield* Console.log(`would ${describeStep(step)}`);
-    return yield* Console.log("Dry run: nothing was written. Add --apply to write.");
-  }
-  const types = plan.steps.filter(
-    (step) => step.kind === "createType" || step.kind === "createVersion",
-  );
-  for (const step of types) {
-    yield* Console.log(describeStep(step));
-    if (step.kind === "createType") {
-      yield* call("POST", "/api/types", Schema.Unknown, step.input);
-    } else if (step.kind === "createVersion") {
-      yield* call("POST", `/api/types/${step.type}/versions`, Schema.Unknown, {
-        schema: step.schema,
-        lens: step.lens,
-        note: "Copied from automations",
-      });
-    }
-  }
-  // entity-store's own checks, before any entity is written. Refs are checked by the plan: their
-  // targets are created first.
-  const creates = plan.steps.flatMap((step) => (step.kind === "createEntity" ? [step] : []));
-  const refused = (yield* Effect.forEach(creates, (step) =>
-    attempt("POST", `${entityPath(step.type, step.id)}/check`, Schema.Unknown, {
-      patch: step.patch,
-    }).pipe(
-      Effect.map(({ refused }) =>
-        refused === undefined || refused.code === "EntityTypeMismatch"
-          ? []
-          : [`${describeStep(step)}: ${refused.error}`],
-      ),
-    ),
-  )).flat();
-  if (refused.length > 0) {
-    return yield* fail(
-      `entity-store refused these; no entity was written:\n  ${refused.join("\n  ")}`,
-    );
-  }
-  const created = new Map<string, number>();
-  const skipped: Array<string> = [];
-  for (const step of plan.steps) {
-    if (step.kind === "createEntity") {
-      const answer = yield* attempt("PUT", entityPath(step.type, step.id), Created, {
-        patch: step.patch,
-        expectedRev: 0,
-        meta: MIGRATION_META,
-      });
-      if (answer.refused === undefined) {
-        created.set(step.id, answer.value.entity.rev);
-        yield* Console.log(describeStep(step));
-      } else if (
-        answer.refused.code === "RevConflict" ||
-        answer.refused.code === "EntityTypeMismatch"
-      ) {
-        skipped.push(
-          answer.refused.code === "RevConflict"
-            ? `${step.type} ${step.id}`
-            : `${step.type} ${step.id}: the ID belongs to another type there`,
-        );
-      } else {
-        return yield* fail(
-          `${describeStep(step)} failed: ${answer.refused.code}: ${answer.refused.error}`,
-        );
-      }
-    } else if (step.kind === "linkEntity") {
-      const rev = created.get(step.id);
-      if (rev === undefined) continue;
-      const answer = yield* call("PUT", entityPath(step.type, step.id), Created, {
-        patch: step.patch,
-        expectedRev: rev,
-        meta: MIGRATION_META,
-      });
-      created.set(step.id, answer.entity.rev);
-      yield* Console.log(describeStep(step));
-    }
-  }
-  if (skipped.length > 0) {
-    yield* Console.log(`Already in entity-store, so left as they are:\n  ${skipped.join("\n  ")}`);
-  }
-  yield* Console.log("Done.");
 });
 
 program.pipe(BunRuntime.runMain);

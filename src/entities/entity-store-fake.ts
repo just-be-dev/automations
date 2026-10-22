@@ -513,8 +513,14 @@ export const makeFakeEntityStore = (
         ...(live.length > limit && last !== undefined ? { nextCursor: last.id } : {}),
       });
     },
-    getEntity: (id) => {
+    getEntity: (id, options) => {
       const row = rows.get(id);
+      if (row !== undefined && options?.rev !== undefined) {
+        const at = (revisions.get(id) ?? []).find((revision) => revision.rev === options.rev);
+        return at === undefined
+          ? err("RevisionNotFound", `${id} has no rev ${options.rev}`)
+          : ok({ ...entity(row), rev: at.rev, data: at.data });
+      }
       if (row === undefined) return err("EntityNotFound", `No entity ${id}`);
       if (row.data === null) return err("EntityDeleted", `${id} was deleted`, { rev: row.rev });
       return ok(entity(row));
