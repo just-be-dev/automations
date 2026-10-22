@@ -1,4 +1,4 @@
-/** Loads and changes entity types and records, returning any automation runs started by a record save. */
+/** Loads and changes entity types and records through confirmed proposals. */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import { Command, Http } from "foldkit";

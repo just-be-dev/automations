@@ -2,7 +2,6 @@
 import * as Schema from "effect/Schema";
 import { defineMessageUnion } from "foldkit/message";
 import { EntityRecord, EntityType, Subject } from "../../../entities.ts";
-import { Triggered } from "./model.ts";
 import * as Change from "../../change/index.ts";
 
 export const Message = defineMessageUnion({
@@ -36,7 +35,7 @@ export const Message = defineMessageUnion({
   FailedLoadEntities: { type: Schema.String, error: Schema.String },
   SucceededSaveType: { type: EntityType, isNew: Schema.Boolean },
   SucceededDeleteType: { type: Schema.String },
-  SucceededSaveEntity: { entity: Subject, triggered: Schema.Array(Triggered) },
+  SucceededSaveEntity: { entity: Subject },
   SucceededDeleteEntity: { type: Schema.String, id: Schema.String },
   FailedRequest: { error: Schema.String },
   CompletedNavigateToEntities: {},

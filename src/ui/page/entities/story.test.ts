@@ -209,13 +209,7 @@ test("editing an entity sends every field, clearing the empty ones, and reports 
         proposalId: "proposal-1",
         decision: {
           status: "applied",
-          result: {
-            entity: { type: "employee", id: "ada", data: {} },
-            triggered: [
-              { automation: "onboarding", runId: "run-1", error: null },
-              { automation: "offboarding", runId: null, error: null },
-            ],
-          },
+          result: { entity: { type: "employee", id: "ada", data: {} } },
         },
       }),
     ),
@@ -228,7 +222,7 @@ test("editing an entity sends every field, clearing the empty ones, and reports 
     model((current) => {
       expect(current.entityEditor._tag).toBe("Closed");
       expect(current.activity).toEqual(
-        expect.objectContaining({ _tag: "Ready", notice: "Saved ada; started 1 run" }),
+        expect.objectContaining({ _tag: "Ready", notice: "Saved ada" }),
       );
     }),
   );
@@ -284,7 +278,10 @@ test("deleting an entity waits for confirmation", () => {
       Change.DecideChange,
       Change.Message.SucceededDecision({
         proposalId: "proposal-1",
-        decision: { status: "applied", result: { deleted: true } },
+        decision: {
+          status: "applied",
+          result: { deleted: { type: "employee", id: "ada", data: {}, updatedAt: 0 } },
+        },
       }),
     ),
     Command.resolveAll(...closedResolvers()),
@@ -350,7 +347,7 @@ test("failed and cancelled manual changes keep the draft, and late receipts cann
           proposalId: "proposal-1",
           decision: {
             status: "applied",
-            result: { entity: { type: "employee", id: "ada", data: {} }, triggered: [] },
+            result: { entity: { type: "employee", id: "ada", data: {} } },
           },
         }),
       }),

@@ -1,4 +1,4 @@
-/** Coordinates entity-store editing and confirmed deletion, validating drafts and reporting triggered runs.
+/** Coordinates entity-store editing and confirmed deletion, validating drafts before they're proposed.
  * Ignores record loads for types that are no longer selected. */
 import * as Array from "effect/Array";
 import * as Option from "effect/Option";
@@ -7,7 +7,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { Update } from "foldkit";
 import { modifyFields } from "foldkit/struct";
-import { plural, snakeCaseId, withArticle } from "@/lib/format";
+import { snakeCaseId, withArticle } from "@/lib/format";
 import { EntityType, FieldType, Subject } from "../../../entities.ts";
 import * as Change from "../../change/index.ts";
 import type { ChangeProposal } from "../../../changes/model.ts";
@@ -33,7 +33,6 @@ import {
   type Model,
   Records,
   selectedType,
-  Triggered,
   type TypeDraft,
   TypeEditor,
   Types,
@@ -83,15 +82,6 @@ const withEntityDraft = (
       }),
   }),
 });
-
-export const triggeredText = (triggered: ReadonlyArray<Triggered>) => {
-  const started = Array.filter(triggered, (run) => run.runId !== null).length;
-  const failed = Array.filter(triggered, (run) => run.error !== null).length;
-  return [
-    ...(started > 0 ? [`started ${plural(started, "run", "runs")}`] : []),
-    ...(failed > 0 ? [`${plural(failed, "automation", "automations")} couldn't start`] : []),
-  ].join("; ");
-};
 
 const submitType = (model: Model, draft: TypeDraft, isNew: boolean): UpdateReturn => {
   if (isWorking(model)) {
@@ -359,19 +349,13 @@ export const update = (model: Model, message: Message): UpdateReturn => {
       }),
       commands: [NavigateToEntities({ url: entitiesPath })],
     }),
-    SucceededSaveEntity: ({ entity, triggered }) => {
-      const runs = triggeredText(triggered);
-      return {
-        model: modifyFields(model, {
-          entityEditor: () => EntityEditor.Closed(),
-          activity: () =>
-            Activity.Ready({
-              notice: runs === "" ? `Saved ${entity.id}` : `Saved ${entity.id}; ${runs}`,
-            }),
-        }),
-        commands: loadRecords(model.maybeTypeName),
-      };
-    },
+    SucceededSaveEntity: ({ entity }) => ({
+      model: modifyFields(model, {
+        entityEditor: () => EntityEditor.Closed(),
+        activity: () => Activity.Ready({ notice: `Saved ${entity.id}` }),
+      }),
+      commands: loadRecords(model.maybeTypeName),
+    }),
     SucceededDeleteEntity: ({ type, id }) => ({
       model: modifyFields(model, {
         records: (records) =>
@@ -415,7 +399,7 @@ const applied = (model: Model, proposal: ChangeProposal, result: Schema.Json): U
   if (action.kind === "putEntity") {
     return decodeApplied(
       model,
-      Schema.Struct({ entity: Subject, triggered: Schema.Array(Triggered) }),
+      Schema.Struct({ entity: Subject }),
       result,
       Message.SucceededSaveEntity,
     );
@@ -426,7 +410,7 @@ const applied = (model: Model, proposal: ChangeProposal, result: Schema.Json): U
     );
   }
   if (action.kind === "deleteEntity") {
-    return decodeApplied(model, Schema.Struct({ deleted: Schema.Boolean }), result, () =>
+    return decodeApplied(model, Schema.Struct({ deleted: Subject }), result, () =>
       Message.SucceededDeleteEntity({ type: action.type, id: action.id }),
     );
   }

@@ -72,13 +72,6 @@ export const Activity = defineTaggedUnion({
   Failed: { error: Schema.String },
 });
 
-export const Triggered = Schema.Struct({
-  automation: Schema.String,
-  runId: Schema.NullOr(Schema.String),
-  error: Schema.NullOr(Schema.String),
-});
-export type Triggered = typeof Triggered.Type;
-
 export const Model = Schema.Struct({
   change: Change.Model.pipe(Schema.withConstructorDefault(Effect.succeed(Change.initial))),
   maybeTypeName: Schema.Option(Schema.String),
