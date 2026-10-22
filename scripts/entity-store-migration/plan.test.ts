@@ -186,3 +186,18 @@ test("lists every write entity-store would refuse, without guessing fixes", asyn
   expect(failures[0]).toContain("create meeting kickoff");
   expect(failures[1]).toContain("create meeting sync");
 });
+
+test("every entity's creation passes on its own, before any ref or member exists", async () => {
+  const plan = planMigration(source, []);
+  const fake = makeFakeEntityStore();
+  for (const step of plan.steps) {
+    if (step.kind === "createType") await fake.createType(step.input);
+  }
+  // migrate.ts --apply checks every creation before writing any of them.
+  for (const step of plan.steps) {
+    if (step.kind !== "createEntity") continue;
+    expect(await fake.checkEntity(step.type, step.id, { patch: step.patch })).toMatchObject({
+      ok: true,
+    });
+  }
+});

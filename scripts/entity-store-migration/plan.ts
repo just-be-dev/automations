@@ -102,7 +102,7 @@ const withVersion = (info: TypeInfo | undefined, name: string, schema: StoreSche
  * Types are created so that every type a ref points to exists first. Types that point to each
  * other are created without those refs, then given them in a second version. Entities are written
  * twice: first without their ref values, then with them, so every target exists by then. Roles
- * become `role` entities, after the `role` type is created. Values of fields a type no longer has,
+ * become `role` entities, after the `role` type is created, and get their members the same way. Values of fields a type no longer has,
  * `null` values, and refs to entities that don't exist are left out, as automations already read
  * them. Running it again writes the same values again; an existing type is only versioned if it
  * differs.
@@ -256,15 +256,21 @@ export const planMigration = (source: Source, existing: ReadonlyArray<TypeInfo>)
       for (const member of missing) {
         notes.push(`Role ${role.name}: left out ${member.type} ${member.id}, which doesn't exist`);
       }
+      // Created without its members, which link to employees, and given them once every entity
+      // exists, as entities get their refs.
+      const { members, ...created } = roleData({
+        ...role,
+        members: role.members.filter((member) => !missing.includes(member)),
+      });
       steps.push({
         kind: "createEntity",
         type: ROLE_TYPE,
         id: role.name,
-        patch: roleData({
-          ...role,
-          members: role.members.filter((member) => !missing.includes(member)),
-        }),
+        patch: { ...created, members: [] },
       });
+      if (Array.isArray(members) && members.length > 0) {
+        steps.push({ kind: "linkEntity", type: ROLE_TYPE, id: role.name, patch: { members } });
+      }
     }
   }
 
