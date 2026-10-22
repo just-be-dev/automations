@@ -35,7 +35,12 @@ description = "Every check, the evals included, after the fast ones pass"
 depends = ["typecheck", "lint", "test", "format-check"]
 run = "bun run eval"
 
+[tasks."dev:entity-store"]
+description = "Link entity-store's local state, so dev binds the entity-store its own `alchemy dev` serves"
+run = "bun scripts/link-entity-store.ts"
+
 [tasks.dev]
+depends = ["dev:entity-store"]
 run = "bun run dev"
 
 [tasks.deploy]
