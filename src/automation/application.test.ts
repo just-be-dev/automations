@@ -1680,8 +1680,13 @@ test("an entity trigger ignores changes committed before it took effect, and re-
         yield* app.entityChanged({ name: "Sam" }, subject, "entity-store:14", undefined, first + 1),
       ).toEqual({ runId: null });
     }).pipe(
-      Effect.provide(Layer.merge(h.layer, TestClock.layer())),
-      Effect.provide(Logger.layer([Logger.make(({ message }) => void logged.push(message))])),
+      Effect.provide(
+        Layer.mergeAll(
+          h.layer,
+          TestClock.layer(),
+          Logger.layer([Logger.make(({ message }) => void logged.push(message))]),
+        ),
+      ),
     ),
   );
   expect(JSON.stringify(logged)).toContain("before the saved trigger took effect");

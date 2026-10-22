@@ -769,8 +769,12 @@ test("an approved change from before entity-store is skipped with a warning", as
       const changes = yield* makeChanges(h.storage);
       yield* changes.prepare("owner", action);
     }).pipe(
-      Effect.provide(h.layer),
-      Effect.provide(Logger.layer([Logger.make(({ message }) => void logged.push(message))])),
+      Effect.provide(
+        Layer.merge(
+          h.layer,
+          Logger.layer([Logger.make(({ message }) => void logged.push(message))]),
+        ),
+      ),
     ),
   );
   expect(JSON.stringify(logged)).toContain("from before entity-store");
