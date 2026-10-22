@@ -74,15 +74,20 @@ const dayMillis = 86_400_000;
 
 const isUtcMidnight = (millis: number) => millis % dayMillis === 0;
 
-/** A day and time as people read it: `Mon, Nov 2 at 10:00 AM`. */
-export const dayTimeText = (millis: number) =>
-  new Date(millis).toLocaleString("en-US", {
+/**
+ * A day and time as people read it: `Mon, Nov 2 at 10:00 AM`. The day and time are joined here,
+ * because ICU builds join them differently.
+ */
+export const dayTimeText = (millis: number) => {
+  const date = new Date(millis);
+  const day = date.toLocaleDateString("en-US", {
     weekday: "short",
     month: "short",
     day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
   });
+  const time = date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  return `${day} at ${time}`;
+};
 
 /** A date-only moment (midnight UTC, as dates are stored) reads as its day; others with the time. */
 export const resumeText = (millis: number) =>
