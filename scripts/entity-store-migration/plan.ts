@@ -2,6 +2,8 @@
  * Plans copying automations' entity types, entities and roles from its own D1 into entity-store.
  * Pure: `migrate.ts` reads the rows and entity-store's types, and makes the writes. Every write
  * carries `meta` marking it as the migration's, so automations publishes and starts nothing.
+ * Entities and roles are only ever created, never overwritten: one that already exists in
+ * entity-store is skipped.
  */
 import * as Schema from "effect/Schema";
 import type {
@@ -17,6 +19,7 @@ import {
   roleData,
   roleSchema,
 } from "../../src/entities/entity-store-types.ts";
+import { makeFakeEntityStore } from "../../src/entities/entity-store-fake.ts";
 import { EntityData, EntityType, Role } from "../../src/entities/model.ts";
 
 /** What automations' D1 holds: the `entity_types`, `entities` and `roles` rows, decoded. */
@@ -47,7 +50,15 @@ export type Step =
       readonly lens: Lens;
     }
   | {
-      readonly kind: "upsertEntity";
+      /** Creates the entity (`expectedRev: 0`), without its refs; skipped if it exists. */
+      readonly kind: "createEntity";
+      readonly type: string;
+      readonly id: string;
+      readonly patch: Readonly<Record<string, Schema.Json>>;
+    }
+  | {
+      /** Adds the refs of an entity this run created, at the revision it created. */
+      readonly kind: "linkEntity";
       readonly type: string;
       readonly id: string;
       readonly patch: Readonly<Record<string, Schema.Json>>;
@@ -223,9 +234,9 @@ export const planMigration = (source: Source, existing: ReadonlyArray<TypeInfo>)
         plain[name] = value;
       }
     }
-    steps.push({ kind: "upsertEntity", type: entity.type, id: entity.id, patch: plain });
+    steps.push({ kind: "createEntity", type: entity.type, id: entity.id, patch: plain });
     if (Object.keys(linked).length > 0) {
-      refs.push({ kind: "upsertEntity", type: entity.type, id: entity.id, patch: linked });
+      refs.push({ kind: "linkEntity", type: entity.type, id: entity.id, patch: linked });
     }
   }
   steps.push(...refs);
@@ -246,7 +257,7 @@ export const planMigration = (source: Source, existing: ReadonlyArray<TypeInfo>)
         notes.push(`Role ${role.name}: left out ${member.type} ${member.id}, which doesn't exist`);
       }
       steps.push({
-        kind: "upsertEntity",
+        kind: "createEntity",
         type: ROLE_TYPE,
         id: role.name,
         patch: roleData({
@@ -259,3 +270,46 @@ export const planMigration = (source: Source, existing: ReadonlyArray<TypeInfo>)
 
   return { steps, problems: [...new Set(problems)], notes };
 };
+
+/**
+ * Every entity write the plan makes, checked by the in-memory entity-store once the plan's types
+ * are applied to the types entity-store has: what entity-store would refuse, such as a datetime
+ * without a timezone, an enum value it lacks, or a string too long. Each failure is listed, not
+ * fixed. `migrate.ts --apply` checks them again against entity-store itself before writing any.
+ */
+export const checkLocally = async (
+  plan: Plan,
+  existing: ReadonlyArray<TypeInfo>,
+): Promise<ReadonlyArray<string>> => {
+  const store = makeFakeEntityStore();
+  for (const info of existing) {
+    const schema = info.versions.at(-1)?.schema;
+    if (schema !== undefined) store.seedType(info.name, info.description, schema);
+  }
+  const failures: Array<string> = [];
+  const failed = (step: Step, answer: unknown) => {
+    const error = (answer as { ok: boolean; error?: { message?: string } }).error;
+    if (error !== undefined) failures.push(`${describeStep(step)}: ${error.message ?? "refused"}`);
+  };
+  for (const step of plan.steps) {
+    if (step.kind === "createType") failed(step, await store.createType(step.input));
+    else if (step.kind === "createVersion")
+      failed(
+        step,
+        await store.createVersion(step.type, { schema: step.schema, lens: step.lens, force: true }),
+      );
+    else if (step.kind === "createEntity")
+      failed(step, await store.upsertEntity(step.type, step.id, { patch: step.patch }));
+    else failed(step, await store.upsertEntity(step.type, step.id, { patch: step.patch }));
+  }
+  return failures;
+};
+
+export const describeStep = (step: Step) =>
+  step.kind === "createType"
+    ? `create type ${step.input.name}`
+    : step.kind === "createVersion"
+      ? `add a version of ${step.type}: ${step.lens.ops.map((op) => `${String(op["op"])} ${String(op["field"])}`).join(", ")}`
+      : step.kind === "createEntity"
+        ? `create ${step.type} ${step.id}: ${Object.keys(step.patch).join(", ") || "(no values)"}`
+        : `link ${step.type} ${step.id}: ${Object.keys(step.patch).join(", ")}`;
