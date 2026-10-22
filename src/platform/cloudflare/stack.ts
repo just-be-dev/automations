@@ -8,7 +8,14 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import Api from "./api.ts";
 import Channels from "./channels.ts";
+import { hubBindings, hubPaths } from "./hub.ts";
 import { SLACK_INTERACTIVITY_PATH } from "../../channels/slack-interactivity.ts";
+
+/** The stage served on {@link PRODUCTION_DOMAIN}; other deployed stages stay on workers.dev. */
+const PRODUCTION_STAGE = "prod";
+/** The studio's hostname on `prod`, the one the platform's app rail links to. */
+export const PRODUCTION_DOMAIN = "automations.just-be.dev";
+const PRODUCTION_ZONE = "just-be.dev";
 
 /** Machine access for smoke tests: send `CF-Access-Client-Id` / `CF-Access-Client-Secret`. */
 export const TestClient = Cloudflare.Access.ServiceToken("TestClient", { duration: "720h" });
@@ -37,10 +44,18 @@ export const Studio = Cloudflare.Website.Foldkit(
             },
           ],
         }));
+    const production = !dev && (yield* Alchemy.Stage) === PRODUCTION_STAGE;
     return {
+      // The zone's `*.just-be.dev/*` route (another project) redirects unknown subdomains, and
+      // zone routes run before Custom Domains: the domain gives DNS and a certificate, and the
+      // more specific route runs the Studio.
+      domain: production ? PRODUCTION_DOMAIN : undefined,
+      routes: production
+        ? [{ pattern: `${PRODUCTION_DOMAIN}/*`, zoneName: PRODUCTION_ZONE }]
+        : undefined,
       main: "src/platform/cloudflare/edge.ts",
-      env: { API: Api },
-      assets: { runWorkerFirst: ["/api/*"] },
+      env: { API: Api, ...hubBindings(dev) },
+      assets: { runWorkerFirst: ["/api/*", ...hubPaths] },
       compatibility: { date: "2026-10-04" },
       observability: {
         enabled: true,

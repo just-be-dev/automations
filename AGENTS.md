@@ -161,6 +161,13 @@ Stick to these `GET` routes unless the user asks for more. `chat` calls Workers 
 - `/api` keeps a 32 KB request-body limit and returns `{ "error": string }` on failure. The UI relies on that shape.
 - `Api` stays private. Only the Access-protected Studio Worker can reach it. The `Channels` Worker is the only other public entry, and it serves only Slack's webhooks and interactivity requests, each of which must carry a valid signature.
 
+## The hub shell
+
+This app carries the platform's hub shell: the app rail and the assistant drawer, served by the agents project (`docs/hub-shell.md` there). `src/platform/cloudflare/hub.ts` binds agents' prod `Api` and `Embed` Workers on deployed stages and forwards `/_hub/*` to them from the Studio Worker, `index.html` loads `/_hub/shell.js` with `data-app="automations"`, and the CSP allows `frame-src 'self'`. Prod serves the studio on `automations.just-be.dev` (a Custom Domain plus a route, which beats the zone's `*.just-be.dev/*` wildcard).
+
+- The Studio Worker forwards `/_hub/api/*` with the email Access admitted, and agents trusts it. Keep `/_hub/*` behind Access.
+- Deploy agents first when the shell's protocol changes; this app only forwards.
+
 ## Deploy and dependencies
 
 - Never run `alchemy deploy`, `alchemy destroy`, or `alchemy dev --stage <deployed stage>` unless asked.
