@@ -4,8 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import type { EntityType } from "../entities/model.ts";
 import { answerMcp, EntityToolHandlers } from "./entity-mcp.ts";
-import { EntitySubscribers } from "../entities/subscribers.ts";
-import { layerMemory } from "../entities/store.ts";
+import { layerMemory } from "../entities/memory.ts";
 import { Changes } from "../changes/service.ts";
 import { makeChanges } from "../changes/application.ts";
 import { AutomationIndex } from "../automation/index.ts";
@@ -19,37 +18,17 @@ const employee: EntityType = {
   fields: [
     { name: "name", label: "Name", type: "text" },
     { name: "start_date", label: "Start date", type: "date" },
-  ],
-};
-
-const person: EntityType = {
-  name: "person",
-  label: "Person",
-  title: "name",
-  fields: [
-    { name: "name", label: "Name", type: "text" },
     { name: "email", label: "Email", type: "text" },
   ],
 };
 
 const services = Layer.mergeAll(
   layerMemory({
-    types: [employee, person],
+    types: [employee],
     entities: [
-      { type: "employee", id: "ada", data: { name: "Ada" }, updatedAt: 0 },
-      {
-        type: "person",
-        id: "sam",
-        data: { name: "Sam", email: "sam@example.com" },
-        updatedAt: 0,
-      },
+      { type: "employee", id: "ada", data: { name: "Ada" } },
+      { type: "employee", id: "sam", data: { name: "Sam", email: "sam@example.com" } },
     ],
-  }),
-  Layer.succeed(EntitySubscribers, {
-    notify: (change) =>
-      Effect.succeed([
-        { automation: `watching-${change.after.type}`, runId: "run-1", error: null },
-      ]),
   }),
   Layer.succeed(RequestIdentity, { email: undefined }),
   Layer.succeed(AutomationIndex, {
@@ -168,7 +147,7 @@ describe("entity store MCP", () => {
             method: "tools/call",
             params: { name, arguments: args },
           });
-        const ops = { name: "ops", label: "Ops", members: [{ type: "person", id: "sam" }] };
+        const ops = { name: "ops", label: "Ops", members: [{ type: "employee", id: "sam" }] };
         expect(yield* call("define_role", { role: ops })).toMatchObject({
           result: { isError: false, structuredContent: { role: ops } },
         });
@@ -179,7 +158,7 @@ describe("entity store MCP", () => {
         ).toMatchObject({
           result: {
             isError: true,
-            content: [{ text: "employee has no email field, so it can't be a member" }],
+            content: [{ text: "employee ada has no email" }],
           },
         });
         expect(yield* call("list_roles", {})).toMatchObject({
@@ -241,7 +220,7 @@ test("MCP confirmation applies the proposal once; cancellation is terminal and l
           isError: false,
           structuredContent: {
             status: "applied",
-            result: { entity: { data: { name: "Ada Lovelace" } }, triggered: [{ runId: "run-1" }] },
+            result: { entity: { data: { name: "Ada Lovelace" } } },
           },
         },
       });

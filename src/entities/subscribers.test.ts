@@ -2,7 +2,8 @@
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { EntityStore, layerMemory, type EntityChange } from "./store.ts";
+import { EntityStore, type EntityChange } from "./store.ts";
+import { layerMemory } from "./memory.ts";
 import { EntitySubscribers } from "./subscribers.ts";
 
 test("notifies only this type's subscribers and retains failures alongside later successes", async () => {

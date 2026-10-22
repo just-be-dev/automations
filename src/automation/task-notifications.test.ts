@@ -20,7 +20,7 @@ import {
   type SlackSent,
 } from "../connections/slack.ts";
 import type { EntityType } from "../entities/model.ts";
-import { layerMemory } from "../entities/store.ts";
+import { layerMemory } from "../entities/memory.ts";
 import type { Template } from "../entities/templates.ts";
 import { Events } from "../events/service.ts";
 import { ExecutionId } from "../workflow/execution.ts";

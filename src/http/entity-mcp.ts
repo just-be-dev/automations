@@ -65,7 +65,7 @@ const ListEntityTypes = Tool.make("list_entity_types", {
 
 const DefineEntityType = Tool.make("define_entity_type", {
   description:
-    "Proposes creating or replacing an entity type; does not write. Review the returned proposal with the person, then use decide_change. Names are snake_case. Stored entities aren't rewritten.",
+    "Proposes creating or changing an entity type; does not write. Review the returned proposal with the person, then use decide_change. Names are snake_case. A change saves a new version that adds and removes fields; stored entities keep their data. A field can't change type here.",
   parameters: Schema.Struct({ type: EntityType, ...ProposalRequest }),
   success: ChangeProposal,
   failure: EntityFailure,
@@ -111,7 +111,7 @@ const PutEntity = Tool.make("put_entity", {
 
 const DeleteEntity = Tool.make("delete_entity", {
   description:
-    "Proposes deleting an entity; does not delete. Review the proposal with the person, then use decide_change. Approval may start automations triggered by entity.deleted. Fails while a role lists the entity as a member.",
+    "Proposes deleting an entity; does not delete. Review the proposal with the person, then use decide_change. Approval may start automations triggered by entity.deleted. Fails while a role lists the entity as a member, or another entity links to it.",
   parameters: Schema.Struct({ ...EntityParams.fields, ...ProposalRequest }),
   success: ChangeProposal,
   failure: EntityFailure,
@@ -121,7 +121,7 @@ const DeleteEntity = Tool.make("delete_entity", {
 
 const ListRoles = Tool.make("list_roles", {
   description:
-    "Lists the roles. A role is a named group of people who approve the operations an automation asks first about. Its members are entities, by type and ID, whose type has a text field named `email`.",
+    "Lists the roles. A role is a named group of people who approve the operations an automation asks first about. Its members are employees, by type (`employee`) and ID, each with an `email`.",
   success: Schema.Struct({ roles: Schema.Array(Role) }),
   failure: EntityFailure,
 })
@@ -130,7 +130,7 @@ const ListRoles = Tool.make("list_roles", {
 
 const DefineRole = Tool.make("define_role", {
   description:
-    "Creates a role or replaces one with the same name. Names are snake_case. Every member must be a stored entity with an email: its type has a text field named `email`. Approval tasks already open keep the members they had.",
+    "Creates a role or replaces one with the same name. Names are snake_case. Every member must be a stored employee with an email. Approval tasks already open keep the members they had.",
   parameters: Schema.Struct({ role: Role }),
   success: Schema.Struct({ role: Role }),
   failure: EntityFailure,

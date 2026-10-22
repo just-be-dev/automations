@@ -18,7 +18,7 @@ import { LocalDevelopment } from "../../automation/local-development.ts";
 import { makePlanning } from "../../automation/planning.ts";
 import { ExecutionId } from "../../workflow/execution.ts";
 import { AutomationIndexD1 } from "./automation-index-d1.ts";
-import { EntityStoreD1 } from "./entity-store-d1.ts";
+import { EntityStoreLive } from "./entity-store.ts";
 import { makeCloudflareEmailSender } from "./email.ts";
 import { EventsQueue } from "./events.ts";
 import { localDevelopment } from "./local-development.ts";
@@ -44,7 +44,7 @@ export default class Automation extends Cloudflare.DurableObject<Automation>()(
     const state = yield* Cloudflare.DurableObjectState;
     const ai = yield* Cloudflare.Workers.AI();
     const index = yield* AutomationIndexD1;
-    const entities = yield* EntityStoreD1;
+    const entities = yield* EntityStoreLive;
     const events = yield* EventsQueue;
     // Read during Init, so a deploy with the token binds it as a secret. Without it, Slack is simulated.
     const slackToken = yield* Config.option(Config.Redacted("SLACK_BOT_TOKEN")).pipe(Effect.orDie);

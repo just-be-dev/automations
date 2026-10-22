@@ -19,6 +19,7 @@ import { Namer } from "../../agents/namer/namer.ts";
 import { LiveConnections } from "../../connections/live.ts";
 import { LocalDevelopment } from "../../automation/local-development.ts";
 import { Automations } from "../../automation/service.ts";
+import { deliverEntityChange } from "../../entities/change-feed.ts";
 import { EntitySubscribers } from "../../entities/subscribers.ts";
 import { apiRoutes } from "../../http/api.ts";
 import { accessIdentity } from "./access.ts";
@@ -27,7 +28,7 @@ import Automation from "./automation.ts";
 import { automationsLayer } from "./automations.ts";
 import { AutomationIndexD1 } from "./automation-index-d1.ts";
 import { AssistantThreadsD1 } from "./assistant-threads-d1.ts";
-import { EntityStoreD1 } from "./entity-store-d1.ts";
+import { EntityStoreChangesQueue, EntityStoreLive } from "./entity-store.ts";
 import { workersAiNamer } from "./workers-ai.ts";
 import StudioAssistant, { assistantsLayer } from "./assistant.ts";
 import ChangeCoordinator, { changesLayer } from "./changes.ts";
@@ -55,7 +56,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
     const ai = yield* Cloudflare.Workers.AI();
     const index = yield* AutomationIndexD1;
     const threads = yield* AssistantThreadsD1;
-    const entities = yield* EntityStoreD1;
+    const entities = yield* EntityStoreLive;
     const events = yield* EventsQueue;
     // The Automation objects this Worker hosts send with the same credentials; see automation.ts.
     const slackToken = yield* Config.option(Config.Redacted("SLACK_BOT_TOKEN")).pipe(Effect.orDie);
@@ -92,7 +93,8 @@ export default class Api extends Cloudflare.Worker<Api>()(
       index,
       threads,
       events,
-      subscribers,
+      entities,
+      automations,
       accessIdentity(localUser),
       namer,
       assistantsLayer(assistantNamespace),
@@ -108,16 +110,35 @@ export default class Api extends Cloudflare.Worker<Api>()(
           yield* FailedEventQueue;
           return yield* failedEventQueueName;
         });
-    yield* Cloudflare.Queues.consumeQueueMessages(
-      yield* EventQueue,
-      {
-        batchSize: 10,
-        maxRetries: 10,
-        retryDelay: "30 seconds",
-        deadLetterQueue,
-      },
-      (stream) =>
-        Stream.runForEach(stream, (message) =>
+    // A failed message retries; delivering one again starts nothing twice, since every recipient
+    // keeps receipts keyed by the event or change it was given.
+    const deliveries = {
+      batchSize: 10,
+      maxRetries: 10,
+      retryDelay: "30 seconds",
+      deadLetterQueue,
+    } as const;
+    const deliver = <E, R>(
+      kind: string,
+      message: { readonly id: string; readonly ack: () => void; readonly retry: () => void },
+      delivery: Effect.Effect<void, E, R>,
+    ) =>
+      delivery.pipe(
+        Effect.andThen(Effect.sync(() => message.ack())),
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logWarning(`${kind} delivery failed`, cause).pipe(
+              Effect.annotateLogs("queueMessageId", message.id),
+            );
+            yield* Effect.sync(() => message.retry());
+          }),
+        ),
+      );
+    yield* Cloudflare.Queues.consumeQueueMessages(yield* EventQueue, deliveries, (stream) =>
+      Stream.runForEach(stream, (message) =>
+        deliver(
+          "Event",
+          message,
           Effect.gen(function* () {
             const runtime = yield* Alchemy.RuntimeContext;
             yield* deliverEvent(message.body, (event) =>
@@ -126,15 +147,21 @@ export default class Api extends Cloudflare.Worker<Api>()(
                 .applyEvent(event)
                 .pipe(Effect.provideService(Alchemy.RuntimeContext, runtime)),
             ).pipe(Effect.provide(Layer.merge(index, automations)));
-            yield* Effect.sync(() => message.ack());
-          }).pipe(
-            Effect.catchCause((cause) =>
-              Effect.gen(function* () {
-                yield* Effect.logWarning("Event delivery failed", cause).pipe(
-                  Effect.annotateLogs("queueMessageId", message.id),
-                );
-                yield* Effect.sync(() => message.retry());
-              }),
+          }),
+        ),
+      ),
+    );
+    // entity-store's committed writes, whoever made them: lifecycle events and entity triggers.
+    yield* Cloudflare.Queues.consumeQueueMessages(
+      yield* EntityStoreChangesQueue(local),
+      deliveries,
+      (stream) =>
+        Stream.runForEach(stream, (message) =>
+          deliver(
+            "Entity change",
+            message,
+            deliverEntityChange(message.body).pipe(
+              Effect.provide(Layer.merge(subscribers, events)),
             ),
           ),
         ),

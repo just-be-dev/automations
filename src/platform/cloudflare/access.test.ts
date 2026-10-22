@@ -7,7 +7,7 @@ import * as Option from "effect/Option";
 import { Namer } from "../../agents/namer/namer.ts";
 import { AutomationIndex } from "../../automation/index.ts";
 import { Automations } from "../../automation/service.ts";
-import { layerMemory } from "../../entities/store.ts";
+import { layerMemory } from "../../entities/memory.ts";
 import { automationRoutes } from "../../http/automations.ts";
 import { accessIdentity } from "./access.ts";
 

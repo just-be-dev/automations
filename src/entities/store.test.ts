@@ -1,8 +1,9 @@
-/** Checks entity-store merging, subscriptions, and deletion constraints for types, templates, and roles. */
+/** Checks the entity store over a fake entity-store: merging, revisions, subscriptions, and deletion constraints for types, templates, and roles. */
 import { describe, expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import type { EntityType } from "./model.ts";
-import { EntityStore, layerMemory } from "./store.ts";
+import { EntityStore } from "./store.ts";
+import { layerFake, layerMemory, seededEntityStore } from "./memory.ts";
 
 const employee: EntityType = {
   name: "employee",
@@ -14,14 +15,10 @@ const employee: EntityType = {
   ],
 };
 
-const person: EntityType = {
-  name: "person",
-  label: "Person",
-  title: "name",
-  fields: [
-    { name: "name", label: "Name", type: "text" },
-    { name: "email", label: "Email", type: "text" },
-  ],
+/** Employees with an email, who can be members of roles. */
+const staff: EntityType = {
+  ...employee,
+  fields: [...employee.fields, { name: "email", label: "Email", type: "text" }],
 };
 
 const run = <A, E>(effect: Effect.Effect<A, E, EntityStore>) =>
@@ -36,21 +33,16 @@ const run = <A, E>(effect: Effect.Effect<A, E, EntityStore>) =>
     ),
   );
 
-/** A store that also has people, who can be members of roles. */
+/** A store whose employees have emails, so they can be members of roles. */
 const runWithPeople = <A, E>(effect: Effect.Effect<A, E, EntityStore>) =>
   Effect.runPromise(
     effect.pipe(
       Effect.provide(
         layerMemory({
-          types: [employee, person],
+          types: [staff],
           entities: [
-            { type: "employee", id: "ada", data: { name: "Ada" }, updatedAt: 0 },
-            {
-              type: "person",
-              id: "sam",
-              data: { name: "Sam", email: "sam@example.com" },
-              updatedAt: 0,
-            },
+            { type: "employee", id: "ada", data: { name: "Ada" } },
+            { type: "employee", id: "sam", data: { name: "Sam", email: "sam@example.com" } },
           ],
         }),
       ),
@@ -67,8 +59,10 @@ describe("EntityStore", () => {
       }),
     );
     expect(result.change).toEqual({
-      before: { name: "Ada" },
+      before: { type: "employee", id: "ada", data: { name: "Ada" }, updatedAt: expect.any(Number) },
       after: { type: "employee", id: "ada", data: { name: "Ada", start_date: "2026-11-02" } },
+      expectedRev: 1,
+      rev: 2,
     });
     expect(result.stored?.data).toEqual({ name: "Ada", start_date: "2026-11-02" });
   });
@@ -130,8 +124,8 @@ describe("EntityStore", () => {
     expect(subscribers).toEqual(["onboarding"]);
   });
 
-  test("keeps roles whose members are stored entities with an email field", async () => {
-    const ops = { name: "ops", label: "Ops", members: [{ type: "person", id: "sam" }] };
+  test("keeps roles whose members are stored employees with an email", async () => {
+    const ops = { name: "ops", label: "Ops", members: [{ type: "employee", id: "sam" }] };
     const roles = await runWithPeople(
       Effect.gen(function* () {
         const entities = yield* EntityStore;
@@ -153,7 +147,7 @@ describe("EntityStore", () => {
       ).pipe(Effect.flip),
     );
     expect(invalid.message).toBe(
-      "employee has no email field, so it can't be a member; No person nobody",
+      "employee ada has no email; Role members are employees, so person nobody can't be one",
     );
   });
 
@@ -164,7 +158,7 @@ describe("EntityStore", () => {
         yield* entities.putRole({
           name: "ops",
           label: "Ops",
-          members: [{ type: "person", id: "sam" }],
+          members: [{ type: "employee", id: "sam" }],
         });
         const failure = (effect: Effect.Effect<unknown, { readonly message: string }>) =>
           effect.pipe(
@@ -172,32 +166,27 @@ describe("EntityStore", () => {
             Effect.map((error) => error.message),
           );
         return {
-          deleteMember: yield* failure(entities.deleteEntity("person", "sam")),
-          clearEmail: yield* failure(entities.putEntity("person", "sam", { email: null })),
-          dropEmailField: yield* failure(
-            entities.putType({
-              ...person,
-              fields: person.fields.filter((f) => f.name !== "email"),
-            }),
-          ),
-          deleteType: yield* failure(entities.deleteType("person")),
-          kept: yield* entities.getEntity("person", "sam"),
-          renamed: yield* entities.putEntity("person", "sam", { name: "Samuel" }),
+          deleteMember: yield* failure(entities.deleteEntity("employee", "sam")),
+          clearEmail: yield* failure(entities.putEntity("employee", "sam", { email: null })),
+          dropEmailField: yield* failure(entities.putType(employee)),
+          deleteType: yield* failure(entities.deleteType("employee")),
+          kept: yield* entities.getEntity("employee", "sam"),
+          renamed: yield* entities.putEntity("employee", "sam", { name: "Samuel" }),
           left: yield* entities
             .putRole({ name: "ops", label: "Ops", members: [] })
-            .pipe(Effect.andThen(entities.deleteEntity("person", "sam"))),
+            .pipe(Effect.andThen(entities.deleteEntity("employee", "sam"))),
         };
       }),
     );
     expect(attempts.deleteMember).toBe(
-      "Can't delete person sam: it is a member of ops. Take it out of them first.",
+      "Can't delete employee sam: it is a member of ops. Take it out of them first.",
     );
-    expect(attempts.clearEmail).toBe("person sam needs an email: it is a member of ops");
+    expect(attempts.clearEmail).toBe("employee sam needs an email: it is a member of ops");
     expect(attempts.dropEmailField).toBe(
-      "person needs a text field named email: roles have members of it (ops)",
+      "employee needs a text field named email: roles have members of it (ops)",
     );
     expect(attempts.deleteType).toBe(
-      "Can't delete person: it still has 1 entity; roles have members of it: ops",
+      "Can't delete employee: it still has entities; roles have members of it: ops",
     );
     expect(attempts.kept?.data).toEqual({ name: "Sam", email: "sam@example.com" });
     expect(attempts.renamed.after.data).toEqual({ name: "Samuel", email: "sam@example.com" });
@@ -263,22 +252,21 @@ describe("EntityStore types", () => {
       }),
     );
     expect(result.blocked.message).toBe(
-      "Can't delete employee: it still has 1 entity; team.lead points to it; template slots point to it: welcome.hire; automations watch it: onboarding",
+      "Can't delete employee: it still has entities; team.lead points to it; template slots point to it: welcome.hire; automations watch it: onboarding",
     );
     expect(result.types.map((type) => type.name)).toEqual(["employee"]);
   });
 
-  test("drops the values of removed fields on the next write", async () => {
+  test("removing a field adds a version whose lens drops its values", async () => {
     const stored = await run(
       Effect.gen(function* () {
         const entities = yield* EntityStore;
         yield* entities.putEntity("employee", "ada", { start_date: "2026-11-02" });
         yield* entities.putType({ ...employee, fields: employee.fields.slice(0, 1) });
-        const change = yield* entities.putEntity("employee", "ada", { name: "Ada Lovelace" });
-        return change.after.data;
+        return (yield* entities.getEntity("employee", "ada"))?.data;
       }),
     );
-    expect(stored).toEqual({ name: "Ada Lovelace" });
+    expect(stored).toEqual({ name: "Ada" });
   });
 
   test("deletes an entity and reports what it held", async () => {
@@ -293,5 +281,115 @@ describe("EntityStore types", () => {
     expect(result.deleted?.data).toEqual({ name: "Ada" });
     expect(result.missing).toBeUndefined();
     expect(result.left).toEqual([]);
+  });
+});
+
+describe("EntityStore over entity-store", () => {
+  test("entity IDs are unique across types, and a role's name takes one too", async () => {
+    const problems = await runWithPeople(
+      Effect.gen(function* () {
+        const entities = yield* EntityStore;
+        yield* entities.putType({ ...employee, name: "contractor" });
+        const taken = yield* Effect.flip(entities.putEntity("contractor", "ada", { name: "Ada" }));
+        const role = yield* Effect.flip(
+          entities.putRole({ name: "ada", label: "Ada", members: [] }),
+        );
+        return { taken: taken.message, role: role.message };
+      }),
+    );
+    expect(problems.taken).toBe(
+      "ada is already used by employee ada; entity IDs are unique across types",
+    );
+    expect(problems.role).toBe("ada is already used by employee ada; choose another role name");
+  });
+
+  test("a conditional write fails on another revision and writes nothing", async () => {
+    const result = await run(
+      Effect.gen(function* () {
+        const entities = yield* EntityStore;
+        const stale = yield* Effect.flip(
+          entities.putEntity("employee", "ada", { name: "Stale" }, { expectedRev: 0 }),
+        );
+        const gone = yield* Effect.flip(
+          entities.deleteEntity("employee", "ada", { expectedRev: 7 }),
+        );
+        return { stale, gone, stored: yield* entities.getEntity("employee", "ada") };
+      }),
+    );
+    expect(result.stale._tag).toBe("EntityRevConflict");
+    expect(result.gone._tag).toBe("EntityRevConflict");
+    expect(result.stored?.data).toEqual({ name: "Ada" });
+  });
+
+  test("reads a change back with its meta, and creates a deleted ID again at the next revision", async () => {
+    const result = await run(
+      Effect.gen(function* () {
+        const entities = yield* EntityStore;
+        yield* entities.deleteEntity("employee", "ada", { meta: { depth: 2, changeId: "c-1" } });
+        const deleted = yield* entities.getChange("ada", 2);
+        const check = yield* entities.checkEntity("employee", "ada", { name: "Ada again" });
+        const written = yield* entities.putEntity("employee", "ada", { name: "Ada again" });
+        return { deleted, check, written, missing: yield* entities.getChange("ada", 9) };
+      }),
+    );
+    expect(result.deleted).toMatchObject({
+      type: "employee",
+      op: "delete",
+      meta: { depth: 2, changeId: "c-1" },
+      before: { name: "Ada" },
+      after: null,
+    });
+    expect(result.check).toMatchObject({ before: undefined, expectedRev: 0, rev: 3 });
+    expect(result.written.rev).toBe(3);
+    expect(result.missing).toBeUndefined();
+  });
+
+  test("hides what automations can't use, and leaves it alone when a type changes", async () => {
+    const fake = seededEntityStore({});
+    fake.seedType("employee", "People who work here", {
+      title: "full_name",
+      fields: {
+        full_name: { type: "string", minLength: 1, description: "Full name" },
+        level: { type: "enum", values: ["junior", "senior"] },
+        tags: { type: "array", items: { type: "string" }, optional: true },
+        nickName: { type: "string", optional: true },
+      },
+    });
+    fake.seedType("Office-Space", "", { fields: { name: { type: "string" } } });
+    fake.seedEntity("employee", "ada", {
+      full_name: "Ada",
+      level: "senior",
+      tags: ["math"],
+      nickName: "Countess",
+    });
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const entities = yield* EntityStore;
+        const [type] = yield* entities.listTypes;
+        const before = yield* entities.getEntity("employee", "ada");
+        if (type === undefined) return yield* Effect.die("No type");
+        yield* entities.putType({
+          ...type,
+          fields: [...type.fields, { name: "team", label: "Team", type: "text" }],
+        });
+        yield* entities.putEntity("employee", "ada", { team: "Engines" });
+        return { type, before, after: yield* entities.getEntity("employee", "ada") };
+      }).pipe(Effect.provide(layerFake(fake))),
+    );
+    expect(result.type).toEqual({
+      name: "employee",
+      label: "People who work here",
+      title: "full_name",
+      fields: [
+        { name: "full_name", label: "Full name", type: "text" },
+        { name: "level", label: "level", type: "text" },
+      ],
+    });
+    expect(result.before?.data).toEqual({ full_name: "Ada", level: "senior" });
+    expect(result.after?.data).toEqual({ full_name: "Ada", level: "senior", team: "Engines" });
+    const stored = await fake.getEntity("ada");
+    expect(stored).toMatchObject({
+      value: { data: { tags: ["math"], nickName: "Countess", team: "Engines" } },
+    });
   });
 });

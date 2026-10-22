@@ -16,7 +16,7 @@ import Automation from "./automation.ts";
 import { automationsLayer } from "./automations.ts";
 import { AutomationIndexD1 } from "./automation-index-d1.ts";
 import ChangeCoordinator, { changesLayer } from "./changes.ts";
-import { EntityStoreD1 } from "./entity-store-d1.ts";
+import { EntityStoreLive } from "./entity-store.ts";
 import { openPiAgent } from "./pi.ts";
 import { openPiStorage } from "./pi-storage.ts";
 import { PLANNER_MODEL, PLANNER_THINKING_LEVEL, workersAiNamer } from "./workers-ai.ts";
@@ -38,7 +38,7 @@ export default class StudioAssistant extends Cloudflare.DurableObject<StudioAssi
     const namespace = yield* Automation;
     const coordinator = yield* ChangeCoordinator;
     const index = yield* AutomationIndexD1;
-    const entities = yield* EntityStoreD1;
+    const entities = yield* EntityStoreLive;
     const threads = yield* AssistantThreadsD1;
     const namer = Layer.effect(Namer, Effect.map(ai.raw, workersAiNamer));
     const services = Layer.mergeAll(

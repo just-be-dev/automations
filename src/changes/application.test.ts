@@ -5,13 +5,12 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { AutomationIndex } from "../automation/index.ts";
 import { Automations } from "../automation/service.ts";
-import { EntityStore, EntityStoreError, layerMemory } from "../entities/store.ts";
-import { EntitySubscribers } from "../entities/subscribers.ts";
+import { EntityStore } from "../entities/store.ts";
+import { layerFake, seededEntityStore } from "../entities/memory.ts";
 import type { EntityType } from "../entities/model.ts";
 import { makeChanges } from "./application.ts";
 import type { ChangeStorage } from "./host.ts";
 import type { Event } from "../events/model.ts";
-import { EventError } from "../events/service.ts";
 
 const person: EntityType = {
   name: "person",
@@ -40,8 +39,6 @@ const harness = () => {
   const data = new Map<string, Schema.Json>();
   let failReceipt = false;
   let failApplying = false;
-  const keys: string[] = [];
-  const origins: Array<Event | undefined> = [];
   const storage: ChangeStorage = {
     get: (key) => Effect.sync(() => structuredClone(data.get(key))),
     put: (key, value) =>
@@ -64,19 +61,12 @@ const harness = () => {
   };
   const usages = { saved: ["welcome"], draft: ["welcome"] };
   const unused = () => Effect.die("Unexpected automation operation");
+  const store = seededEntityStore({
+    types: [person],
+    entities: [{ type: "person", id: "ada", data: { name: "Ada", email: "ada@example.com" } }],
+  });
   const layer = Layer.mergeAll(
-    layerMemory({
-      types: [person],
-      templates: [template],
-      entities: [
-        {
-          type: "person",
-          id: "ada",
-          data: { name: "Ada", email: "ada@example.com", old: "removed" },
-          updatedAt: 0,
-        },
-      ],
-    }),
+    layerFake(store, [template]),
     Layer.succeed(AutomationIndex, {
       list: Effect.succeed([
         { id: "a", name: "A", updatedAt: 0 },
@@ -109,22 +99,17 @@ const harness = () => {
         resumeNow: unused,
       }),
     }),
-    Layer.succeed(EntitySubscribers, {
-      notify: (_change, key, event) =>
-        Effect.sync(() => {
-          keys.push(key ?? "");
-          origins.push(event);
-          return [{ automation: "a", runId: `entity-${key}`, error: null }];
-        }),
-    }),
   );
+  /** The writes automations made to `id`: the ones with `meta`. */
+  const writes = (id: string) =>
+    store.changes().filter((change) => change.id === id && change.meta !== null);
   return {
     storage,
     layer,
     data,
-    keys,
-    origins,
+    store,
     usages,
+    writes,
     receiptFailure: (value: boolean) => {
       failReceipt = value;
     },
@@ -134,27 +119,22 @@ const harness = () => {
   };
 };
 
-test("prepare validates without writes, shows asymmetric merged fields, and isolates cancellation and replay by owner", async () => {
+const nameOf = (id = "ada") =>
+  Effect.gen(function* () {
+    return (yield* (yield* EntityStore).getEntity("person", id))?.data["name"];
+  });
+
+test("prepare checks without writing, shows merged fields, and isolates cancellation and replay by owner", async () => {
   const h = harness();
   await Effect.runPromise(
     Effect.gen(function* () {
       const changes = yield* makeChanges(h.storage);
-      const store = yield* EntityStore;
       const proposal = yield* changes.prepare("owner", action, "call-1");
-      expect(proposal.details).toContainEqual({
-        label: "name",
-        before: "Ada",
-        after: "Ada Lovelace",
-      });
-      expect(proposal.details).toContainEqual({
-        label: "old",
-        before: "removed",
-        after: "Removed",
-      });
-      expect(proposal.details.some((detail) => detail.label === "email")).toBe(false);
+      expect(proposal.details).toEqual([{ label: "name", before: "Ada", after: "Ada Lovelace" }]);
       expect(proposal.consequences.join(" ")).toContain("may start");
-      expect(proposal.consequences.join(" ")).toContain("impact could not be checked");
-      expect((yield* store.getEntity("person", "ada"))?.data.name).toBe("Ada");
+      // Only template changes ask every automation how it uses templates.
+      expect(proposal.consequences.join(" ")).not.toContain("impact could not be checked");
+      expect(yield* nameOf()).toBe("Ada");
       expect(yield* changes.prepare("owner", action, "call-1")).toEqual(proposal);
       expect(
         (yield* changes.decide("other", proposal.id, true).pipe(Effect.flip)) as object,
@@ -167,20 +147,24 @@ test("prepare validates without writes, shows asymmetric merged fields, and isol
         status: "cancelled",
         result: null,
       });
-      expect(h.keys).toEqual([]);
+      expect(h.writes("ada")).toEqual([]);
       yield* changes.prepare("owner", { ...action, data: { name: 1 } }).pipe(Effect.flip);
     }).pipe(Effect.provide(h.layer)),
   );
 });
 
-test("stale records, types, subscriptions and template uses require another review", async () => {
+test("a stale confirmation fails instead of overwriting", async () => {
   for (const dependency of ["record", "type", "subscription", "template", "uses"]) {
     const h = harness();
     await Effect.runPromise(
       Effect.gen(function* () {
         const changes = yield* makeChanges(h.storage);
         const store = yield* EntityStore;
-        const proposal = yield* changes.prepare("owner", action);
+        const templating = dependency === "template" || dependency === "uses";
+        const proposal = yield* changes.prepare(
+          "owner",
+          templating ? { kind: "putTemplate", template: { ...template, label: "Hi" } } : action,
+        );
         if (dependency === "record") yield* store.putEntity("person", "ada", { name: "Different" });
         if (dependency === "type") yield* store.putType({ ...person, label: "Changed" });
         if (dependency === "subscription") yield* store.subscribe("new", "person");
@@ -190,13 +174,42 @@ test("stale records, types, subscriptions and template uses require another revi
         expect(yield* changes.decide("owner", proposal.id, true).pipe(Effect.flip)).toMatchObject({
           message: expect.stringContaining("stale"),
         });
-        expect(h.keys).toEqual([]);
+        expect(yield* nameOf()).toBe(dependency === "record" ? "Different" : "Ada");
       }).pipe(Effect.provide(h.layer)),
     );
   }
 });
 
-test("receipt failure after write recovers with original change and stable notification key after restart", async () => {
+test("a confirmation that loses a race to another writer fails at entity-store instead of overwriting", async () => {
+  const h = harness();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const changes = yield* makeChanges(h.storage);
+      const proposal = yield* changes.prepare("owner", action);
+      // Another writer lands after the staleness check, just before the write: only the
+      // revision condition can catch it.
+      const upsert = h.store.upsertEntity;
+      let raced = false;
+      Object.assign(h.store, {
+        upsertEntity: async (...args: Parameters<typeof upsert>) => {
+          if (!raced) {
+            raced = true;
+            await upsert("person", "ada", { patch: { name: "Racer" } });
+          }
+          return upsert(...args);
+        },
+      });
+      const failure = yield* changes.decide("owner", proposal.id, true).pipe(Effect.flip);
+      expect(failure).toMatchObject({ message: expect.stringContaining("stale") });
+      expect(yield* nameOf()).toBe("Racer");
+      // Nothing was written, so the proposal is pending again, and can be cancelled.
+      expect(h.data.get(`proposal:${proposal.id}`)).toMatchObject({ state: "pending" });
+      expect((yield* changes.decide("owner", proposal.id, false)).status).toBe("cancelled");
+    }).pipe(Effect.provide(h.layer)),
+  );
+});
+
+test("a write that landed before its receipt is found after a restart and never applied twice", async () => {
   const h = harness();
   await Effect.runPromise(
     Effect.gen(function* () {
@@ -204,28 +217,33 @@ test("receipt failure after write recovers with original change and stable notif
       const proposal = yield* changes.prepare("owner", action, "stable");
       h.receiptFailure(true);
       yield* changes.decide("owner", proposal.id, true).pipe(Effect.flip);
-      expect((yield* (yield* EntityStore).getEntity("person", "ada"))?.data.name).toBe(
-        "Ada Lovelace",
-      );
+      expect(yield* nameOf()).toBe("Ada Lovelace");
+      // Another writer edits it before the restart.
+      yield* (yield* EntityStore).putEntity("person", "ada", { name: "Edited after" });
       h.receiptFailure(false);
       const restarted = yield* makeChanges(h.storage);
       const receipt = yield* restarted.decide("owner", proposal.id, true);
-      expect(receipt).toMatchObject({
+      expect(receipt).toEqual({
         status: "applied",
         result: {
-          entity: { data: { name: "Ada Lovelace" } },
-          triggered: [{ runId: `entity-change:${proposal.id}` }],
+          entity: {
+            type: "person",
+            id: "ada",
+            data: { name: "Ada Lovelace", email: "ada@example.com" },
+          },
         },
       });
-      expect(h.keys).toEqual([`change:${proposal.id}`, `change:${proposal.id}`]);
+      expect(yield* nameOf()).toBe("Edited after");
+      expect(h.writes("ada").map((change) => change.meta)).toEqual([
+        { depth: 0, changeId: proposal.id },
+      ]);
       expect(yield* restarted.decide("owner", proposal.id, false)).toEqual(receipt);
       expect(yield* restarted.prepare("owner", action, "stable")).toEqual(proposal);
-      expect(h.keys.length).toBe(2);
     }).pipe(Effect.provide(h.layer)),
   );
 });
 
-test("failure before applying persistence writes nothing; conflicting recovery blocks instead of overwriting", async () => {
+test("an approved write that never landed doesn't overwrite a newer edit or hold other changes back", async () => {
   const h = harness();
   await Effect.runPromise(
     Effect.gen(function* () {
@@ -234,16 +252,22 @@ test("failure before applying persistence writes nothing; conflicting recovery b
       const proposal = yield* changes.prepare("owner", action);
       h.applyingFailure(true);
       yield* changes.decide("owner", proposal.id, true).pipe(Effect.flip);
-      expect((yield* store.getEntity("person", "ada"))?.data.name).toBe("Ada");
+      expect(yield* nameOf()).toBe("Ada");
       h.applyingFailure(false);
-      h.receiptFailure(true);
+      // Approved, then entity-store was unreachable: the intent stays applying.
+      h.store.failing("upsertEntity", { code: "StorageFailure", message: "D1 unavailable" });
       yield* changes.decide("owner", proposal.id, true).pipe(Effect.flip);
+      expect(h.data.get(`proposal:${proposal.id}`)).toMatchObject({ state: "applying" });
+      h.store.failing("upsertEntity", undefined);
       yield* store.putEntity("person", "ada", { name: "External" });
-      h.receiptFailure(false);
-      expect(yield* changes.prepare("owner", action).pipe(Effect.flip)).toMatchObject({
-        message: expect.stringContaining("blocked"),
+      // Recovery runs before the next proposal: the stale intent goes back to pending, unwritten.
+      const next = yield* changes.prepare("owner", { ...action, id: "sam", data: { name: "Sam" } });
+      expect(yield* nameOf()).toBe("External");
+      expect(h.data.get(`proposal:${proposal.id}`)).toMatchObject({ state: "pending" });
+      expect((yield* changes.decide("owner", next.id, true)).status).toBe("applied");
+      expect(yield* changes.decide("owner", proposal.id, true).pipe(Effect.flip)).toMatchObject({
+        message: expect.stringContaining("stale"),
       });
-      expect((yield* store.getEntity("person", "ada"))?.data.name).toBe("External");
     }).pipe(Effect.provide(h.layer)),
   );
 });
@@ -270,23 +294,18 @@ test("an applying intent whose entity write failed resumes from the original bef
   const h = harness();
   await Effect.runPromise(
     Effect.gen(function* () {
-      const store = yield* EntityStore;
-      const failing = yield* makeChanges(h.storage).pipe(
-        Effect.provideService(EntityStore, {
-          ...store,
-          putEntity: () => Effect.fail(new EntityStoreError({ message: "D1 unavailable" })),
-        }),
-      );
-      const proposal = yield* failing.prepare("owner", action);
-      yield* failing.decide("owner", proposal.id, true).pipe(Effect.flip);
-      expect((yield* store.getEntity("person", "ada"))?.data.name).toBe("Ada");
-      expect(h.keys).toEqual([]);
+      const changes = yield* makeChanges(h.storage);
+      const proposal = yield* changes.prepare("owner", action);
+      h.store.failing("upsertEntity", "throw");
+      yield* changes.decide("owner", proposal.id, true).pipe(Effect.flip);
+      expect(yield* nameOf()).toBe("Ada");
+      h.store.failing("upsertEntity", undefined);
       const restarted = yield* makeChanges(h.storage);
       const receipt = yield* restarted.decide("owner", proposal.id, false);
       // Approval was already persisted; a subsequent cancellation cannot undo the applying intent.
       expect(receipt.status).toBe("applied");
-      expect((yield* store.getEntity("person", "ada"))?.data.name).toBe("Ada Lovelace");
-      expect(h.keys).toEqual([`change:${proposal.id}`]);
+      expect(yield* nameOf()).toBe("Ada Lovelace");
+      expect(h.writes("ada")).toHaveLength(1);
     }).pipe(Effect.provide(h.layer)),
   );
 });
@@ -307,12 +326,12 @@ test("concurrent approved proposals serialize; only the first of two conflicting
       );
       expect(decisions.filter(Result.isSuccess).length).toBe(1);
       expect(decisions.filter(Result.isFailure).length).toBe(1);
-      expect(h.keys.length).toBe(1);
+      expect(h.writes("ada")).toHaveLength(1);
     }).pipe(Effect.provide(h.layer)),
   );
 });
 
-test("metadata normalization never hides a template-content change named updatedAt", async () => {
+test("template changes show content fields by name, even one called updatedAt", async () => {
   const h = harness();
   await Effect.runPromise(
     Effect.gen(function* () {
@@ -345,14 +364,11 @@ test("metadata normalization never hides a template-content change named updated
   );
 });
 
-test("confirmed entity creations, updates and deletions emit immutable facts; cancellation emits nothing", async () => {
+test("confirmed entity writes carry their change ID and depth to entity-store, and publish nothing themselves", async () => {
   const h = harness();
-  const emitted: Array<Event> = [];
   await Effect.runPromise(
     Effect.gen(function* () {
-      const changes = yield* makeChanges(h.storage, {
-        publish: (event) => Effect.sync(() => void emitted.push(event)),
-      });
+      const changes = yield* makeChanges(h.storage);
       const created = yield* changes.prepare("owner", {
         ...action,
         id: "sam",
@@ -362,8 +378,12 @@ test("confirmed entity creations, updates and deletions emit immutable facts; ca
       const updated = yield* changes.prepare("owner", {
         ...action,
         id: "sam",
-        data: { name: "Samuel" },
+        data: { name: "Samuel", email: null },
       });
+      expect(updated.details).toEqual([
+        { label: "name", before: "Sam", after: "Samuel" },
+        { label: "email", before: "sam@example.com", after: "Removed" },
+      ]);
       yield* changes.decide("owner", updated.id, true);
       const cancelled = yield* changes.prepare("owner", {
         ...action,
@@ -376,110 +396,29 @@ test("confirmed entity creations, updates and deletions emit immutable facts; ca
         type: "person",
         id: "sam",
       });
-      yield* changes.decide("owner", deleted.id, true);
-      expect(emitted).toEqual([
-        {
-          id: `change:${created.id}`,
-          name: "entity.created",
-          data: { before: null, after: { name: "Sam", email: "sam@example.com" } },
-          subject: { type: "person", id: "sam", data: { name: "Sam", email: "sam@example.com" } },
-          depth: 0,
-        },
-        {
-          id: `change:${updated.id}`,
-          name: "entity.updated",
-          data: {
-            before: { name: "Sam", email: "sam@example.com" },
-            after: { name: "Samuel", email: "sam@example.com" },
-          },
-          subject: {
-            type: "person",
-            id: "sam",
-            data: { name: "Samuel", email: "sam@example.com" },
-          },
-          depth: 0,
-        },
-        {
-          id: `change:${deleted.id}`,
-          name: "entity.deleted",
-          data: { before: { name: "Samuel", email: "sam@example.com" }, after: null },
-          subject: {
-            type: "person",
-            id: "sam",
-            data: { name: "Samuel", email: "sam@example.com" },
-          },
-          depth: 0,
-        },
+      expect(yield* changes.decide("owner", deleted.id, true)).toMatchObject({
+        status: "applied",
+        result: { deleted: { type: "person", id: "sam", data: { name: "Samuel" } } },
+      });
+      expect(h.writes("sam").map(({ op, rev, meta }) => ({ op, rev, meta }))).toEqual([
+        { op: "create", rev: 1, meta: { depth: 0, changeId: created.id } },
+        { op: "patch", rev: 2, meta: { depth: 0, changeId: updated.id } },
+        { op: "delete", rev: 3, meta: { depth: 0, changeId: deleted.id } },
       ]);
       expect(yield* (yield* EntityStore).getEntity("person", "sam")).toBeUndefined();
-      expect(h.keys).toEqual([`change:${created.id}`, `change:${updated.id}`]);
+      // A deleted ID can be created again, at the next revision.
+      const again = yield* changes.prepare("owner", { ...action, id: "sam", data: { name: "S" } });
+      yield* changes.decide("owner", again.id, true);
+      expect(h.writes("sam").at(-1)).toMatchObject({ op: "create", rev: 4 });
     }).pipe(Effect.provide(h.layer)),
   );
 });
 
-test("publication failure after an entity write recovers the original event and depth before acknowledging the command", async () => {
+test("an authorized command records its source event and depth, and recovers before later writers", async () => {
   const h = harness();
-  const attempts: Array<Event> = [];
-  let unavailable = true;
-  const publisher = {
-    publish: (event: Event) =>
-      Effect.gen(function* () {
-        attempts.push(event);
-        if (unavailable) return yield* new EventError({ message: "Queue unavailable" });
-      }),
-  };
   await Effect.runPromise(
     Effect.gen(function* () {
-      const changes = yield* makeChanges(h.storage, publisher);
-      const origin: Event = {
-        id: "command-81",
-        name: "entity.put",
-        data: { type: "person", id: "ada", data: action.data },
-        depth: 5,
-      };
-      const proposal = yield* changes.prepare("event:command-81", action, origin.id, origin);
-      yield* changes.decide("event:command-81", proposal.id, true).pipe(Effect.flip);
-      expect((yield* (yield* EntityStore).getEntity("person", "ada"))?.data.name).toBe(
-        "Ada Lovelace",
-      );
-      expect(h.data.get(`proposal:${proposal.id}`)).toMatchObject({ state: "applying" });
-      unavailable = false;
-      const reopened = yield* makeChanges(h.storage, publisher);
-      expect((yield* reopened.decide("event:command-81", proposal.id, true)).status).toBe(
-        "applied",
-      );
-      const expected = {
-        id: `change:${proposal.id}`,
-        name: "entity.updated",
-        data: {
-          before: { name: "Ada", email: "ada@example.com", old: "removed" },
-          after: { name: "Ada Lovelace", email: "ada@example.com" },
-        },
-        subject: {
-          type: "person",
-          id: "ada",
-          data: { name: "Ada Lovelace", email: "ada@example.com" },
-        },
-        depth: 6,
-      };
-      expect(attempts).toEqual([expected, expected]);
-      expect(h.origins).toEqual([
-        { ...origin, depth: 6 },
-        { ...origin, depth: 6 },
-      ]);
-      yield* reopened.decide("event:command-81", proposal.id, true);
-      expect(attempts).toHaveLength(2);
-    }).pipe(Effect.provide(h.layer)),
-  );
-});
-
-test("authorized command intents recover before later writers; redelivery cannot overwrite a newer edit", async () => {
-  const h = harness();
-  const emitted: Array<Event> = [];
-  const publisher = { publish: (event: Event) => Effect.sync(() => void emitted.push(event)) };
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const changes = yield* makeChanges(h.storage, publisher);
+      const changes = yield* makeChanges(h.storage);
       const origin: Event = {
         id: "command-1",
         name: "entity.put",
@@ -488,26 +427,161 @@ test("authorized command intents recover before later writers; redelivery cannot
       };
       const command = yield* changes.prepare("event:command-1", action, origin.id, origin);
       // Crash after recording the authorized intent, before deciding it.
-      const reopened = yield* makeChanges(h.storage, publisher);
+      const reopened = yield* makeChanges(h.storage);
       const later = yield* reopened.prepare("owner", { ...action, data: { name: "Later edit" } });
-      expect((yield* (yield* EntityStore).getEntity("person", "ada"))?.data.name).toBe(
-        "Ada Lovelace",
-      );
-      expect(emitted).toHaveLength(1);
-      expect(emitted[0]?.depth).toBe(16);
+      expect(yield* nameOf()).toBe("Ada Lovelace");
+      expect(h.writes("ada").map((change) => change.meta)).toEqual([
+        { depth: 16, sourceEventId: "command-1", changeId: command.id },
+      ]);
       yield* reopened.decide("owner", later.id, true);
+      // Redelivery finds the settled command and writes nothing more.
       expect(yield* reopened.prepare("event:command-1", action, origin.id, origin)).toEqual(
         command,
       );
       expect((yield* reopened.decide("event:command-1", command.id, true)).status).toBe("applied");
-      expect((yield* (yield* EntityStore).getEntity("person", "ada"))?.data.name).toBe(
-        "Later edit",
-      );
-      expect(emitted).toHaveLength(2);
+      expect(yield* nameOf()).toBe("Later edit");
+      expect(h.writes("ada")).toHaveLength(2);
       yield* reopened
         .prepare("event:too-deep", action, "too-deep", { ...origin, depth: 16 })
         .pipe(Effect.flip);
-      expect(emitted).toHaveLength(2);
+      expect(h.writes("ada")).toHaveLength(2);
+    }).pipe(Effect.provide(h.layer)),
+  );
+});
+
+test("a command checks again against a newer write instead of failing forever; one entity-store refuses is settled", async () => {
+  const h = harness();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const changes = yield* makeChanges(h.storage);
+      const store = yield* EntityStore;
+      const origin: Event = { id: "command-2", name: "entity.put", data: null, depth: 3 };
+      const command = yield* changes.prepare("event:command-2", action, origin.id, origin);
+      // Someone edits the entity in entity-store before the command applies.
+      yield* store.putEntity("person", "ada", { email: "ada@lovelace.dev" });
+      expect((yield* changes.decide("event:command-2", command.id, true)).status).toBe("applied");
+      expect((yield* store.getEntity("person", "ada"))?.data).toEqual({
+        name: "Ada Lovelace",
+        email: "ada@lovelace.dev",
+      });
+
+      // A link to an entity that doesn't exist only fails at entity-store.
+      yield* store.putType({
+        ...person,
+        fields: [
+          ...person.fields,
+          { name: "manager", label: "Manager", type: "ref", to: "person" },
+        ],
+      });
+      const dangling: Event = { id: "command-3", name: "entity.put", data: null, depth: 0 };
+      const refused = yield* changes.prepare(
+        "event:command-3",
+        { ...action, data: { manager: "nobody" } },
+        dangling.id,
+        dangling,
+      );
+      expect(yield* changes.decide("event:command-3", refused.id, true)).toMatchObject({
+        status: "cancelled",
+        result: { error: expect.stringContaining("nobody") },
+      });
+      // Settled, so it no longer blocks or retries.
+      const next = yield* changes.prepare("owner", { ...action, data: { name: "Next" } });
+      expect((yield* changes.decide("owner", next.id, true)).status).toBe("applied");
+    }).pipe(Effect.provide(h.layer)),
+  );
+});
+
+test("type changes become entity-store versions, checked when prepared", async () => {
+  const h = harness();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const changes = yield* makeChanges(h.storage);
+      const added = yield* changes.prepare("owner", {
+        kind: "putType",
+        type: {
+          ...person,
+          fields: [...person.fields, { name: "team", label: "Team", type: "text" }],
+        },
+      });
+      expect(added.details).toContainEqual({
+        label: "fields · 3 · name",
+        before: "Not set",
+        after: "team",
+      });
+      yield* changes.decide("owner", added.id, true);
+      const info = yield* Effect.promise(() => h.store.getType("person"));
+      expect(info).toMatchObject({
+        value: {
+          latestVersion: 2,
+          versions: [{}, { lens: { ops: [{ op: "add", field: "team" }] } }],
+        },
+      });
+      const retyped = yield* changes
+        .prepare("owner", {
+          kind: "putType",
+          type: {
+            ...person,
+            fields: [
+              { name: "name", label: "Name", type: "text" },
+              { name: "email", label: "Email", type: "number" },
+            ],
+          },
+        })
+        .pipe(Effect.flip);
+      expect(retyped).toMatchObject({ message: expect.stringContaining("in entity-store") });
+    }).pipe(Effect.provide(h.layer)),
+  );
+});
+
+test("proposals prepared before entity-store keep their receipts, and the rest must be prepared again", async () => {
+  const h = harness();
+  const proposal = (id: string) => ({
+    id,
+    action,
+    title: "Save person ada",
+    details: [],
+    consequences: [],
+    confirmLabel: "Save",
+  });
+  const snapshot = {
+    types: [],
+    entities: [],
+    templates: [],
+    roles: [],
+    subscriptions: {},
+    uses: [],
+  };
+  h.data.set("proposal:change-1", {
+    owner: "owner",
+    proposal: proposal("change-1"),
+    before: snapshot,
+    after: snapshot,
+    result: { entity: null, triggered: [] },
+    state: "terminal",
+    receipt: { status: "applied", result: { entity: null, triggered: [] } },
+  });
+  h.data.set("proposal:change-2", {
+    owner: "owner",
+    proposal: proposal("change-2"),
+    before: snapshot,
+    after: snapshot,
+    result: null,
+    state: "applying",
+  });
+  h.data.set("sequence", 2);
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const changes = yield* makeChanges(h.storage);
+      expect(yield* changes.decide("owner", "change-1", true)).toEqual({
+        status: "applied",
+        result: { entity: null, triggered: [] },
+      });
+      expect(yield* changes.decide("owner", "change-2", true).pipe(Effect.flip)).toMatchObject({
+        message: expect.stringContaining("Prepare the change again"),
+      });
+      const next = yield* changes.prepare("owner", action);
+      expect(next.id).toBe("change-3");
+      expect((yield* changes.decide("owner", next.id, true)).status).toBe("applied");
     }).pipe(Effect.provide(h.layer)),
   );
 });

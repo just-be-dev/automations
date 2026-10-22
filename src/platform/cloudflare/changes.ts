@@ -4,18 +4,15 @@ import * as Cloudflare from "alchemy/Cloudflare";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { Automations } from "../../automation/service.ts";
 import { makeChanges } from "../../changes/application.ts";
 import { ChangeAction } from "../../changes/model.ts";
 import { Changes } from "../../changes/service.ts";
-import { EntitySubscribers } from "../../entities/subscribers.ts";
 import Automation from "./automation.ts";
 import { automationsLayer } from "./automations.ts";
 import { AutomationIndexD1 } from "./automation-index-d1.ts";
-import { EntityStoreD1 } from "./entity-store-d1.ts";
-import { EventsQueue } from "./events.ts";
+import { EntityStoreLive } from "./entity-store.ts";
 import { EntityPut, Event, MAX_EVENT_DEPTH } from "../../events/model.ts";
-import { Events, EventError } from "../../events/service.ts";
+import { EventError } from "../../events/service.ts";
 
 export default class ChangeCoordinator extends Cloudflare.DurableObject<ChangeCoordinator>()(
   "ChangeCoordinator",
@@ -23,37 +20,21 @@ export default class ChangeCoordinator extends Cloudflare.DurableObject<ChangeCo
     const state = yield* Cloudflare.DurableObjectState;
     const namespace = yield* Automation;
     const index = yield* AutomationIndexD1;
-    const entities = yield* EntityStoreD1;
-    const events = yield* EventsQueue;
+    const entities = yield* EntityStoreLive;
     const automations = automationsLayer(namespace);
-    const subscribers = Layer.unwrap(
-      Automations.use((service) =>
-        Effect.succeed(
-          EntitySubscribers.layer((id, change, key, event) =>
-            service.get(id).entityChanged(change.before, change.after, key, event),
-          ),
-        ),
-      ),
-    ).pipe(Layer.provideMerge(Layer.merge(entities, automations)));
 
     // @effect-diagnostics-next-line returnEffectInGen:off
     return Effect.gen(function* () {
       const runtime = yield* Alchemy.RuntimeContext;
       const remote = <A, E, R>(effect: Effect.Effect<A, E, R | Alchemy.RuntimeContext>) =>
         Effect.provideService(effect, Alchemy.RuntimeContext, runtime);
-      const publisher = yield* Events;
-      const changes = yield* makeChanges(
-        {
-          get: (key) => remote(state.storage.get(key)),
-          put: (key, value) => remote(state.storage.put(key, value)),
-          list: (prefix) =>
-            remote(state.storage.list({ prefix })).pipe(
-              Effect.map((values) => [...values.values()]),
-            ),
-          transaction: (effect) => remote(state.storage.transaction(effect)),
-        },
-        publisher,
-      );
+      const changes = yield* makeChanges({
+        get: (key) => remote(state.storage.get(key)),
+        put: (key, value) => remote(state.storage.put(key, value)),
+        list: (prefix) =>
+          remote(state.storage.list({ prefix })).pipe(Effect.map((values) => [...values.values()])),
+        transaction: (effect) => remote(state.storage.transaction(effect)),
+      });
       return {
         applyEvent: Effect.fn("Changes.applyEvent")(function* (input: unknown) {
           const event = yield* Schema.decodeUnknownEffect(Event)(input);
@@ -68,7 +49,17 @@ export default class ChangeCoordinator extends Cloudflare.DurableObject<ChangeCo
             event.id,
             event,
           );
-          yield* changes.decide(owner, proposal.id, true);
+          const receipt = yield* changes.decide(owner, proposal.id, true);
+          // A command entity-store refused can't apply; fail so the queue retries it into the
+          // dead letters, as it does a command that fails its checks when prepared.
+          if (receipt.status !== "applied") {
+            const refused = Schema.decodeUnknownOption(Schema.Struct({ error: Schema.String }))(
+              receipt.result,
+            );
+            return yield* new EventError({
+              message: refused._tag === "Some" ? refused.value.error : "The command was refused",
+            });
+          }
         }),
         prepare: (owner: string, action: unknown, requestId?: string) =>
           Schema.decodeUnknownEffect(ChangeAction)(action).pipe(
@@ -77,12 +68,11 @@ export default class ChangeCoordinator extends Cloudflare.DurableObject<ChangeCo
         decide: (owner: string, proposalId: string, approved: boolean) =>
           changes.decide(owner, proposalId, approved),
       };
-    }).pipe(Effect.provide(Layer.mergeAll(index, subscribers, events)));
+    }).pipe(Effect.provide(Layer.mergeAll(index, entities, automations)));
   }).pipe(
     Effect.provide(
       Layer.mergeAll(
         Cloudflare.D1.QueryDatabaseBinding,
-        Cloudflare.Queues.WriteQueueBinding,
         Cloudflare.Telemetry({ headSamplingRate: 1, persist: true }),
       ),
     ),

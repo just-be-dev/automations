@@ -1,4 +1,4 @@
-/** Notifies automations watching an entity change and returns each started run or failure to the writer. */
+/** Notifies automations watching an entity type of a change, returning each started run or failure. */
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -15,7 +15,7 @@ export const Triggered = Schema.Struct({
 });
 export type Triggered = typeof Triggered.Type;
 
-/** Shared by confirmed writes; the host must forward the optional stable key to entityChanged. */
+/** Used by the change feed; the host must forward the optional stable key to entityChanged. */
 export class EntitySubscribers extends Context.Service<
   EntitySubscribers,
   {

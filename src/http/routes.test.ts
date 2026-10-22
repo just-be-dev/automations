@@ -5,8 +5,7 @@ import * as HttpRouter from "effect/http/HttpRouter";
 import * as Layer from "effect/Layer";
 import { AutomationIndex } from "../automation/index.ts";
 import { Automations } from "../automation/service.ts";
-import { layerMemory } from "../entities/store.ts";
-import { EntitySubscribers } from "../entities/subscribers.ts";
+import { layerMemory } from "../entities/memory.ts";
 import { catalogRoutes } from "./catalog.ts";
 import { entityRoutes } from "./entities.ts";
 import { mcpRoutes } from "./mcp.ts";
@@ -110,12 +109,6 @@ const app = () =>
                 ],
                 entities: [{ type: "employee", id: "ada", data: { name: "Ada" }, updatedAt: 0 }],
               }),
-              Layer.succeed(EntitySubscribers, {
-                notify: (change) =>
-                  Effect.succeed([
-                    { automation: `watching-${change.after.type}`, runId: "run-1", error: null },
-                  ]),
-              }),
             ),
           ),
         ),
@@ -124,7 +117,7 @@ const app = () =>
     { disableLogger: true },
   );
 
-test("approved changes preserve entity-write notifications", async () => {
+test("approved changes write the entity and answer with it; runs follow from entity-store's changes", async () => {
   const { handler, dispose } = app();
   try {
     const proposed = await handler(
@@ -153,12 +146,9 @@ test("approved changes preserve entity-write notifications", async () => {
       }),
     );
     expect(decision.status).toBe(200);
-    expect(await decision.json()).toMatchObject({
+    expect((await decision.json()) as unknown).toEqual({
       status: "applied",
-      result: {
-        entity: { type: "employee", id: "ada", data: { name: "Ada Lovelace" } },
-        triggered: [{ automation: "watching-employee", runId: "run-1", error: null }],
-      },
+      result: { entity: { type: "employee", id: "ada", data: { name: "Ada Lovelace" } } },
     });
     const read = await handler(
       new Request("http://studio/api/mcp", {

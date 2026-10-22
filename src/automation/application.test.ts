@@ -9,7 +9,9 @@ import * as Semaphore from "effect/Semaphore";
 import { TestClock } from "effect/testing";
 import { Classifier, type ClassifyRequest } from "../ai/classifier.ts";
 import { PiAgent, type PromptOptions } from "../ai/pi.ts";
-import { EntityStore, EntityStoreError, layerMemory } from "../entities/store.ts";
+import { EntityStore, EntityStoreError } from "../entities/store.ts";
+import { layerFake, seededEntityStore } from "../entities/memory.ts";
+import { deliverEntityChange } from "../entities/change-feed.ts";
 import { EntitySubscribers } from "../entities/subscribers.ts";
 import { makeChanges } from "../changes/application.ts";
 import type { ChangeStorage } from "../changes/host.ts";
@@ -56,6 +58,44 @@ const harness = () => {
   const recorded: Array<{ id: string; name: string }> = [];
   const removed: Array<string> = [];
   const emitted: Array<Event> = [];
+  const store = seededEntityStore({
+    types: [
+      {
+        name: "person",
+        label: "Person",
+        title: "name",
+        fields: [
+          { name: "name", label: "Name", type: "text" },
+          { name: "email", label: "Email", type: "text" },
+        ],
+      },
+      {
+        name: "employee",
+        label: "Employee",
+        title: "name",
+        fields: [
+          { name: "name", label: "Name", type: "text" },
+          { name: "email", label: "Email", type: "text" },
+        ],
+      },
+    ],
+    entities: [
+      {
+        type: "person",
+        id: "sam",
+        data: { name: "Sam", email: "sam@example.com" },
+        updatedAt: 0,
+      },
+      // Role members are employees.
+      {
+        type: "employee",
+        id: "sam-at-work",
+        data: { name: "Sam", email: "sam@example.com" },
+        updatedAt: 0,
+      },
+    ],
+    roles: [{ name: "ops", label: "Ops", members: [{ type: "employee", id: "sam-at-work" }] }],
+  });
   const classified: Array<ClassifyRequest> = [];
   const lock = Semaphore.makeUnsafe(1);
   let failSchedule = false;
@@ -192,28 +232,7 @@ const harness = () => {
         remove: (id) => Effect.sync(() => void removed.push(id)),
       }),
     ),
-    layerMemory({
-      types: [
-        {
-          name: "person",
-          label: "Person",
-          title: "name",
-          fields: [
-            { name: "name", label: "Name", type: "text" },
-            { name: "email", label: "Email", type: "text" },
-          ],
-        },
-      ],
-      entities: [
-        {
-          type: "person",
-          id: "sam",
-          data: { name: "Sam", email: "sam@example.com" },
-          updatedAt: 0,
-        },
-      ],
-      roles: [{ name: "ops", label: "Ops", members: [{ type: "person", id: "sam" }] }],
-    }),
+    layerFake(store),
   ).pipe(Layer.provideMerge(Layer.succeed(AutomationHost, host)));
   const layer = planner.pipe(Layer.provideMerge(services));
   return {
@@ -228,6 +247,7 @@ const harness = () => {
     recorded,
     removed,
     emitted,
+    store,
     classified,
     failSchedule: () => {
       failSchedule = true;
@@ -1901,7 +1921,7 @@ test("entity triggers retain event depth and cannot restart a bounded event cycl
   );
 });
 
-test("an entity fact starts an automation which emits an entity command through the shared writer; queue redelivery changes nothing twice", async () => {
+test("an entity change starts an automation which emits an entity command through the shared writer; redelivered messages change nothing twice", async () => {
   const h = harness();
   const data = new Map<string, Schema.Json>();
   const storage: ChangeStorage = {
@@ -1948,16 +1968,17 @@ test("an entity fact starts an automation which emits an entity command through 
         ),
       );
       yield* Effect.gen(function* () {
-        const changes = yield* makeChanges(storage, yield* Events);
-        const proposal = yield* changes.prepare("owner", {
-          kind: "putEntity",
-          type: "person",
-          id: "ada",
-          data: { name: "Ada" },
+        const changes = yield* makeChanges(storage);
+        // entity-store's queue delivers at least once: every message arrives twice here.
+        let delivered = h.store.changes().length;
+        const pumpChanges = Effect.gen(function* () {
+          const fresh = h.store.changes().slice(delivered);
+          delivered += fresh.length;
+          for (const message of fresh) {
+            yield* deliverEntityChange(message);
+            yield* deliverEntityChange(message);
+          }
         });
-        yield* changes.decide("owner", proposal.id, true);
-        const fact = h.emitted[0];
-        if (fact === undefined) return yield* Effect.die("Entity fact not emitted");
         const consume = (event: Event) =>
           deliverEvent(event, (origin, command) =>
             Effect.gen(function* () {
@@ -1971,13 +1992,27 @@ test("an entity fact starts an automation which emits an entity command through 
               yield* changes.decide(owner, change.id, true);
             }),
           );
+        const proposal = yield* changes.prepare("owner", {
+          kind: "putEntity",
+          type: "person",
+          id: "ada",
+          data: { name: "Ada" },
+        });
+        yield* changes.decide("owner", proposal.id, true);
+        expect(h.emitted).toEqual([]);
+        yield* pumpChanges;
+        const fact = h.emitted[0];
+        if (fact === undefined) return yield* Effect.die("Entity fact not emitted");
+        expect(fact).toMatchObject({ id: "entity:ada:1", name: "entity.created", depth: 0 });
+        // The redelivered message publishes the same event again, under the same ID.
+        expect(h.emitted[1]).toEqual(fact);
         yield* consume(fact);
         yield* consume(fact);
         expect(h.advances).toHaveLength(1);
         yield* app.callbacks.advance({
           executionId: yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances[0]),
         });
-        const command = h.emitted[1];
+        const command = h.emitted[2];
         if (command === undefined) return yield* Effect.die("Entity command not emitted");
         expect(command).toMatchObject({
           name: "entity.put",
@@ -1986,13 +2021,120 @@ test("an entity fact starts an automation which emits an entity command through 
         });
         yield* consume(command);
         yield* consume(command);
+        yield* pumpChanges;
         expect((yield* (yield* EntityStore).getEntity("person", "sam"))?.data).toEqual({
           name: "Welcomed Ada",
           email: "sam@example.com",
         });
-        expect(h.emitted).toHaveLength(3);
-        expect(h.emitted[2]).toMatchObject({ name: "entity.updated", depth: 2 });
+        // One write for the command, however often it was delivered.
+        expect(
+          h.store.changes().filter((change) => change.id === "sam" && change.op !== "create"),
+        ).toHaveLength(1);
+        expect(h.emitted.slice(3)).toEqual([
+          expect.objectContaining({ id: "entity:sam:2", name: "entity.updated", depth: 2 }),
+          expect.objectContaining({ id: "entity:sam:2", name: "entity.updated", depth: 2 }),
+        ]);
         expect(h.advances).toHaveLength(1);
+      }).pipe(Effect.provide(layers));
+    }).pipe(Effect.provide(h.layer)),
+  );
+});
+
+test("an entity change keeps its chain's depth through entity-store, so a chain still stops at the limit", async () => {
+  const h = harness();
+  const data = new Map<string, Schema.Json>();
+  const storage: ChangeStorage = {
+    get: (key) => Effect.sync(() => structuredClone(data.get(key))),
+    put: (key, value) => Effect.sync(() => void data.set(key, structuredClone(value))),
+    list: (prefix) =>
+      Effect.sync(() =>
+        [...data]
+          .filter(([key]) => key.startsWith(prefix))
+          .map(([, value]) => structuredClone(value)),
+      ),
+    transaction: (effect) => effect,
+  };
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      // Watches people and, when one changes, publishes another event: one more hop.
+      yield* h.host.storage.put("saved", {
+        name: "Echo people",
+        trigger: { kind: "entity", entity: "person" },
+        permissions: { "events.emit": "auto" },
+        steps: [
+          {
+            id: "echo",
+            title: "Echo",
+            kind: "action",
+            use: "events.emit",
+            with: { name: "person.echoed", data: "{{person.name}}" },
+          },
+        ],
+      });
+      const app = yield* makeAutomation();
+      yield* (yield* EntityStore).subscribe("echo", "person");
+      const layers = Layer.mergeAll(
+        Layer.succeed(Automations, Automations.of({ get: () => app })),
+        EntitySubscribers.layer((_id, change, key, event) =>
+          app.entityChanged(change.before, change.after, key, event),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const changes = yield* makeChanges(storage);
+        const command = (depth: number): Event => ({
+          id: `command-${depth}`,
+          name: "entity.put",
+          data: { type: "person", id: "sam", data: { name: `Sam ${depth}` } },
+          depth,
+        });
+        const apply = (event: Event) =>
+          Effect.gen(function* () {
+            const owner = `event:${event.id}`;
+            const proposal = yield* changes.prepare(
+              owner,
+              { kind: "putEntity", type: "person", id: "sam", data: { name: event.id } },
+              event.id,
+              event,
+            );
+            return yield* changes.decide(owner, proposal.id, true);
+          });
+        const deliverLatest = Effect.gen(function* () {
+          const latest = h.store.changes().at(-1);
+          if (latest === undefined) return yield* Effect.die("No change");
+          yield* deliverEntityChange(latest);
+          return latest;
+        });
+        const runOf = (rev: number) => app.run(RunId.make(`entity-entity:sam:${rev}`));
+
+        // A command at depth 14 writes at 15: its run may still emit, at 16.
+        yield* apply(command(14));
+        const shallow = yield* deliverLatest;
+        expect(shallow.meta).toMatchObject({ depth: 15, sourceEventId: "command-14" });
+        expect(h.emitted.at(-1)).toMatchObject({ name: "entity.updated", depth: 15 });
+        yield* app.callbacks.advance({
+          executionId: yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances.at(-1)),
+        });
+        expect((yield* runOf(shallow.rev))?.status).toBe("completed");
+        expect(h.emitted.at(-1)).toMatchObject({ name: "person.echoed", depth: 16 });
+
+        // A command at depth 15 writes at 16, the limit: its run can't emit again.
+        yield* apply(command(15));
+        const deep = yield* deliverLatest;
+        expect(deep.meta).toMatchObject({ depth: 16 });
+        expect(h.emitted.at(-1)).toMatchObject({ name: "entity.updated", depth: 16 });
+        yield* app.callbacks.advance({
+          executionId: yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances.at(-1)),
+        });
+        const stopped = yield* runOf(deep.rev);
+        expect(stopped?.status).toBe("failed");
+        expect(stopped?.error).toContain("Event chain limit reached");
+
+        // And a command at the limit is refused before it writes anything.
+        const before = h.store.changes().length;
+        expect(((yield* apply(command(16)).pipe(Effect.flip)) as { message: string }).message).toBe(
+          "Event chain limit reached",
+        );
+        expect(h.store.changes()).toHaveLength(before);
       }).pipe(Effect.provide(layers));
     }).pipe(Effect.provide(h.layer)),
   );
