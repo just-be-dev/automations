@@ -12,7 +12,7 @@ import * as Semaphore from "effect/Semaphore";
 import { AutomationIndex } from "../automation/index.ts";
 import { Automations } from "../automation/service.ts";
 import { InvalidEntity } from "../entities/model.ts";
-import { EntityRevConflict, EntityStore } from "../entities/store.ts";
+import { EntityChangeUnreadable, EntityRevConflict, EntityStore } from "../entities/store.ts";
 import { checkTemplate, InvalidTemplate } from "../entities/templates.ts";
 import { changeIdOf, changeMeta } from "../entities/write-meta.ts";
 import { messageOf } from "../error.ts";
@@ -83,6 +83,8 @@ const fail = (message: string) => new ChangeError({ message });
 
 const STALE =
   "This proposal is stale. Prepare a new change to review the current values and consequences.";
+const UNKNOWN =
+  "This change may already have been applied, but entity-store can't show its earlier write. Check the entity and prepare the change again if it's still needed.";
 const LEGACY =
   "This proposal was prepared before entities moved to entity-store. Prepare the change again.";
 /** How many times an authorized command is checked again against newer data before it gives up. */
@@ -99,7 +101,12 @@ interface Look {
 /** Why an approved change didn't apply. Nothing was written. */
 type Outcome =
   | { readonly applied: true; readonly result: Schema.Json }
-  | { readonly applied: false; readonly reason: "conflict" | "refused"; readonly message: string };
+  | {
+      readonly applied: false;
+      /** `unknown`: whether an earlier attempt landed can't be told, so nothing is written. */
+      readonly reason: "conflict" | "refused" | "unknown";
+      readonly message: string;
+    };
 
 export const makeChanges = Effect.fn("Changes.make")(function* (storage: ChangeStorage) {
   const store = yield* EntityStore;
@@ -220,92 +227,111 @@ export const makeChanges = Effect.fn("Changes.make")(function* (storage: ChangeS
    * any other change applies only while its target is as reviewed. A write that already landed,
    * before a restart, counts as applied and isn't repeated.
    */
-  const apply = Effect.fn("Changes.apply")(function* (
-    record: Stored,
-  ): Effect.fn.Return<Outcome, unknown> {
-    const action = record.proposal.action;
-    if (action.kind === "putEntity" || action.kind === "deleteEntity") {
-      const options = {
-        expectedRev: record.write?.expectedRev ?? 0,
-        meta: changeMeta({
-          depth: record.sourceEvent === undefined ? 0 : record.sourceEvent.depth + 1,
-          ...(record.sourceEvent === undefined ? {} : { sourceEventId: record.sourceEvent.id }),
-          changeId: record.proposal.id,
-        }),
-      };
-      const already = yield* landed(record, action);
-      if (already !== undefined) {
-        return {
-          applied: true,
-          result:
-            action.kind === "putEntity"
-              ? { entity: { type: action.type, id: action.id, data: already.after ?? {} } }
-              : record.result,
+  const apply = Effect.fn("Changes.apply")(
+    function* (record: Stored): Effect.fn.Return<Outcome, unknown> {
+      const action = record.proposal.action;
+      if (action.kind === "putEntity" || action.kind === "deleteEntity") {
+        const options = {
+          expectedRev: record.write?.expectedRev ?? 0,
+          meta: changeMeta({
+            depth: record.sourceEvent === undefined ? 0 : record.sourceEvent.depth + 1,
+            ...(record.sourceEvent === undefined ? {} : { sourceEventId: record.sourceEvent.id }),
+            changeId: record.proposal.id,
+          }),
         };
-      }
-      const written =
-        action.kind === "putEntity"
-          ? store
-              .putEntity(action.type, action.id, action.data, options)
-              .pipe(Effect.map((write): Schema.Json => ({ entity: write.after })))
-          : store
-              .deleteEntity(action.type, action.id, options)
-              .pipe(
-                Effect.flatMap((deleted) =>
-                  deleted === undefined
-                    ? Effect.fail(new EntityRevConflict({ message: "The entity is gone" }))
-                    : Effect.succeed(record.result),
+        const already = yield* landed(record, action);
+        if (already !== undefined) {
+          return {
+            applied: true,
+            result:
+              action.kind === "putEntity"
+                ? { entity: { type: action.type, id: action.id, data: already.after ?? {} } }
+                : record.result,
+          };
+        }
+        const written =
+          action.kind === "putEntity"
+            ? store
+                .putEntity(action.type, action.id, action.data, options)
+                .pipe(Effect.map((write): Schema.Json => ({ entity: write.after })))
+            : store
+                .deleteEntity(action.type, action.id, options)
+                .pipe(
+                  Effect.flatMap((deleted) =>
+                    deleted === undefined
+                      ? Effect.fail(new EntityRevConflict({ message: "The entity is gone" }))
+                      : Effect.succeed(record.result),
+                  ),
+                );
+        return yield* written.pipe(
+          Effect.map((result): Outcome => ({ applied: true, result })),
+          Effect.catchTags({
+            // A write retried after an answer was lost may have landed before this attempt.
+            // The current revision is where a lost answer's write is, unless another came after. A
+            // deleted entity reports 0, so a delete looks at the revision that deleted it.
+            EntityRevConflict: (conflict) =>
+              Effect.map(
+                Effect.flatMap(
+                  action.kind === "deleteEntity"
+                    ? store.revisionOf(action.id)
+                    : Effect.succeed(undefined),
+                  (deleted) =>
+                    landed(record, action, [
+                      conflict.currentRev,
+                      deleted?.live === false ? deleted.rev : undefined,
+                      record.write?.rev,
+                    ]),
                 ),
-              );
-      return yield* written.pipe(
-        Effect.map((result): Outcome => ({ applied: true, result })),
-        Effect.catchTags({
-          // A write retried after an answer was lost may have landed before this attempt.
-          // The current revision is where a lost answer's write is, unless another came after. A
-          // deleted entity reports 0, so a delete looks at the revision that deleted it.
-          EntityRevConflict: (conflict) =>
-            Effect.map(
-              Effect.flatMap(
-                action.kind === "deleteEntity"
-                  ? store.revisionOf(action.id)
-                  : Effect.succeed(undefined),
-                (deleted) =>
-                  landed(record, action, [
-                    conflict.currentRev,
-                    deleted?.live === false ? deleted.rev : undefined,
-                    record.write?.rev,
-                  ]),
+                (change): Outcome =>
+                  change === undefined
+                    ? { applied: false, reason: "conflict", message: STALE }
+                    : { applied: true, result: record.result },
               ),
-              (change): Outcome =>
-                change === undefined
-                  ? { applied: false, reason: "conflict", message: STALE }
-                  : { applied: true, result: record.result },
-            ),
-          InvalidEntity: (error) =>
+            InvalidEntity: (error) =>
+              Effect.succeed<Outcome>({
+                applied: false,
+                reason: "refused",
+                message: error.message,
+              }),
+          }),
+        );
+      }
+      const current = (yield* look(action, false)).before.target;
+      if (same(current, record.after)) {
+        return { applied: true, result: record.result };
+      }
+      if (!same(current, record.before.target)) {
+        return { applied: false, reason: "conflict", message: STALE };
+      }
+      switch (action.kind) {
+        case "putType":
+          return { applied: true, result: yield* store.putType(action.type) };
+        case "deleteType":
+          yield* store.deleteType(action.name);
+          return { applied: true, result: record.result };
+        case "putTemplate":
+          return { applied: true, result: yield* store.putTemplate(action.template) };
+        case "deleteTemplate":
+          yield* store.deleteTemplate(action.name);
+          return { applied: true, result: record.result };
+      }
+    },
+    (effect) =>
+      effect.pipe(
+        // A refusal can come at apply time too, from entity-store or the checks: settled, never
+        // left applying to be retried unconfirmed later.
+        Effect.catchIf(
+          (error) => error instanceof InvalidEntity || error instanceof InvalidTemplate,
+          (error) =>
             Effect.succeed<Outcome>({ applied: false, reason: "refused", message: error.message }),
-        }),
-      );
-    }
-    const current = (yield* look(action, false)).before.target;
-    if (same(current, record.after)) {
-      return { applied: true, result: record.result };
-    }
-    if (!same(current, record.before.target)) {
-      return { applied: false, reason: "conflict", message: STALE };
-    }
-    switch (action.kind) {
-      case "putType":
-        return { applied: true, result: yield* store.putType(action.type) };
-      case "deleteType":
-        yield* store.deleteType(action.name);
-        return { applied: true, result: record.result };
-      case "putTemplate":
-        return { applied: true, result: yield* store.putTemplate(action.template) };
-      case "deleteTemplate":
-        yield* store.deleteTemplate(action.name);
-        return { applied: true, result: record.result };
-    }
-  });
+        ),
+        // Fail closed: an earlier write that can't be read may be this one.
+        Effect.catchIf(
+          (error) => error instanceof EntityChangeUnreadable,
+          () => Effect.succeed<Outcome>({ applied: false, reason: "unknown", message: UNKNOWN }),
+        ),
+      ),
+  );
 
   const write = (record: Stored) => storage.put(`proposal:${record.proposal.id}`, record);
   const read = (value: unknown) => Schema.decodeUnknownEffect(Record)(value);
@@ -378,7 +404,14 @@ export const makeChanges = Effect.fn("Changes.make")(function* (storage: ChangeS
    */
   const recoverAll = Effect.gen(function* () {
     for (const record of yield* records) {
-      if (!isCurrent(record) || record.state !== "applying") continue;
+      if (record.state !== "applying") continue;
+      if (!isCurrent(record)) {
+        // Approved before entity-store, and never settled: it can't be applied now.
+        yield* Effect.logWarning(
+          "Skipped an approved change from before entity-store; it must be prepared again",
+        ).pipe(Effect.annotateLogs({ proposalId: record.proposal.id }));
+        continue;
+      }
       yield* settle(record).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("An approved change couldn't be settled yet", cause).pipe(
@@ -474,9 +507,7 @@ export const makeChanges = Effect.fn("Changes.make")(function* (storage: ChangeS
                 "This edit emits entity.created or entity.updated and may start automations listening for it.",
               ]
             : action.kind === "deleteEntity"
-              ? [
-                  "Deletion emits entity.deleted and may start automations listening for it. References to this entity will read as empty.",
-                ]
+              ? ["Deletion emits entity.deleted and may start automations listening for it."]
               : action.kind === "deleteType"
                 ? [
                     "This empty type will no longer be available to drafts or new runs. Existing runs keep their snapshots.",

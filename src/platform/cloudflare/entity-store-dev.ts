@@ -98,6 +98,16 @@ export default class EntityStoreDev extends Cloudflare.DurableObject<EntityStore
           true,
         ),
         getChange: call((id: string, rev: number) => store.getChange(id, rev), false),
+        checkEntity: call(
+          (type: string, id: string, input: Parameters<EntityStoreRpc["checkEntity"]>[2]) =>
+            store.checkEntity(type, id, input),
+          false,
+        ),
+        getBacklinks: call(
+          (id: string, options?: Parameters<EntityStoreRpc["getBacklinks"]>[1]) =>
+            store.getBacklinks(id, options),
+          false,
+        ),
       };
     });
   }).pipe(

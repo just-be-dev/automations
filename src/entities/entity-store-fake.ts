@@ -82,7 +82,15 @@ const err = (code: string, message: string, details: Record<string, unknown> = {
 const isRecord = (value: unknown): value is Data =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const isoDate = /^\d{4}-\d{2}-\d{2}$/;
+/** entity-store's formats, as its schema compiler checks them. */
+const formats: Readonly<Record<string, RegExp>> = {
+  email: /^[^\s@]+@[^\s@]+\.[^\s@]+$/,
+  url: /^[Hh][Tt][Tt][Pp][Ss]?:\/\/[^\s/$.?#][^\s]*$/,
+  uuid: /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/,
+  date: /^\d{4}-\d{2}-\d{2}$/,
+  // A datetime needs a timezone.
+  datetime: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/,
+};
 
 /** The links a value holds under a node, as `{ path, target, to }`. */
 const linksIn = (
@@ -145,19 +153,30 @@ const problemsIn = (node: SchemaNode, value: Json | undefined, path: string): Ar
       return value === null ? [] : problemsIn(node["of"] as SchemaNode, value, path);
     case "string": {
       if (typeof value !== "string") return [`${path} must be a string`];
-      const minLength = node["minLength"];
+      const { minLength, maxLength, pattern, format } = node;
+      const formatted = typeof format === "string" ? formats[format] : undefined;
       return [
         ...(typeof minLength === "number" && value.length < minLength
           ? [`${path} is shorter than ${minLength}`]
           : []),
-        ...(node["format"] === "date" ? expect(isoDate.test(value), "a date") : []),
-        ...(node["format"] === "datetime"
-          ? expect(!Number.isNaN(Date.parse(value)), "a datetime")
+        ...(typeof maxLength === "number" && value.length > maxLength
+          ? [`${path} is longer than ${maxLength}`]
           : []),
+        ...(typeof pattern === "string"
+          ? expect(new RegExp(pattern, "u").test(value), `like ${pattern}`)
+          : []),
+        ...(formatted === undefined ? [] : expect(formatted.test(value), `a ${String(format)}`)),
       ];
     }
-    case "number":
-      return expect(typeof value === "number", "a number");
+    case "number": {
+      if (typeof value !== "number") return [`${path} must be a number`];
+      const { integer, min, max } = node;
+      return [
+        ...(integer === true ? expect(Number.isInteger(value), "an integer") : []),
+        ...(typeof min === "number" ? expect(value >= min, `at least ${min}`) : []),
+        ...(typeof max === "number" ? expect(value <= max, `at most ${max}`) : []),
+      ];
+    }
     case "boolean":
       return expect(typeof value === "boolean", "a boolean");
     case "enum":
@@ -524,6 +543,29 @@ export const makeFakeEntityStore = (
       record(next, live ? "patch" : "create", meta ?? null);
       return ok({ entity: entity(next), created: !live });
     },
+    checkEntity: (type, id, { patch }) => {
+      if (!types.has(type)) return err("TypeNotFound", `No type ${type}`);
+      const row = rows.get(id);
+      if (row !== undefined && row.type !== type)
+        return err("EntityTypeMismatch", `${id} is a ${row.type}`, { id, type, actual: row.type });
+      const live = row !== undefined && row.data !== null;
+      const data = live ? mergePatch(row.data ?? {}, patch) : mergePatch({}, patch);
+      const problem = writeProblems(type, data, id);
+      if (problem !== undefined) return problem;
+      return ok({ data, version: types.get(type)?.versions.length ?? 1, created: !live });
+    },
+    getBacklinks: (id, options) => {
+      const limit = Math.min(options?.limit ?? 50, 200);
+      const all = linkedFrom(id).filter(
+        (link) => options?.cursor === undefined || link.source > options.cursor,
+      );
+      const items = all.slice(0, limit);
+      const last = items.at(-1);
+      return ok({
+        items,
+        ...(all.length > limit && last !== undefined ? { nextCursor: last.source } : {}),
+      });
+    },
     deleteEntity: (id, options) => {
       if (metaProblem(options?.meta)) return err("BadRequest", "meta is larger than 1 KB");
       const row = rows.get(id);
@@ -589,6 +631,8 @@ export const makeFakeEntityStore = (
     upsertEntity: guard("upsertEntity", rpc.upsertEntity),
     deleteEntity: guard("deleteEntity", rpc.deleteEntity),
     getChange: guard("getChange", rpc.getChange),
+    checkEntity: guard("checkEntity", rpc.checkEntity),
+    getBacklinks: guard("getBacklinks", rpc.getBacklinks),
   };
 
   return {

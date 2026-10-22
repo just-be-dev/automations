@@ -103,6 +103,24 @@ export const ChangeEvent = Schema.Struct({
 });
 export type ChangeEvent = typeof ChangeEvent.Type;
 
+/** An entity that links to another, and the field path it links from. */
+export const Backlink = Schema.Struct({
+  source: Schema.String,
+  type: Schema.String,
+  path: Schema.String,
+});
+export const BacklinkPage = Schema.Struct({
+  items: Schema.Array(Backlink),
+  nextCursor: Schema.optionalKey(Schema.String),
+});
+
+/** What `upsertEntity` would store: the dry run's answer. */
+export const CheckedEntity = Schema.Struct({
+  data: Schema.Json,
+  version: Schema.Int,
+  created: Schema.Boolean,
+});
+
 /** A change with its data at `rev - 1` and at `rev`, lensed to the type's latest version. */
 export const Change = Schema.Struct({
   ...ChangeEvent.fields,
@@ -160,6 +178,16 @@ export interface EntityStoreRpc {
     options?: { readonly expectedRev?: number; readonly meta?: WriteMeta },
   ) => Promise<unknown>;
   readonly getChange: (id: string, rev: number) => Promise<unknown>;
+  /** `upsertEntity`'s checks, writing nothing. */
+  readonly checkEntity: (
+    type: string,
+    id: string,
+    input: { readonly patch: Readonly<Record<string, Schema.Json>> },
+  ) => Promise<unknown>;
+  readonly getBacklinks: (
+    id: string,
+    options?: { readonly cursor?: string; readonly limit?: number },
+  ) => Promise<unknown>;
 }
 
 const RpcFailure = Schema.Struct({
@@ -229,6 +257,10 @@ const makeApi = (rpc: EntityStoreRpc) => ({
       rpc.deleteEntity(id, options),
     ),
   getChange: (id: string, rev: number) => call("getChange", Change, () => rpc.getChange(id, rev)),
+  checkEntity: (type: string, id: string, input: Parameters<EntityStoreRpc["checkEntity"]>[2]) =>
+    call("checkEntity", CheckedEntity, () => rpc.checkEntity(type, id, input)),
+  getBacklinks: (id: string, options?: Parameters<EntityStoreRpc["getBacklinks"]>[1]) =>
+    call("getBacklinks", BacklinkPage, () => rpc.getBacklinks(id, options)),
 });
 
 /** entity-store's operations as Effects, failing with `EntityStoreApiError`. */

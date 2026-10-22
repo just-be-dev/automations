@@ -54,6 +54,15 @@ export class EntityRevConflict extends Schema.TaggedError<EntityRevConflict>()(
   },
 ) {}
 
+/**
+ * entity-store has a change but can't present its data at the type's latest version, so whose
+ * write it was, and what it holds, can't be told.
+ */
+export class EntityChangeUnreadable extends Schema.TaggedError<EntityChangeUnreadable>()(
+  "EntityChangeUnreadable",
+  { message: Schema.String },
+) {}
+
 /** An entity before and after a write. `before` is missing for a new entity. */
 export interface EntityChange {
   readonly before: EntityData | undefined;
@@ -171,13 +180,13 @@ export class EntityStore extends Context.Service<
       EntityStoreError | InvalidEntity | EntityRevConflict
     >;
     /**
-     * The change that made revision `rev` of an entity, or `undefined` when there's none, or its
-     * data can't be presented at its type's latest version.
+     * The change that made revision `rev` of an entity, or `undefined` when there's none. Fails
+     * with `EntityChangeUnreadable` when its data can't be presented at the type's latest version.
      */
     readonly getChange: (
       id: string,
       rev: number,
-    ) => Effect.Effect<StoredChange | undefined, EntityStoreError>;
+    ) => Effect.Effect<StoredChange | undefined, EntityStoreError | EntityChangeUnreadable>;
     /**
      * The revision an entity is at, of any type, and whether it is live; `undefined` when it never
      * existed. A deleted entity is at the revision that deleted it.
@@ -518,8 +527,7 @@ export const makeEntityStore = (
       });
     }
     const before = found.kind === "live" ? toRecord(type, found.entity) : undefined;
-    const merged = mergePatch(before?.data ?? {}, data);
-    const email = merged["email"];
+    const email = mergePatch(before?.data ?? {}, data)["email"];
     if (typeof email !== "string" || email === "") {
       const roles = yield* rolesWith(typeName, id);
       if (roles.length > 0) {
@@ -528,10 +536,14 @@ export const makeEntityStore = (
         });
       }
     }
+    // entity-store's own dry run: every check its write makes, and the data it would store.
+    const checked = yield* api
+      .checkEntity(typeName, id, { patch: data })
+      .pipe(Effect.mapError(refusal));
     const expectedRev = found.kind === "live" ? found.entity.rev : 0;
     const write: EntityWrite = {
       before,
-      after: { type: typeName, id, data: merged },
+      after: { type: typeName, id, data: toEntityData(type, checked.data) },
       expectedRev,
       rev: (found.kind === "live" ? found.entity.rev : found.rev) + 1,
     };
@@ -550,6 +562,16 @@ export const makeEntityStore = (
     if (roles.length > 0) {
       return yield* new InvalidEntity({
         message: `Can't delete ${typeName} ${id}: it is a member of ${roles.join(", ")}. Take it out of them first.`,
+      });
+    }
+    // entity-store refuses to delete what others link to, so say who before anyone confirms.
+    const { items, nextCursor } = yield* api
+      .getBacklinks(id, { limit: 20 })
+      .pipe(Effect.mapError(storeError));
+    if (items.length > 0) {
+      const links = items.map((link) => `${link.type} ${link.source} (${link.path})`);
+      return yield* new InvalidEntity({
+        message: `Can't delete ${typeName} ${id}: ${links.join(", ")}${nextCursor === undefined ? "" : " and more"} link to it. Remove those links first.`,
       });
     }
     const found = yield* readEntity(id);
@@ -690,15 +712,12 @@ export const makeEntityStore = (
     }),
     getChange: Effect.fn("EntityStore.getChange")(function* (id: string, rev: number) {
       const change = yield* api.getChange(id, rev).pipe(
-        // ProjectionFailed: its data can't be presented at the type's latest version.
-        orMissing(
-          "ChangeNotFound",
-          "ProjectionFailed",
-          "RevisionNotFound",
-          "EntityNotFound",
-          "TypeNotFound",
+        orMissing("ChangeNotFound", "RevisionNotFound", "EntityNotFound", "TypeNotFound"),
+        Effect.mapError((error) =>
+          error.code === "ProjectionFailed"
+            ? new EntityChangeUnreadable({ message: error.message })
+            : storeError(error),
         ),
-        Effect.mapError(storeError),
       );
       if (change === undefined) {
         return undefined;

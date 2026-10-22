@@ -393,3 +393,55 @@ describe("EntityStore over entity-store", () => {
     });
   });
 });
+
+describe("EntityStore checks writes as entity-store will", () => {
+  test("refuses what only entity-store's dry run sees, and datetimes without a timezone", async () => {
+    const fake = seededEntityStore({});
+    fake.seedType("ticket", "Tickets", {
+      title: "summary",
+      fields: {
+        summary: { type: "string", maxLength: 10 },
+        level: { type: "enum", values: ["low", "high"], optional: true },
+        due: { type: "string", format: "datetime", optional: true },
+      },
+    });
+    const problem = (data: Record<string, string>) =>
+      Effect.runPromise(
+        EntityStore.use((entities) => entities.checkEntity("ticket", "t-1", data)).pipe(
+          Effect.flip,
+          Effect.map((error) => error.message),
+          Effect.provide(layerFake(fake)),
+        ),
+      );
+    expect(await problem({ summary: "Fix it", level: "urgent" })).toContain("level");
+    expect(await problem({ summary: "Far too long for this" })).toContain("summary");
+    expect(await problem({ summary: "Fix it", due: "2026-11-02T09:00" })).toContain("due");
+    const fine = await Effect.runPromise(
+      EntityStore.use((entities) =>
+        entities.checkEntity("ticket", "t-1", { summary: "Fix it", due: "2026-11-02T09:00Z" }),
+      ).pipe(Effect.provide(layerFake(fake))),
+    );
+    expect(fine.after.data).toEqual({ summary: "Fix it", due: "2026-11-02T09:00Z" });
+    expect(fake.changes()).toEqual([]);
+  });
+
+  test("refuses to delete an entity others link to, saying who", async () => {
+    const message = await run(
+      Effect.gen(function* () {
+        const entities = yield* EntityStore;
+        yield* entities.putType({
+          ...employee,
+          fields: [
+            ...employee.fields,
+            { name: "buddy", label: "Buddy", type: "ref", to: "employee" },
+          ],
+        });
+        yield* entities.putEntity("employee", "grace", { name: "Grace", buddy: "ada" });
+        return (yield* Effect.flip(entities.checkDeleteEntity("employee", "ada"))).message;
+      }),
+    );
+    expect(message).toBe(
+      "Can't delete employee ada: employee grace (buddy) link to it. Remove those links first.",
+    );
+  });
+});

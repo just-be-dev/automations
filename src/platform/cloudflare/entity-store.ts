@@ -49,6 +49,8 @@ const rpcOf = (
   upsertEntity: (...args) => invoke("upsertEntity", args),
   deleteEntity: (...args) => invoke("deleteEntity", args),
   getChange: (...args) => invoke("getChange", args),
+  checkEntity: (...args) => invoke("checkEntity", args),
+  getBacklinks: (...args) => invoke("getBacklinks", args),
 });
 
 /**
@@ -97,6 +99,8 @@ const localRpc = Effect.gen(function* () {
       upsertEntity: (type, id, input) => run(stub.upsertEntity(type, id, input)),
       deleteEntity: (id, options) => run(stub.deleteEntity(id, options)),
       getChange: (id, rev) => run(stub.getChange(id, rev)),
+      checkEntity: (type, id, input) => run(stub.checkEntity(type, id, input)),
+      getBacklinks: (id, options) => run(stub.getBacklinks(id, options)),
     };
   };
 });

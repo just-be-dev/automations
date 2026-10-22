@@ -89,6 +89,7 @@ export const Subject = Schema.Struct({ type: Schema.String, id: Schema.String, d
 export interface Subject extends Schema.Schema.Type<typeof Subject> {}
 
 const isoDate = /^\d{4}-\d{2}-\d{2}$/;
+const isoDateTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$/;
 
 const fieldAccepts = (field: EntityField, value: Schema.Json): boolean => {
   if (value === null) {
@@ -105,7 +106,10 @@ const fieldAccepts = (field: EntityField, value: Schema.Json): boolean => {
     case "date":
       return typeof value === "string" && isoDate.test(value) && !Number.isNaN(Date.parse(value));
     case "datetime":
-      return typeof value === "string" && !Number.isNaN(Date.parse(value));
+      // As entity-store checks it: ISO 8601 with a timezone.
+      return (
+        typeof value === "string" && isoDateTime.test(value) && !Number.isNaN(Date.parse(value))
+      );
   }
 };
 

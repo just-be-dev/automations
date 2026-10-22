@@ -50,7 +50,10 @@ export const deliverEntityChange = Effect.fn("EntityChanges.deliver")(function* 
     return;
   }
   const store = yield* EntityStore;
-  const change = yield* store.getChange(id, rev);
+  const change = yield* store.getChange(id, rev).pipe(
+    // Its data can't be presented at the type's latest version: retrying won't change that.
+    Effect.catchTag("EntityChangeUnreadable", () => Effect.succeed(undefined)),
+  );
   if (change === undefined || change.seq !== message.value.seq) {
     return yield* Effect.logWarning(
       "Dropped an entity change entity-store no longer has, or can't present",

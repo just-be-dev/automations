@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Logger from "effect/Logger";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { AutomationIndex } from "../automation/index.ts";
@@ -465,7 +466,7 @@ test("a command checks again against a newer write instead of failing forever; o
         email: "ada@lovelace.dev",
       });
 
-      // A link to an entity that doesn't exist only fails at entity-store.
+      // A link to an entity that doesn't exist fails entity-store's dry run when prepared.
       yield* store.putType({
         ...person,
         fields: [
@@ -474,16 +475,25 @@ test("a command checks again against a newer write instead of failing forever; o
         ],
       });
       const dangling: Event = { id: "command-3", name: "entity.put", data: null, depth: 0 };
-      const refused = yield* changes.prepare(
-        "event:command-3",
-        { ...action, data: { manager: "nobody" } },
-        dangling.id,
-        dangling,
-      );
-      expect(yield* changes.decide("event:command-3", refused.id, true)).toMatchObject({
+      expect(
+        yield* changes
+          .prepare(
+            "event:command-3",
+            { ...action, data: { manager: "nobody" } },
+            dangling.id,
+            dangling,
+          )
+          .pipe(Effect.flip),
+      ).toMatchObject({ message: expect.stringContaining("nobody") });
+      // One entity-store refuses only when it applies is settled with the reason.
+      const late: Event = { id: "command-5", name: "entity.put", data: null, depth: 0 };
+      const refused = yield* changes.prepare("event:command-5", action, late.id, late);
+      h.store.failing("upsertEntity", { code: "ValidationFailed", message: "No longer fits" });
+      expect(yield* changes.decide("event:command-5", refused.id, true)).toEqual({
         status: "cancelled",
-        result: { error: expect.stringContaining("nobody") },
+        result: { error: "No longer fits" },
       });
+      h.store.failing("upsertEntity", undefined);
       // Settled, so it no longer blocks or retries.
       const next = yield* changes.prepare("owner", { ...action, data: { name: "Next" } });
       expect((yield* changes.decide("owner", next.id, true)).status).toBe("applied");
@@ -687,4 +697,81 @@ test("a delete that landed before its receipt is found by the revision that dele
       expect(h.writes("ada").map(({ op }) => op)).toEqual(["delete"]);
     }).pipe(Effect.provide(h.layer)),
   );
+});
+
+test("a type change refused when it applies goes back to pending and never applies unconfirmed", async () => {
+  const h = harness();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const changes = yield* makeChanges(h.storage);
+      const widened = {
+        ...person,
+        fields: [...person.fields, { name: "team", label: "Team", type: "text" as const }],
+      };
+      const proposal = yield* changes.prepare("owner", { kind: "putType", type: widened });
+      h.store.failing("createVersion", { code: "LensCheckFailed", message: "The lens failed" });
+      expect(yield* changes.decide("owner", proposal.id, true).pipe(Effect.flip)).toMatchObject({
+        message: "The lens failed",
+      });
+      expect(h.data.get(`proposal:${proposal.id}`)).toMatchObject({ state: "pending" });
+      h.store.failing("createVersion", undefined);
+      // Later changes settle what's still applying first; this one isn't.
+      const next = yield* changes.prepare("owner", action);
+      yield* changes.decide("owner", next.id, true);
+      const info = yield* Effect.promise(() => h.store.getType("person"));
+      expect(info).toMatchObject({ value: { latestVersion: 1 } });
+    }).pipe(Effect.provide(h.layer)),
+  );
+});
+
+test("an event command whose earlier write can't be read is cancelled, never written again", async () => {
+  const h = harness();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const changes = yield* makeChanges(h.storage);
+      const origin: Event = { id: "command-6", name: "entity.put", data: null, depth: 0 };
+      const command = yield* changes.prepare("event:command-6", action, origin.id, origin);
+      h.receiptFailure(true);
+      yield* changes.decide("event:command-6", command.id, true).pipe(Effect.flip);
+      h.receiptFailure(false);
+      h.store.failing("getChange", { code: "ProjectionFailed", message: "Can't present it" });
+      const restarted = yield* makeChanges(h.storage);
+      expect(yield* restarted.decide("event:command-6", command.id, true)).toMatchObject({
+        status: "cancelled",
+        result: { error: expect.stringContaining("may already have been applied") },
+      });
+      expect(h.writes("ada")).toHaveLength(1);
+    }).pipe(Effect.provide(h.layer)),
+  );
+});
+
+test("an approved change from before entity-store is skipped with a warning", async () => {
+  const h = harness();
+  const logged: Array<unknown> = [];
+  h.data.set("proposal:change-1", {
+    owner: "owner",
+    proposal: {
+      id: "change-1",
+      action,
+      title: "Save person ada",
+      details: [],
+      consequences: [],
+      confirmLabel: "Save",
+    },
+    before: {},
+    after: {},
+    result: null,
+    state: "applying",
+  });
+  h.data.set("sequence", 1);
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const changes = yield* makeChanges(h.storage);
+      yield* changes.prepare("owner", action);
+    }).pipe(
+      Effect.provide(h.layer),
+      Effect.provide(Logger.layer([Logger.make(({ message }) => void logged.push(message))])),
+    ),
+  );
+  expect(JSON.stringify(logged)).toContain("from before entity-store");
 });
