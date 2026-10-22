@@ -223,9 +223,11 @@ const storeError = (error: EntityStoreApiError) => new EntityStoreError({ messag
 /** entity-store codes that mean the write can't apply as asked, rather than that it failed. */
 const refusals = new Set([
   "BadRequest",
+  "EntityAlreadyExists",
   "EntityLinked",
   "EntityTypeMismatch",
   "IndexKeyFailed",
+  "InvalidLens",
   "InvalidSchema",
   "LensCheckFailed",
   "LinkTargetInvalid",
@@ -235,6 +237,9 @@ const refusals = new Set([
   "TypeNotFound",
   "UniqueViolation",
   "ValidationFailed",
+  // Another version landed first: the change was planned against an older one.
+  "VersionConflict",
+  "VersionNotFound",
 ]);
 
 const refusal = (error: EntityStoreApiError) =>
