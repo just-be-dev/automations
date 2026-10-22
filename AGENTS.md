@@ -25,7 +25,6 @@ Most modules open with a comment saying what they own.
 - `evals/`: evals of every LLM call against the real models: the tests in `<name>.eval.ts`, and their cases in `datasets/<name>.yaml`. See `docs/development.md#evals`.
 - `demo/`: `mise run demo:reset`, which brings a local studio to the live demo's state through the HTTP API, with its seed (`seed.ts`) and fallback workflow (`onboarding.json`). See `docs/development.md#live-demo`. Keep the seed's type and templates in step with the migrations; `demo/seed.test.ts` checks them.
 - `migrations/`: D1 migrations, applied in numeric order on deploy and under `alchemy dev`.
-- `scripts/`: the data migration to entity-store (`entity-store-migration/`, not run by anything).
 
 ## Boundaries
 
@@ -51,13 +50,13 @@ Most modules open with a comment saying what they own.
 
 ## entity-store
 
-- entity-store (a separate repo and Alchemy stack) is the system of record for entity types, entities and roles. automations keeps templates and `entity_subscriptions` in D1. Its `entity_types`, `entities` and `roles` tables are unused but stay until the data migration has run everywhere: never read, write or drop them.
+- entity-store (a separate repo and Alchemy stack) is the system of record for entity types, entities and roles. automations keeps templates and `entity_subscriptions` in D1. Its `entity_types`, `entities` and `roles` tables are unused: never read or write them.
 - `EntityStoreRpc` in `src/entities/entity-store-api.ts` is a contract with entity-store, whose API Worker serves it on its default entrypoint; change it only together with entity-store. Decode every answer. Every method returns a `Result` and never throws for a domain error.
 - Under `alchemy dev`, `EntityStoreDev` (`src/platform/cloudflare/entity-store-dev.ts`) stands in for entity-store: the in-memory entity-store behind the same methods, kept in its storage (`entity-store`), feeding the local `EntityStoreChanges` queue. `EntityStoreLive` picks it from `localDevelopment`; never bind it on a deployed stage. `PUT`/`DELETE /api/dev/entity-store/:type/:id` write to it directly, like an edit made in entity-store itself.
 - Roles are `role` entities (ID = role name, members link to `employee`s), and the `role` type is hidden from automations' types. Entity IDs are unique across types.
 - Saving a type from automations only adds or removes fields (`planTypeWrite`). Refuse a field whose kind changes rather than authoring a lens here.
 - The `meta` automations writes (`{ depth, sourceEventId?, changeId?, source? }`, at most 1 KB) is persisted in entity-store's change log. Keep it compatible.
-- Lifecycle events and entity triggers come only from the change feed: never publish `entity.*` or notify subscribers from a write path. Their key is `entity-store:<seq>`, so a redelivered message starts nothing twice; never key them by entity ID and revision, which come back after a type is deleted. Drop a message whose change is gone or can't be presented (`ChangeNotFound`, `ProjectionFailed`) rather than retry it. Writes with `meta.source: "migration"`, roles, and types automations can't use publish nothing.
+- Lifecycle events and entity triggers come only from the change feed: never publish `entity.*` or notify subscribers from a write path. Their key is `entity-store:<seq>`, so a redelivered message starts nothing twice; never key them by entity ID and revision, which come back after a type is deleted. Drop a message whose change is gone or can't be presented (`ChangeNotFound`, `ProjectionFailed`) rather than retry it. Roles, and types automations can't use, publish nothing.
 - An entity trigger ignores a change committed before its `triggerSince`: when the saved trigger took effect. Only a save that changes the trigger moves it. A keyed `entityChanged` leaves a receipt (`entity-change:<key>`), declined ones included.
 
 ## The assistant and changes

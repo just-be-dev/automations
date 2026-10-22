@@ -146,7 +146,7 @@ test("a write's depth comes from its meta, and a chain's runs get the lifecycle 
   expect(h.notified[0]?.event?.depth).toBe(16);
 });
 
-test("roles, types automations can't use, and the data migration's writes publish nothing", async () => {
+test("roles and types automations can't use publish nothing", async () => {
   const h = harness();
   await Effect.runPromise(
     Effect.gen(function* () {
@@ -162,13 +162,6 @@ test("roles, types automations can't use, and the data migration's writes publis
       h.store.seedType("Office-Space", "", { fields: { name: { type: "string" } } });
       yield* Effect.promise(() =>
         h.store.upsertEntity("Office-Space", "hq", { patch: { name: "HQ" } }),
-      );
-      yield* deliverEntityChange(h.latest());
-      yield* entities.putEntity(
-        "employee",
-        "ada",
-        { name: "Ada" },
-        { meta: { depth: 0, source: "migration" } },
       );
       yield* deliverEntityChange(h.latest());
     }).pipe(Effect.provide(h.layer)),

@@ -159,20 +159,9 @@ The first deploy offers to bootstrap Alchemy's Cloudflare-hosted state store. Al
 
 Deploy entity-store first, on the same stage. automations finds it by Alchemy reference to the `entity-store` stack in the shared Cloudflare state store: `Api` and its Durable Objects bind entity-store's Api Worker, whose default entrypoint serves the RPC methods, and `Api` consumes entity-store's `entity-store-<stage>-changes` queue.
 
-It also creates `AutomationsDatabase`, a D1 database that lists the automations and holds the templates and which automations subscribe to each type. Alchemy applies the migrations in `migrations/` on every deploy. They seed two welcome-email templates. The `entity_types`, `entities` and `roles` tables they also create are left in place but no longer read; [copy them to entity-store](#moving-entities-to-entity-store) once.
+It also creates `AutomationsDatabase`, a D1 database that lists the automations and holds the templates and which automations subscribe to each type. Alchemy applies the migrations in `migrations/` on every deploy. They seed two welcome-email templates. The `entity_types`, `entities` and `roles` tables they also create are left in place but no longer read.
 
 The `Events` Cloudflare Queue accepts named events from the API, automation actions and entity-store's changes. `Api` consumes it, routes `entity.put` commands through `ChangeCoordinator`, then delivers each event to the automation directory. `Api` also consumes entity-store's change queue: it publishes each change's `entity.created`, `entity.updated` or `entity.deleted` to `Events` and notifies the automations watching the type. Both consumers acknowledge individual messages only after successful delivery, retry failures (10 retries, 30-second backoff), and dead-letter exhausted messages to `automations-<stage>-failed-events`. Inspect failed deliveries in the Api logs and the queue dashboard; dead-letter replay is manual. The prototype visits every listed automation rather than maintaining a separate event subscription index.
-
-### Moving entities to entity-store
-
-A stage that ran before entity-store keeps its entity types, entities and roles in `AutomationsDatabase`. [`scripts/entity-store-migration/migrate.ts`](../scripts/entity-store-migration/migrate.ts) copies them into entity-store over its HTTP API:
-
-```sh
-bun scripts/entity-store-migration/migrate.ts \
-  --source d1:<account-id>/<database-id> --target https://<entity-store host>/
-```
-
-It reads D1 with `CLOUDFLARE_API_TOKEN` (or `--source <export.json>`), and authenticates to a deployed entity-store with `ENTITY_STORE_ACCESS_CLIENT_ID` and `ENTITY_STORE_ACCESS_CLIENT_SECRET`. It first looks up every entity and role ID on the target (`GET /api/entities/:id`). entity-store's IDs are unique across types, so an ID it holds as another type, live or deleted, is a clash; one it holds as the same type already exists and is left as it is. It also refuses if entity-store can't hold the data: an ID two of automations' types share, a type named `role`, or a role member that isn't an employee. It checks every entity write against the planned types in an in-memory entity-store and lists everything entity-store would refuse, such as a datetime without a timezone; it doesn't guess fixes, so correct those in automations first. Without `--apply` it lists all of that, and the writes it would make, and changes nothing. With `--apply`, a clash or any of those problems stops it before it creates or versions a single type, so it never leaves half a copy. Otherwise it creates and versions the types, checks every entity write against entity-store itself (`POST /api/types/:type/entities/:id/check`), and writes no entity unless all pass. Entities and roles are only created, never overwritten, so running it again creates only what's missing. Values of fields a type no longer has, and refs to missing entities, are left out and listed. Its writes carry `meta` `{ "source": "migration" }`, which automations' change consumer skips, so copying starts no automations. It doesn't touch automations' tables.
 
 Deploys also create a 30-day Access service token for machine testing. Send it as `CF-Access-Client-Id` / `CF-Access-Client-Secret`, and read it with `bun alchemy state`. Never commit it.
 

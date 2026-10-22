@@ -10,7 +10,7 @@ import { Events } from "../events/service.ts";
 import { ChangeEvent } from "./entity-store-api.ts";
 import { EntityStore } from "./store.ts";
 import { EntitySubscribers } from "./subscribers.ts";
-import { depthOf, isMigration } from "./write-meta.ts";
+import { depthOf } from "./write-meta.ts";
 
 export class EntityChangeError extends Schema.TaggedError<EntityChangeError>()(
   "EntityChangeError",
@@ -37,8 +37,7 @@ export const changeKey = (seq: number) => `entity-store:${seq}`;
  * A failure fails the message so the queue retries it. Messages that can never be delivered are
  * dropped with a warning: one that isn't a change; one whose change is gone, because its type was
  * deleted, or was replaced by a later change at the same revision; and one whose data can't be
- * presented at its type's latest version. Changes to roles, to types automations can't use, and the data migration's
- * writes publish nothing.
+ * presented at its type's latest version. Changes to roles and to types automations can't use publish nothing.
  */
 export const deliverEntityChange = Effect.fn("EntityChanges.deliver")(function* (input: unknown) {
   const message = Schema.decodeUnknownOption(ChangeEvent)(input);
@@ -46,9 +45,6 @@ export const deliverEntityChange = Effect.fn("EntityChanges.deliver")(function* 
     return yield* Effect.logWarning("Dropped an entity-store message that isn't a change");
   }
   const { id, rev } = message.value;
-  if (isMigration(message.value.meta)) {
-    return;
-  }
   const store = yield* EntityStore;
   const change = yield* store.getChange(id, rev).pipe(
     // Its data can't be presented at the type's latest version: retrying won't change that.
@@ -59,7 +55,7 @@ export const deliverEntityChange = Effect.fn("EntityChanges.deliver")(function* 
       "Dropped an entity change entity-store no longer has, or can't present",
     ).pipe(Effect.annotateLogs({ id, rev, seq: message.value.seq }));
   }
-  if (change.entityType === undefined || isMigration(change.meta)) {
+  if (change.entityType === undefined) {
     return;
   }
   const depth = depthOf(change.meta);

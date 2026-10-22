@@ -15,8 +15,6 @@ export const ChangeMeta = Schema.Struct({
   sourceEventId: Schema.optionalKey(Schema.String),
   /** The confirmed change (`Changes` proposal ID) that made the write. */
   changeId: Schema.optionalKey(Schema.String),
-  /** `migration`: copied by the data migration, so automations publishes and starts nothing. */
-  source: Schema.optionalKey(Schema.Literal("migration")),
 });
 export type ChangeMeta = typeof ChangeMeta.Type;
 
@@ -42,6 +40,3 @@ export const depthOf = (meta: WriteMeta | null): number => {
     () => MAX_EVENT_DEPTH,
   );
 };
-
-/** Whether a write was the data migration's, which starts nothing. */
-export const isMigration = (meta: WriteMeta | null) => meta?.["source"] === "migration";
