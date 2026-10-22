@@ -1,5 +1,5 @@
 /**
- * The entity-store RPC contract: the values its `EntityStoreRpc` entrypoint returns, decoded, and
+ * The entity-store RPC contract: the values its API Worker's RPC methods return, decoded, and
  * the `EntityStoreApi` service that calls it. entity-store is the system of record for entity
  * types and entities (roles included); automations reaches it over a service binding, which the
  * platform layer supplies as an `EntityStoreRpc`.
@@ -116,7 +116,7 @@ export type Change = typeof Change.Type;
 export type WriteMeta = Readonly<Record<string, Schema.Json>>;
 
 /**
- * The entrypoint as the binding exposes it. Every method resolves to a `Result`, never throwing
+ * entity-store's RPC methods, as its API Worker's default entrypoint exposes them over a binding. Every method resolves to a `Result`, never throwing
  * for a domain error; its value is decoded by `makeEntityStoreApi`.
  */
 export interface EntityStoreRpc {

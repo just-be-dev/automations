@@ -1,19 +1,21 @@
 /**
- * An in-memory entity-store behind the `EntityStoreRpc` contract, for tests and the memory layer.
+ * An in-memory entity-store behind the `EntityStoreRpc` contract, for tests, the memory layer, and
+ * the stand-in `alchemy dev` runs.
  * It keeps revisions, tombstones, write `meta` and the change log as entity-store does, and
  * enforces what automations relies on: `expectedRev`, upsert's create/patch/recreate rules, link
  * targets and linked deletes, and `TypeInUse`. Schema checks cover the node kinds and the lens
  * ops automations writes (`add`, `remove`), which it applies to stored data when a version lands.
  */
-import type * as Schema from "effect/Schema";
-import type {
+import * as Schema from "effect/Schema";
+import {
   ChangeEvent,
-  EntityStoreRpc,
-  SchemaNode,
-  StoreSchema,
-  TypeInfo,
+  Op,
   VersionInfo,
-  WriteMeta,
+  type EntityStoreRpc,
+  type SchemaNode,
+  type StoreSchema,
+  type TypeInfo,
+  type WriteMeta,
 } from "./entity-store-api.ts";
 
 type Json = Schema.Json;
@@ -34,6 +36,44 @@ interface Revision {
   readonly data: Data | null;
   readonly meta: WriteMeta | null;
 }
+
+const DataOrNull = Schema.NullOr(Schema.Record(Schema.String, Schema.Json));
+
+/** Everything the fake holds, as plain JSON, so it can be saved and restored. */
+export const FakeState = Schema.Struct({
+  clock: Schema.Finite,
+  seq: Schema.Int,
+  types: Schema.Array(
+    Schema.Struct({
+      name: Schema.String,
+      description: Schema.String,
+      createdAt: Schema.Finite,
+      updatedAt: Schema.Finite,
+      versions: Schema.Array(VersionInfo),
+    }),
+  ),
+  rows: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      type: Schema.String,
+      rev: Schema.Int,
+      data: DataOrNull,
+      createdAt: Schema.Finite,
+      updatedAt: Schema.Finite,
+    }),
+  ),
+  revisions: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      rev: Schema.Int,
+      op: Op,
+      data: DataOrNull,
+      meta: DataOrNull,
+    }),
+  ),
+  log: Schema.Array(ChangeEvent),
+});
+export type FakeState = typeof FakeState.Type;
 
 const ok = (value: unknown) => Promise.resolve({ ok: true, value: structuredClone(value) });
 const err = (code: string, message: string, details: Record<string, unknown> = {}) =>
@@ -171,6 +211,8 @@ export interface FakeEntityStore extends EntityStoreRpc {
   readonly seedEntity: (type: string, id: string, data: Data) => void;
   /** Every change, oldest first. */
   readonly changes: () => ReadonlyArray<ChangeEvent>;
+  /** Everything it holds, to restore with `makeFakeEntityStore({ state })`. */
+  readonly snapshot: () => FakeState;
   /** Fails calls of `method` with `error` until reset with `undefined`. */
   readonly failing: (
     method: keyof EntityStoreRpc,
@@ -178,14 +220,27 @@ export interface FakeEntityStore extends EntityStoreRpc {
   ) => void;
 }
 
-export const makeFakeEntityStore = (): FakeEntityStore => {
-  const types = new Map<string, Omit<TypeInfo, "latestVersion">>();
-  const rows = new Map<string, Row>();
+/**
+ * `state` restores what `snapshot` saved. `now` reads the time writes record; by default each
+ * write is one tick after the last, which keeps tests deterministic. Times never go backward.
+ */
+export const makeFakeEntityStore = (
+  options: { readonly state?: FakeState; readonly now?: () => number } = {},
+): FakeEntityStore => {
+  const state = structuredClone(options.state);
+  const types = new Map<string, Omit<TypeInfo, "latestVersion">>(
+    (state?.types ?? []).map((type) => [type.name, type]),
+  );
+  const rows = new Map<string, Row>((state?.rows ?? []).map((row) => [row.id, { ...row }]));
   const revisions = new Map<string, Array<Revision>>();
-  const log: Array<ChangeEvent> = [];
+  for (const { id, ...revision } of state?.revisions ?? []) {
+    revisions.set(id, [...(revisions.get(id) ?? []), revision]);
+  }
+  const log: Array<ChangeEvent> = [...(state?.log ?? [])];
   const failures = new Map<string, { readonly code: string; readonly message: string } | "throw">();
-  let clock = 0;
-  const now = () => ++clock;
+  let clock = state?.clock ?? 0;
+  let seq = state?.seq ?? 0;
+  const now = () => (clock = Math.max(clock + 1, options.now?.() ?? 0));
 
   const latest = (name: string) => types.get(name)?.versions.at(-1);
   const summary = (info: Omit<TypeInfo, "latestVersion">) => ({
@@ -223,7 +278,7 @@ export const makeFakeEntityStore = (): FakeEntityStore => {
     revisions.set(row.id, history);
     log.push({
       v: 1,
-      seq: log.length + 1,
+      seq: ++seq,
       type: row.type,
       id: row.id,
       rev: row.rev,
@@ -558,6 +613,17 @@ export const makeFakeEntityStore = (): FakeEntityStore => {
       record(row, "create", null);
     },
     changes: () => structuredClone(log),
+    snapshot: () =>
+      structuredClone({
+        clock,
+        seq,
+        types: [...types.values()],
+        rows: [...rows.values()],
+        revisions: [...revisions].flatMap(([id, history]) =>
+          history.map((revision) => ({ id, ...revision })),
+        ),
+        log,
+      }),
     failing: (method, error) => {
       if (error === undefined) failures.delete(method);
       else failures.set(method, error);

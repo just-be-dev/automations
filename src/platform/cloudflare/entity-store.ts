@@ -1,7 +1,8 @@
 /**
  * The entity store on Cloudflare: entity types, entities and roles in entity-store, reached over a
- * service binding to its `EntityStoreRpc` entrypoint, and templates and trigger subscriptions in
- * automations' D1. Also the queue of entity-store's changes, which the Api consumes.
+ * service binding to its API Worker's default entrypoint, and templates and trigger subscriptions
+ * in automations' D1. Also the queue of entity-store's changes, which the Api consumes. Under
+ * `alchemy dev` a local stand-in (`entity-store-dev.ts`) takes entity-store's place.
  */
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
@@ -11,7 +12,13 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import { AutomationsDatabase } from "./database.ts";
 import { failWith } from "./d1-failure.ts";
-import { makeEntityStoreApi, type EntityStoreRpc } from "../../entities/entity-store-api.ts";
+import EntityStoreDev, { LocalEntityStoreChanges } from "./entity-store-dev.ts";
+import { localDevelopment } from "./local-development.ts";
+import {
+  EntityStoreApi,
+  makeEntityStoreApi,
+  type EntityStoreRpc,
+} from "../../entities/entity-store-api.ts";
 import {
   EntityStore,
   EntityStoreError,
@@ -27,67 +34,80 @@ import { Template } from "../../entities/templates.ts";
 export const ENTITY_STORE_STACK = "entity-store";
 const BINDING = "ENTITY_STORE";
 
+/** An `EntityStoreRpc` whose every method calls `invoke` with its name and arguments. */
+const rpcOf = (
+  invoke: (method: keyof EntityStoreRpc, args: ReadonlyArray<unknown>) => Promise<unknown>,
+): EntityStoreRpc => ({
+  listTypes: () => invoke("listTypes", []),
+  getType: (...args) => invoke("getType", args),
+  createType: (...args) => invoke("createType", args),
+  checkVersion: (...args) => invoke("checkVersion", args),
+  createVersion: (...args) => invoke("createVersion", args),
+  deleteType: (...args) => invoke("deleteType", args),
+  listEntities: (...args) => invoke("listEntities", args),
+  getEntity: (...args) => invoke("getEntity", args),
+  upsertEntity: (...args) => invoke("upsertEntity", args),
+  deleteEntity: (...args) => invoke("deleteEntity", args),
+  getChange: (...args) => invoke("getChange", args),
+});
+
 /**
- * Binds entity-store's API Worker, by its `EntityStoreRpc` entrypoint, in the same stage. Having
- * the binding is the authorization: the entrypoint isn't routed publicly. Alchemy's typed service
- * bindings don't take a Worker from another stack, so this registers the raw binding, as Alchemy's
- * own bindings do. Yield it in an outer Effect; the accessor it returns reads the binding when
- * called, per request or instance.
+ * Binds entity-store's API Worker in the same stage. Its RPC methods are on the default
+ * entrypoint, which isn't routed publicly: having the binding is the authorization. Alchemy's
+ * typed service bindings don't take a Worker from another stack, so this registers the raw
+ * binding, as Alchemy's own bindings do. The methods never throw for a domain error; they answer
+ * with a `Result`, which `EntityStoreApi` decodes.
  */
-export const EntityStoreRpcBinding = Effect.gen(function* () {
-  const env = yield* Cloudflare.WorkerEnvironment;
+const deployedRpc = Effect.gen(function* () {
+  const env: Record<string, unknown> = yield* Cloudflare.WorkerEnvironment;
   if (!globalThis.__ALCHEMY_RUNTIME__) {
     const api = yield* Cloudflare.Worker.ref("Api", { stack: ENTITY_STORE_STACK });
     yield* (yield* Cloudflare.Worker).bind`${BINDING}`({
-      bindings: [
-        { type: "service", name: BINDING, service: api.workerName, entrypoint: "EntityStoreRpc" },
-      ],
+      bindings: [{ type: "service", name: BINDING, service: api.workerName }],
     });
   }
-  // @effect-diagnostics-next-line returnEffectInGen:off
-  return Effect.sync((): EntityStoreRpc => {
-    const stub = (env as Record<string, unknown>)[BINDING] as
-      | Record<string, (...args: ReadonlyArray<unknown>) => Promise<unknown>>
-      | undefined;
-    const method =
-      (name: keyof EntityStoreRpc) =>
-      (...args: ReadonlyArray<unknown>) => {
-        const call = stub?.[name];
-        return call === undefined
-          ? Promise.reject(new Error("entity-store isn't bound to this Worker"))
-          : // A method read off an RPC stub must be called on the stub.
-            Promise.resolve(Reflect.apply(call, stub, args));
-      };
+  return (_runtime: Alchemy.RuntimeContext["Service"]): EntityStoreRpc =>
+    rpcOf((method, args) => {
+      const stub = env[BINDING];
+      const call: unknown =
+        typeof stub === "object" && stub !== null ? Reflect.get(stub, method) : undefined;
+      return typeof call === "function"
+        ? // A method read off an RPC stub must be called on the stub.
+          Promise.resolve(Reflect.apply(call, stub, args))
+        : Promise.reject(new Error("entity-store isn't bound to this Worker"));
+    });
+});
+
+/** The local stand-in, one object for the whole studio. */
+const localRpc = Effect.gen(function* () {
+  const namespace = yield* EntityStoreDev;
+  return (runtime: Alchemy.RuntimeContext["Service"]): EntityStoreRpc => {
+    const stub = namespace.getByName("local");
+    const run = (effect: Effect.Effect<unknown, unknown, Alchemy.RuntimeContext>) =>
+      Effect.runPromise(effect.pipe(Effect.provideService(Alchemy.RuntimeContext, runtime)));
     return {
-      listTypes: method("listTypes"),
-      getType: method("getType"),
-      createType: method("createType"),
-      checkVersion: method("checkVersion"),
-      createVersion: method("createVersion"),
-      deleteType: method("deleteType"),
-      listEntities: method("listEntities"),
-      getEntity: method("getEntity"),
-      upsertEntity: method("upsertEntity"),
-      deleteEntity: method("deleteEntity"),
-      getChange: method("getChange"),
+      listTypes: () => run(stub.listTypes()),
+      getType: (name) => run(stub.getType(name)),
+      createType: (input) => run(stub.createType(input)),
+      checkVersion: (type, input) => run(stub.checkVersion(type, input)),
+      createVersion: (type, input) => run(stub.createVersion(type, input)),
+      deleteType: (name) => run(stub.deleteType(name)),
+      listEntities: (type, options) => run(stub.listEntities(type, options)),
+      getEntity: (id) => run(stub.getEntity(id)),
+      upsertEntity: (type, id, input) => run(stub.upsertEntity(type, id, input)),
+      deleteEntity: (id, options) => run(stub.deleteEntity(id, options)),
+      getChange: (id, rev) => run(stub.getChange(id, rev)),
     };
-  });
+  };
 });
 
 /**
  * entity-store's change queue. Deployed, it is entity-store's own queue, by reference. Under
- * `alchemy dev` a reference can't reach a queue another `alchemy dev` serves, so this declares a
- * local queue with the same name; entity-store's local producer delivers to whichever process
- * consumes that name. Props are read at plan time only: cold start has no stage.
+ * `alchemy dev` it is the local stand-in's queue.
  */
 export const EntityStoreChangesQueue = (local: boolean) =>
   local
-    ? Cloudflare.Queues.Queue(
-        "EntityStoreChanges",
-        globalThis.__ALCHEMY_RUNTIME__
-          ? Effect.succeed({})
-          : Effect.map(Alchemy.Stage, (stage) => ({ name: `entity-store-${stage}-changes` })),
-      )
+    ? LocalEntityStoreChanges
     : Cloudflare.Queues.Queue.ref("Changes", { stack: ENTITY_STORE_STACK });
 
 const TemplateRow = Schema.Struct({ definition: Schema.fromJsonString(Template) });
@@ -96,14 +116,21 @@ const SubscriptionRow = Schema.Struct({ automation_id: Schema.String });
 /**
  * Binds the database and entity-store. Yield it in a Worker's or Durable Object's outer Effect;
  * provide the layer it returns where a `RuntimeContext` is available, per request or per instance.
+ * The layer provides `EntityStore`, and `EntityStoreApi` for what must reach entity-store itself.
  */
 export const EntityStoreLive = Effect.gen(function* () {
   const db = yield* Cloudflare.D1.QueryDatabase(AutomationsDatabase);
-  const rpc = yield* EntityStoreRpcBinding;
+  const rpc = (yield* localDevelopment) ? yield* localRpc : yield* deployedRpc;
   // Shared by every request this isolate serves; type versions never change.
   const cache: TypeCache = new Map();
 
-  return Layer.effect(
+  const api = Layer.effect(
+    EntityStoreApi,
+    Effect.gen(function* () {
+      return makeEntityStoreApi(rpc(yield* Alchemy.RuntimeContext));
+    }),
+  );
+  const store = Layer.effect(
     EntityStore,
     Effect.gen(function* () {
       const runtime = yield* Alchemy.RuntimeContext;
@@ -136,12 +163,8 @@ export const EntityStoreLive = Effect.gen(function* () {
           ),
         );
 
-      const api = makeEntityStoreApi(
-        yield* rpc.pipe(Effect.provideService(Alchemy.RuntimeContext, runtime)),
-      );
-
       return makeEntityStore(
-        api,
+        yield* EntityStoreApi,
         {
           subscribe: (automationId, type) =>
             query(
@@ -197,4 +220,5 @@ export const EntityStoreLive = Effect.gen(function* () {
       );
     }),
   );
+  return store.pipe(Layer.provideMerge(api));
 });
