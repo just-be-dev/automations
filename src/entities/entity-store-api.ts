@@ -1,7 +1,7 @@
 /**
  * The entity-store RPC contract: the values its API Worker's RPC methods return, decoded, and
  * the `EntityStoreApi` service that calls it. entity-store is the system of record for entity
- * types and entities (roles included); automations reaches it over a service binding, which the
+ * types and entities; automations reaches it over a service binding, which the
  * platform layer supplies as an `EntityStoreRpc`.
  */
 import * as Context from "effect/Context";

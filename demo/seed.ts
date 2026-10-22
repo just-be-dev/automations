@@ -86,7 +86,7 @@ export const employees = (
     },
   }));
 
-/** The `employee` type the migrations seed. */
+/** The demo's sample `employee` type, which the reset writes through the studio. */
 export const employeeType: EntityType = {
   name: "employee",
   label: "Employee",

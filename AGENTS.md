@@ -23,7 +23,7 @@ Most modules open with a comment saying what they own.
 - `src/ui/`: the Foldkit browser app.
 - `src/workflow.ts`, `src/entities.ts`, `src/connections.ts`: re-exports that keep the UI's imports. Backend code imports the owning modules.
 - `evals/`: evals of every LLM call against the real models: the tests in `<name>.eval.ts`, and their cases in `datasets/<name>.yaml`. See `docs/development.md#evals`.
-- `demo/`: `mise run demo:reset`, which brings a local studio to the live demo's state through the HTTP API, with its seed (`seed.ts`) and fallback workflow (`onboarding.json`). See `docs/development.md#live-demo`. Keep the seed's type and templates in step with the migrations; `demo/seed.test.ts` checks them.
+- `demo/`: `mise run demo:reset`, which brings a local studio to the live demo's state through the HTTP API, with its seed (`seed.ts`) and fallback workflow (`onboarding.json`). See `docs/development.md#live-demo`. The seed's `employee` type and welcome templates are sample data the reset writes through the API; nothing outside `demo/`, tests and fixtures may depend on them.
 - `migrations/`: D1 migrations, applied in numeric order on deploy and under `alchemy dev`.
 
 ## Boundaries
@@ -50,7 +50,7 @@ Most modules open with a comment saying what they own.
 
 ## entity-store
 
-- entity-store (a separate repo and Alchemy stack) is the system of record for entity types, entities and roles. automations keeps templates and `entity_subscriptions` in D1. Its `entity_types`, `entities` and `roles` tables are unused: never read or write them.
+- entity-store (a separate repo and Alchemy stack) is the system of record for entity types and entities. automations keeps templates and `entity_subscriptions` in D1; migration `0006` dropped its old `entity_types`, `entities` and `roles` tables and the seeded welcome templates. automations provides no entity type of its own: work with whatever types entity-store holds.
 - `EntityStoreRpc` in `src/entities/entity-store-api.ts` is a contract with entity-store, whose API Worker serves it on its default entrypoint; change it only together with entity-store. Decode every answer. Every method returns a `Result` and never throws for a domain error.
 - Under `alchemy dev`, `EntityStoreDev` (`src/platform/cloudflare/entity-store-dev.ts`) stands in for entity-store: the in-memory entity-store behind the same methods, kept in its storage (`entity-store`), feeding the local `EntityStoreChanges` queue. `EntityStoreLive` picks it from `localDevelopment`; never bind it on a deployed stage. `PUT`/`DELETE /api/dev/entity-store/:type/:id` write to it directly, like an edit made in entity-store itself.
 - Roles are `role` entities (ID = role name, members link to `employee`s), and the `role` type is hidden from automations' types. Entity IDs are unique across types.

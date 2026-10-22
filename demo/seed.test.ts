@@ -1,9 +1,7 @@
-/** Checks the demo seed against the migrations, the catalog checker, and the calendar. */
+/** Checks the demo seed against the entity checker, the catalog checker, and the calendar. */
 import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
-import * as Schema from "effect/Schema";
-import { checkEntityData, EntityType } from "../src/entities/model.ts";
-import { Template } from "../src/entities/templates.ts";
+import { checkEntityData } from "../src/entities/model.ts";
 import { checkWorkflow } from "../src/workflow/catalog.ts";
 import {
   approverNote,
@@ -16,30 +14,11 @@ import {
   templates,
 } from "./seed.ts";
 
-/** The JSON values a migration inserts, with SQL's doubled quotes undone. */
-const insertedJson = async (file: string) => {
-  const sql = await Bun.file(new URL(`../migrations/${file}`, import.meta.url)).text();
-  return [...sql.matchAll(/'(\{(?:[^']|'')*\})'/g)].map((match) =>
-    JSON.parse((match[1] ?? "").replaceAll("''", "'")),
-  );
-};
-
 test("the new hire starts on the first Monday at least two weeks out", () => {
   expect(startDateFrom(new Date(2026, 9, 14))).toBe("2026-11-02");
   expect(startDateFrom(new Date(2026, 9, 12))).toBe("2026-10-26");
   expect(startDateFrom(new Date(2026, 9, 18))).toBe("2026-11-02");
   expect(startDateFrom(new Date(2026, 11, 28))).toBe("2027-01-11");
-});
-
-test("the seed restores the type and templates the migrations create", async () => {
-  const [type] = await insertedJson("0002_entities.sql");
-  expect(employeeType).toEqual(Schema.decodeUnknownSync(EntityType)(type));
-  const seeded = await insertedJson("0003_templates.sql");
-  const byName = (list: ReadonlyArray<Template>) =>
-    list.toSorted((a, b) => a.name.localeCompare(b.name));
-  expect(byName(templates)).toEqual(
-    byName(seeded.map((each) => Schema.decodeUnknownSync(Template)(each))),
-  );
 });
 
 test("people get configured addresses, or placeholders that go nowhere", () => {

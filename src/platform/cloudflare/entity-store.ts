@@ -1,6 +1,6 @@
 /**
- * The entity store on Cloudflare: entity types, entities and roles in entity-store, reached over a
- * service binding to its API Worker's default entrypoint, and templates and trigger subscriptions
+ * The entity store on Cloudflare: entity types and entities in entity-store, reached over a service
+ * binding to its API Worker's default entrypoint, and templates and trigger subscriptions
  * in automations' D1. Also the queue of entity-store's changes, which the Api consumes. Under
  * `alchemy dev` a local stand-in (`entity-store-dev.ts`) takes entity-store's place.
  */
