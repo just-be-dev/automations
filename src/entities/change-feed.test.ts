@@ -72,28 +72,28 @@ test("each write becomes its lifecycle event and reaches the type's watchers und
   const ada = (data: Record<string, string>) => ({ type: "employee", id: "ada", data });
   expect(h.published).toEqual([
     {
-      id: "entity:ada:1",
+      id: "entity-store:1",
       name: "entity.created",
       data: { before: null, after: { name: "Ada" } },
       subject: ada({ name: "Ada" }),
       depth: 0,
     },
     {
-      id: "entity:ada:1",
+      id: "entity-store:1",
       name: "entity.created",
       data: { before: null, after: { name: "Ada" } },
       subject: ada({ name: "Ada" }),
       depth: 0,
     },
     {
-      id: "entity:ada:2",
+      id: "entity-store:2",
       name: "entity.updated",
       data: { before: { name: "Ada" }, after: { name: "Ada", email: "ada@example.com" } },
       subject: ada({ name: "Ada", email: "ada@example.com" }),
       depth: 0,
     },
     {
-      id: "entity:ada:3",
+      id: "entity-store:3",
       name: "entity.deleted",
       data: { before: { name: "Ada", email: "ada@example.com" }, after: null },
       subject: ada({ name: "Ada", email: "ada@example.com" }),
@@ -105,12 +105,12 @@ test("each write becomes its lifecycle event and reaches the type's watchers und
     {
       automation: "onboarding",
       change: { before: undefined, after: ada({ name: "Ada" }), committedAt: expect.any(Number) },
-      key: "entity:ada:1",
+      key: "entity-store:1",
     },
     {
       automation: "onboarding",
       change: { before: undefined, after: ada({ name: "Ada" }), committedAt: expect.any(Number) },
-      key: "entity:ada:1",
+      key: "entity-store:1",
     },
     {
       automation: "onboarding",
@@ -119,7 +119,7 @@ test("each write becomes its lifecycle event and reaches the type's watchers und
         after: ada({ name: "Ada", email: "ada@example.com" }),
         committedAt: expect.any(Number),
       },
-      key: "entity:ada:2",
+      key: "entity-store:2",
     },
   ]);
 });
@@ -210,4 +210,46 @@ test("a message that can never be delivered is dropped; a failure to deliver ret
   const unreachable = harness();
   unreachable.store.failing("getChange", "throw");
   expect(Exit.isFailure(await run(unreachable, (h) => h.latest()))).toBe(true);
+});
+
+test("an ID that comes back after its type was deleted gets new keys; a stale message is dropped", async () => {
+  const h = harness();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const entities = yield* EntityStore;
+      yield* entities.subscribe("watcher", "employee");
+      yield* entities.putEntity("employee", "ada", { name: "Ada" });
+      const first = h.latest();
+      yield* deliverEntityChange(first);
+      yield* entities.deleteEntity("employee", "ada");
+      yield* entities.subscribe("watcher", undefined);
+      yield* entities.deleteType("employee");
+      yield* entities.putType(employee);
+      yield* entities.subscribe("watcher", "employee");
+      yield* entities.putEntity("employee", "ada", { name: "Ada again" });
+      const again = h.latest();
+      expect(again).toMatchObject({ id: "ada", rev: 1 });
+      // The first change is gone; its late redelivery names a revision another change now has.
+      yield* deliverEntityChange(first);
+      yield* deliverEntityChange(again);
+    }).pipe(Effect.provide(h.layer)),
+  );
+  expect(h.published.map((event) => [event.id, event.subject?.data])).toEqual([
+    ["entity-store:1", { name: "Ada" }],
+    ["entity-store:3", { name: "Ada again" }],
+  ]);
+  expect(h.notified.map((each) => each.key)).toEqual(["entity-store:1", "entity-store:3"]);
+});
+
+test("a change entity-store can't present at its type's latest version is dropped", async () => {
+  const h = harness();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const entities = yield* EntityStore;
+      yield* entities.putEntity("employee", "ada", { name: "Ada" });
+      h.store.failing("getChange", { code: "ProjectionFailed", message: "Couldn't present it" });
+      yield* deliverEntityChange(h.latest());
+    }).pipe(Effect.provide(h.layer)),
+  );
+  expect(h.published).toEqual([]);
 });

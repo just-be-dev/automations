@@ -528,7 +528,11 @@ export const makeFakeEntityStore = (
       if (metaProblem(options?.meta)) return err("BadRequest", "meta is larger than 1 KB");
       const row = rows.get(id);
       if (row === undefined) return err("EntityNotFound", `No entity ${id}`);
-      if (row.data === null) return err("EntityDeleted", `${id} was deleted`, { rev: row.rev });
+      // Deleting a deleted entity changes nothing, unless it expected a live revision.
+      if (row.data === null)
+        return options?.expectedRev === undefined
+          ? ok({ id, rev: row.rev })
+          : err("RevConflict", `${id} was deleted`, { currentRev: 0 });
       if (options?.expectedRev !== undefined && options.expectedRev !== row.rev)
         return err("RevConflict", `${id} is at another revision`, { currentRev: row.rev });
       const linked = linkedFrom(id);

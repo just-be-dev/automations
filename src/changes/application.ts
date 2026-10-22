@@ -261,10 +261,21 @@ export const makeChanges = Effect.fn("Changes.make")(function* (storage: ChangeS
         Effect.map((result): Outcome => ({ applied: true, result })),
         Effect.catchTags({
           // A write retried after an answer was lost may have landed before this attempt.
-          // The current revision is where a lost answer's write is, unless another came after.
+          // The current revision is where a lost answer's write is, unless another came after. A
+          // deleted entity reports 0, so a delete looks at the revision that deleted it.
           EntityRevConflict: (conflict) =>
             Effect.map(
-              landed(record, action, [conflict.currentRev, record.write?.rev]),
+              Effect.flatMap(
+                action.kind === "deleteEntity"
+                  ? store.revisionOf(action.id)
+                  : Effect.succeed(undefined),
+                (deleted) =>
+                  landed(record, action, [
+                    conflict.currentRev,
+                    deleted?.live === false ? deleted.rev : undefined,
+                    record.write?.rev,
+                  ]),
+              ),
               (change): Outcome =>
                 change === undefined
                   ? { applied: false, reason: "conflict", message: STALE }

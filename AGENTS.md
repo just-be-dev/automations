@@ -57,7 +57,7 @@ Most modules open with a comment saying what they own.
 - Roles are `role` entities (ID = role name, members link to `employee`s), and the `role` type is hidden from automations' types. Entity IDs are unique across types.
 - Saving a type from automations only adds or removes fields (`planTypeWrite`). Refuse a field whose kind changes rather than authoring a lens here.
 - The `meta` automations writes (`{ depth, sourceEventId?, changeId?, source? }`, at most 1 KB) is persisted in entity-store's change log. Keep it compatible.
-- Lifecycle events and entity triggers come only from the change feed: never publish `entity.*` or notify subscribers from a write path. Their key is `entity:<id>:<rev>`, so a redelivered message starts nothing twice. Writes with `meta.source: "migration"`, roles, and types automations can't use publish nothing.
+- Lifecycle events and entity triggers come only from the change feed: never publish `entity.*` or notify subscribers from a write path. Their key is `entity-store:<seq>`, so a redelivered message starts nothing twice; never key them by entity ID and revision, which come back after a type is deleted. Drop a message whose change is gone or can't be presented (`ChangeNotFound`, `ProjectionFailed`) rather than retry it. Writes with `meta.source: "migration"`, roles, and types automations can't use publish nothing.
 - An entity trigger ignores a change committed before its workflow's `savedAt`.
 
 ## The assistant and changes
@@ -68,14 +68,14 @@ Most modules open with a comment saying what they own.
 - The assistant reads through `EntityStore`, writes only through `Changes`, and delegates drafts to `Automations.chat` with a stable request ID. It never saves or runs workflows. Its host commits storage and reply scheduling together, and its tools are installed before pi resumes.
 - There is one live `ChangeCoordinator` for the tenant. Never instantiate separate coordinators for different writers. entity-store and proposal storage cannot share a transaction, so every entity write from `Changes` is conditioned on the reviewed revision (`expectedRev`, 0 for a new entity) and carries the proposal's ID in `meta.changeId`; recovery reads the change at the write's revision to tell whether it landed. Never write an entity unconditionally from `Changes`. A proposal reads only what its action touches; never snapshot the whole store.
 - Entity, type and template writes over HTTP go through `/api/changes` and `/api/changes/:id/decision`. MCP mutation tools return proposals, and `decide_change` applies the person's decision. Role writes are direct.
-- Entity notifications carry `entity:<id>:<rev>` from the change feed through every adapter to deterministic run IDs.
+- Entity notifications carry `entity-store:<seq>` from the change feed through every adapter to deterministic run IDs.
 - Questions and action confirmations are separate. Never treat free text as approval.
 
 ## Runs and events
 
 - Only the durable engine owns the replay journal. Never seed interpreter working values from a run record. `RunId` and `ExecutionId` are distinct branded strings; decode them without changing their wire values.
 - The interpreter reaches the outside world only through `StepRunner`. Its code outside an Activity reruns on every replay, so keep it deterministic. The engine never keeps a run in memory between events.
-- `events.emit` is a permission-controlled operation. `entity.put` writes through the tenant `ChangeCoordinator`, not a separate writer. The Api's consumer of entity-store's change queue publishes `entity.created`, `entity.updated` and `entity.deleted` as `entity:<id>:<rev>`.
+- `events.emit` is a permission-controlled operation. `entity.put` writes through the tenant `ChangeCoordinator`, not a separate writer. The Api's consumer of entity-store's change queue publishes `entity.created`, `entity.updated` and `entity.deleted` as `entity-store:<seq>`.
 - Event chains stop at depth 16, counting entity-triggered runs too. A command's write carries its depth in `meta.depth`, and the change feed publishes at that depth, so the count survives entity-store.
 - Each automation keeps matched and ignored event receipts, and recovers a run committed before its receipt instead of starting another.
 - Slack ingress callbacks write nothing to Slack and must stay replay-safe. Only they may publish `slack.*`. Keep `docs/slack.md` in step with `docs/slack-app-manifest.json`. The channels `namespace` (`automations`) and mailbox storage are persisted contracts.

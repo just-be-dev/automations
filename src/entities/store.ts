@@ -81,6 +81,8 @@ export interface EntityDeletion {
 
 /** A committed change to an entity, as entity-store recorded it. */
 export interface StoredChange {
+  /** Its place in entity-store's change log, never reused. */
+  readonly seq: number;
   readonly type: string;
   readonly id: string;
   readonly rev: number;
@@ -168,11 +170,24 @@ export class EntityStore extends Context.Service<
       EntityRecord | undefined,
       EntityStoreError | InvalidEntity | EntityRevConflict
     >;
-    /** The change that made revision `rev` of an entity, or `undefined` when there's none. */
+    /**
+     * The change that made revision `rev` of an entity, or `undefined` when there's none, or its
+     * data can't be presented at its type's latest version.
+     */
     readonly getChange: (
       id: string,
       rev: number,
     ) => Effect.Effect<StoredChange | undefined, EntityStoreError>;
+    /**
+     * The revision an entity is at, of any type, and whether it is live; `undefined` when it never
+     * existed. A deleted entity is at the revision that deleted it.
+     */
+    readonly revisionOf: (
+      id: string,
+    ) => Effect.Effect<
+      { readonly live: boolean; readonly rev: number } | undefined,
+      EntityStoreError
+    >;
     /** Records which entity type an automation's saved workflow watches, or that it watches none. */
     readonly subscribe: (
       automationId: string,
@@ -665,13 +680,26 @@ export const makeEntityStore = (
         );
       return deletion.before;
     }),
+    revisionOf: Effect.fn("EntityStore.revisionOf")(function* (id: string) {
+      const found = yield* readEntity(id);
+      return found.kind === "live"
+        ? { live: true, rev: found.entity.rev }
+        : found.rev === 0
+          ? undefined
+          : { live: false, rev: found.rev };
+    }),
     getChange: Effect.fn("EntityStore.getChange")(function* (id: string, rev: number) {
-      const change = yield* api
-        .getChange(id, rev)
-        .pipe(
-          orMissing("ChangeNotFound", "RevisionNotFound", "EntityNotFound", "TypeNotFound"),
-          Effect.mapError(storeError),
-        );
+      const change = yield* api.getChange(id, rev).pipe(
+        // ProjectionFailed: its data can't be presented at the type's latest version.
+        orMissing(
+          "ChangeNotFound",
+          "ProjectionFailed",
+          "RevisionNotFound",
+          "EntityNotFound",
+          "TypeNotFound",
+        ),
+        Effect.mapError(storeError),
+      );
       if (change === undefined) {
         return undefined;
       }
@@ -679,6 +707,7 @@ export const makeEntityStore = (
       const data = (value: Schema.Json) =>
         value === null || entityType === undefined ? null : toEntityData(entityType, value);
       const stored: StoredChange = {
+        seq: change.seq,
         type: change.type,
         id: change.id,
         rev: change.rev,

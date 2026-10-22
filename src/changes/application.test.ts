@@ -663,3 +663,28 @@ test("recovery finds a landed write at the entity's current revision, as for a r
     }).pipe(Effect.provide(h.layer)),
   );
 });
+
+test("a delete that landed before its receipt is found by the revision that deleted it", async () => {
+  const h = harness();
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const changes = yield* makeChanges(h.storage);
+      const deletion = yield* changes.prepare("owner", {
+        kind: "deleteEntity",
+        type: "person",
+        id: "ada",
+      });
+      h.receiptFailure(true);
+      yield* changes.decide("owner", deletion.id, true).pipe(Effect.flip);
+      h.receiptFailure(false);
+      // entity-store answers a stale delete of a deleted entity with currentRev 0.
+      expect(yield* Effect.promise(() => h.store.deleteEntity("ada", { expectedRev: 1 }))).toEqual({
+        ok: false,
+        error: { code: "RevConflict", message: "ada was deleted", currentRev: 0 },
+      });
+      const restarted = yield* makeChanges(h.storage);
+      expect((yield* restarted.decide("owner", deletion.id, true)).status).toBe("applied");
+      expect(h.writes("ada").map(({ op }) => op)).toEqual(["delete"]);
+    }).pipe(Effect.provide(h.layer)),
+  );
+});

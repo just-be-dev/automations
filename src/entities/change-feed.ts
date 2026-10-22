@@ -17,14 +17,17 @@ export class EntityChangeError extends Schema.TaggedError<EntityChangeError>()(
   { message: Schema.String },
 ) {}
 
-/** The ID a change's lifecycle event, and the runs it starts, are known by. */
-export const changeKey = (id: string, rev: number) => `entity:${id}:${rev}`;
+/**
+ * The ID a change's lifecycle event, and the runs it starts, are known by: its `seq`, which
+ * entity-store never reuses. An entity's ID and revision can come back after its type is deleted.
+ */
+export const changeKey = (seq: number) => `entity-store:${seq}`;
 
 /**
  * Delivers one queue message:
  *
  * 1. Reads the change from entity-store, with its data at the type's latest version.
- * 2. Publishes `entity.created`, `entity.updated` or `entity.deleted` as `entity:<id>:<rev>`, at
+ * 2. Publishes `entity.created`, `entity.updated` or `entity.deleted` as `entity-store:<seq>`, at
  *    the depth the write's `meta` carries, so an event chain stops at the same limit it would
  *    without the service boundary.
  * 3. For anything but a delete, notifies each automation watching the type under the same key, so
@@ -32,8 +35,9 @@ export const changeKey = (id: string, rev: number) => `entity:${id}:${rev}`;
  *    an event chain passes its lifecycle event as the run's origin, at that depth.
  *
  * A failure fails the message so the queue retries it. Messages that can never be delivered are
- * dropped with a warning: one that isn't a change, and one whose change is gone because its type
- * was deleted. Changes to roles, to types automations can't use, and the data migration's
+ * dropped with a warning: one that isn't a change; one whose change is gone, because its type was
+ * deleted, or was replaced by a later change at the same revision; and one whose data can't be
+ * presented at its type's latest version. Changes to roles, to types automations can't use, and the data migration's
  * writes publish nothing.
  */
 export const deliverEntityChange = Effect.fn("EntityChanges.deliver")(function* (input: unknown) {
@@ -47,17 +51,17 @@ export const deliverEntityChange = Effect.fn("EntityChanges.deliver")(function* 
   }
   const store = yield* EntityStore;
   const change = yield* store.getChange(id, rev);
-  if (change === undefined) {
-    return yield* Effect.logWarning("Dropped an entity change entity-store no longer has").pipe(
-      Effect.annotateLogs({ id, rev }),
-    );
+  if (change === undefined || change.seq !== message.value.seq) {
+    return yield* Effect.logWarning(
+      "Dropped an entity change entity-store no longer has, or can't present",
+    ).pipe(Effect.annotateLogs({ id, rev, seq: message.value.seq }));
   }
   if (change.entityType === undefined || isMigration(change.meta)) {
     return;
   }
   const depth = depthOf(change.meta);
   const event: Event = {
-    id: changeKey(id, rev),
+    id: changeKey(change.seq),
     name:
       change.op === "delete"
         ? "entity.deleted"

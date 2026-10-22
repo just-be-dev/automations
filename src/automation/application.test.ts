@@ -1652,11 +1652,17 @@ test("an entity trigger ignores changes committed before its workflow was saved"
       };
       // Delivered after the save, but committed before it: the change belongs to what it replaced.
       expect(
-        yield* app.entityChanged({ name: "Sam" }, subject, "entity:sam:2", undefined, savedAt - 1),
+        yield* app.entityChanged(
+          { name: "Sam" },
+          subject,
+          "entity-store:12",
+          undefined,
+          savedAt - 1,
+        ),
       ).toEqual({ runId: null });
       expect(
-        yield* app.entityChanged({ name: "Sam" }, subject, "entity:sam:3", undefined, savedAt),
-      ).toEqual({ runId: RunId.make("entity-entity:sam:3") });
+        yield* app.entityChanged({ name: "Sam" }, subject, "entity-store:13", undefined, savedAt),
+      ).toEqual({ runId: RunId.make("entity-entity-store:13") });
     }).pipe(Effect.provide(h.layer)),
   );
 });
@@ -2029,7 +2035,12 @@ test("an entity change starts an automation which emits an entity command throug
         yield* pumpChanges;
         const fact = h.emitted[0];
         if (fact === undefined) return yield* Effect.die("Entity fact not emitted");
-        expect(fact).toMatchObject({ id: "entity:ada:1", name: "entity.created", depth: 0 });
+        const adaSeq = h.store.changes().find((change) => change.id === "ada")?.seq;
+        expect(fact).toMatchObject({
+          id: `entity-store:${adaSeq}`,
+          name: "entity.created",
+          depth: 0,
+        });
         // The redelivered message publishes the same event again, under the same ID.
         expect(h.emitted[1]).toEqual(fact);
         yield* consume(fact);
@@ -2053,12 +2064,14 @@ test("an entity change starts an automation which emits an entity command throug
           email: "sam@example.com",
         });
         // One write for the command, however often it was delivered.
-        expect(
-          h.store.changes().filter((change) => change.id === "sam" && change.op !== "create"),
-        ).toHaveLength(1);
+        const welcomed = h.store
+          .changes()
+          .filter((change) => change.id === "sam" && change.op !== "create");
+        expect(welcomed).toHaveLength(1);
+        const key = `entity-store:${welcomed[0]?.seq}`;
         expect(h.emitted.slice(3)).toEqual([
-          expect.objectContaining({ id: "entity:sam:2", name: "entity.updated", depth: 2 }),
-          expect.objectContaining({ id: "entity:sam:2", name: "entity.updated", depth: 2 }),
+          expect.objectContaining({ id: key, name: "entity.updated", depth: 2 }),
+          expect.objectContaining({ id: key, name: "entity.updated", depth: 2 }),
         ]);
         expect(h.advances).toHaveLength(1);
       }).pipe(Effect.provide(layers));
@@ -2130,7 +2143,7 @@ test("an entity change keeps its chain's depth through entity-store, so a chain 
           yield* deliverEntityChange(latest);
           return latest;
         });
-        const runOf = (rev: number) => app.run(RunId.make(`entity-entity:sam:${rev}`));
+        const runOf = (seq: number) => app.run(RunId.make(`entity-entity-store:${seq}`));
 
         // A command at depth 14 writes at 15: its run may still emit, at 16.
         yield* apply(command(14));
@@ -2140,7 +2153,7 @@ test("an entity change keeps its chain's depth through entity-store, so a chain 
         yield* app.callbacks.advance({
           executionId: yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances.at(-1)),
         });
-        expect((yield* runOf(shallow.rev))?.status).toBe("completed");
+        expect((yield* runOf(shallow.seq))?.status).toBe("completed");
         expect(h.emitted.at(-1)).toMatchObject({ name: "person.echoed", depth: 16 });
 
         // A command at depth 15 writes at 16, the limit: its run can't emit again.
@@ -2151,7 +2164,7 @@ test("an entity change keeps its chain's depth through entity-store, so a chain 
         yield* app.callbacks.advance({
           executionId: yield* Schema.decodeUnknownEffect(ExecutionId)(h.advances.at(-1)),
         });
-        const stopped = yield* runOf(deep.rev);
+        const stopped = yield* runOf(deep.seq);
         expect(stopped?.status).toBe("failed");
         expect(stopped?.error).toContain("Event chain limit reached");
 
