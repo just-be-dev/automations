@@ -1,9 +1,17 @@
-/** Serves stateless MCP over HTTP with origin checks, body limits, and JSON-only responses. */
+/** Serves the studio's MCP server over stateless HTTP with origin checks, body limits, and JSON-only responses. */
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
-import { answerMcp, EntityToolHandlers, jsonRpcError, jsonRpcErrors } from "./entity-mcp.ts";
+import * as Layer from "effect/Layer";
+import { RequestIdentity } from "./identity.ts";
+import {
+  answerMcp,
+  httpMcpCaller,
+  jsonRpcError,
+  jsonRpcErrors,
+  StudioToolHandlers,
+} from "./mcp-server.ts";
 import { checkBodySize, json } from "./response.ts";
 
 /** Stateless Streamable HTTP: JSON responses only, with no optional GET stream. */
@@ -18,7 +26,10 @@ const mcp = Effect.gen(function* () {
   if (message._tag === "None") {
     return json(jsonRpcError(null, jsonRpcErrors.parse, "Expected a JSON body under 32 KB"), 400);
   }
-  const answer = yield* answerMcp(message.value).pipe(Effect.provide(EntityToolHandlers));
+  const { email } = yield* RequestIdentity;
+  const answer = yield* answerMcp(message.value).pipe(
+    Effect.provide(StudioToolHandlers.pipe(Layer.provide(httpMcpCaller(email)))),
+  );
   return answer === undefined ? HttpServerResponse.empty({ status: 202 }) : json(answer);
 });
 

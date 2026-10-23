@@ -39,7 +39,12 @@
             "options": { "allowedUnstableApis": ["effect/http"] }
           },
           {
-            "include": ["src/http/entity-mcp.ts", "src/http/entity-mcp.test.ts"],
+            "include": [
+              "src/http/entity-mcp.ts",
+              "src/http/automation-mcp.ts",
+              "src/http/mcp-server.ts",
+              "src/http/mcp-server.test.ts"
+            ],
             "options": { "allowedUnstableApis": ["effect/ai"] }
           },
           {

@@ -22,6 +22,7 @@ import { Automations } from "../../automation/service.ts";
 import { deliverEntityChange } from "../../entities/change-feed.ts";
 import { EntitySubscribers } from "../../entities/subscribers.ts";
 import { apiRoutes } from "../../http/api.ts";
+import { handleMcp, type McpHeaders } from "../../http/mcp-server.ts";
 import { accessIdentity } from "./access.ts";
 import { localDevelopment } from "./local-development.ts";
 import Automation from "./automation.ts";
@@ -91,13 +92,13 @@ export default class Api extends Cloudflare.Worker<Api>()(
       ),
     ).pipe(Layer.provideMerge(Layer.merge(entities, automations)));
     const namer = Layer.effect(Namer, Effect.map(ai.raw, workersAiNamer));
-    const services = Layer.mergeAll(
+    // Everything a request's handlers use, except who the request acts for.
+    const shared = Layer.mergeAll(
       index,
       threads,
       events,
       entities,
       automations,
-      accessIdentity(localUser),
       namer,
       assistantsLayer(assistantNamespace),
       changesLayer(changeNamespace),
@@ -105,6 +106,7 @@ export default class Api extends Cloudflare.Worker<Api>()(
       Layer.succeed(LiveConnections, live),
       Layer.succeed(LocalDevelopment, local),
     );
+    const services = Layer.merge(shared, accessIdentity(localUser));
     // Consumer settings are plan-time only; Stage is not a service in the Worker runtime.
     const deadLetterQueue = globalThis.__ALCHEMY_RUNTIME__
       ? undefined
@@ -205,8 +207,17 @@ export default class Api extends Cloudflare.Worker<Api>()(
         ),
     );
     const handler = yield* HttpRouter.toHttpEffect(apiRoutes);
-    // RuntimeContext and request headers exist only when this returned effect handles a request.
-    return { fetch: handler.pipe(Effect.provide(services)) };
+    return {
+      // RuntimeContext and request headers exist only when this returned effect handles a request.
+      fetch: handler.pipe(Effect.provide(services)),
+      /**
+       * The studio's MCP server over RPC, for other stacks that bind this Worker (the hub's
+       * assistant). Holding the binding is the authorization: RPC methods aren't routed over
+       * HTTP. The call acts for the person `cf-access-authenticated-user-email` names.
+       */
+      mcp: (body: unknown, headers: McpHeaders) =>
+        handleMcp(body, headers ?? {}).pipe(Effect.provide(shared), Effect.withSpan("Api.mcp")),
+    };
   }).pipe(
     Effect.provide(
       Layer.mergeAll(

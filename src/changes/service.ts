@@ -12,6 +12,8 @@ export class ChangeError extends Schema.TaggedError<ChangeError>()("ChangeError"
 export class Changes extends Context.Service<
   Changes,
   {
+    /** Checks and describes an action as `prepare` does, without storing a proposal. */
+    readonly preview: (action: ChangeAction) => Effect.Effect<Omit<ChangeProposal, "id">, unknown>;
     readonly prepare: (
       owner: string,
       action: ChangeAction,

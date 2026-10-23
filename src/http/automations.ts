@@ -1,5 +1,4 @@
 /** Routes automation design and run operations and builds the overview from each listed automation's status. */
-import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
@@ -8,16 +7,15 @@ import * as Schema from "effect/Schema";
 import { Automations } from "../automation/service.ts";
 import { QuestionsAnswer } from "../ai/ask-question/question.ts";
 import { createAutomation } from "../automation/creation.ts";
+import { listOverview } from "../automation/overview.ts";
 import { AutomationIndex } from "../automation/index.ts";
 import { studioOrigin } from "../automation/studio-link.ts";
-import type { AutomationOverview } from "../automation/model.ts";
 import { EntityId } from "../entities/model.ts";
 import { SuppliedEvent } from "../events/model.ts";
 import { HumanResponse } from "../workflow/interpreter.ts";
 import { Permissions, Workflow } from "../workflow/model.ts";
 import { RunId } from "../workflow/run.ts";
 import { RequestIdentity } from "./identity.ts";
-import { messageOf } from "../error.ts";
 import { limitedBody, NotFound, pathParams, respond } from "./response.ts";
 
 const AutomationParams = Schema.Struct({
@@ -219,34 +217,5 @@ export const automationRoutes = Layer.merge(
     ],
     { prefix: "/api/automations" },
   ),
-  HttpRouter.add(
-    "GET",
-    "/api/overview",
-    respond(
-      Effect.gen(function* () {
-        const index = yield* AutomationIndex;
-        const automations = yield* Automations;
-        const listed = yield* index.list;
-        return yield* Effect.forEach(
-          listed,
-          (automation) =>
-            automations
-              .get(automation.id)
-              .overview()
-              .pipe(
-                Effect.map((status): AutomationOverview => ({ ...automation, ...status })),
-                // One unreachable automation must not hide the others from the overview.
-                Effect.catchCause((cause) =>
-                  Effect.succeed<AutomationOverview>({
-                    ...automation,
-                    activeRuns: [],
-                    error: messageOf(Cause.squash(cause)),
-                  }),
-                ),
-              ),
-          { concurrency: 8 },
-        );
-      }),
-    ),
-  ),
+  HttpRouter.add("GET", "/api/overview", respond(listOverview())),
 );

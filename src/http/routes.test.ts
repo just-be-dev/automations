@@ -3,6 +3,7 @@ import { expect, test } from "bun:test";
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as Layer from "effect/Layer";
+import { Namer } from "../agents/namer/namer.ts";
 import { AutomationIndex } from "../automation/index.ts";
 import { Automations } from "../automation/service.ts";
 import { layerMemory } from "../entities/memory.ts";
@@ -96,6 +97,7 @@ const app = () =>
           Layer.provideMerge(
             Layer.mergeAll(
               automationsLayer,
+              Layer.succeed(Namer, { complete: unused }),
               Layer.succeed(RequestIdentity, { email: "owner@example.com" }),
               layerMemory({
                 types: [

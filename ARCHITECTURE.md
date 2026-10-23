@@ -68,7 +68,7 @@ The Durable Objects call each other, so the tier in the diagram is not flat:
 
 When Slack is configured, a third Worker, [`Channels`](src/platform/cloudflare/channels.ts), takes Slack's webhooks through [effect-channels](https://github.com/humanlayer/effect-channels), and clicks on an approval DM's buttons. It is public because Slack must reach it, and it serves only signature-checked Slack routes. [Events](#events-flow-through-one-queue) describes what it publishes, and [approving from Slack](#approvals-from-slack-go-through-respond) where clicks go.
 
-[The API host](src/platform/cloudflare/api.ts) rebuilds its service layers for each request, because they capture the request's runtime context and Access identity. [HTTP routes](src/http/api.ts) decode inputs, call one application operation, and encode results. They do not know about D1 bindings or Durable Object namespaces. JSON routes cap bodies at 32 KB and return `{ "error": string }` on failure; MCP returns JSON-RPC errors and dictation is a WebSocket.
+[The API host](src/platform/cloudflare/api.ts) rebuilds its service layers for each request, because they capture the request's runtime context and Access identity. Besides `fetch`, its default entrypoint has one RPC method, `mcp`, for the hub's assistant in the agents stack ([MCP](docs/development.md#mcp)). [HTTP routes](src/http/api.ts) decode inputs, call one application operation, and encode results. They do not know about D1 bindings or Durable Object namespaces. JSON routes cap bodies at 32 KB and return `{ "error": string }` on failure; MCP returns JSON-RPC errors and dictation is a WebSocket.
 
 ## Code is layered by ownership
 
@@ -84,7 +84,7 @@ When Slack is configured, a third Worker, [`Channels`](src/platform/cloudflare/c
 └────────────────────────────────────┬────────────────────────────────────┘
                                      │ provides layers for service tags
 ┌────────────────────────────────────▼────────────────────────────────────┐
-│ src/http/  routes, RequestIdentity, entity MCP                          │
+│ src/http/  routes, RequestIdentity, the studio's MCP server             │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ application: automation/, agents/, assistant/, changes/, events/,       │
 │ channels/                                                               │
@@ -525,7 +525,7 @@ entity-store and proposal storage cannot share a transaction. Every write carrie
 
 Confirmed writes no longer publish anything or start runs themselves; their receipt is `{ entity }` or `{ deleted }`. Lifecycle events and entity triggers follow from entity-store's change queue, keyed by the change's `seq` in entity-store's log, which is never reused, so a redelivered message, or a write recovered after a restart, starts nothing twice. Proposals stored before entity-store keep their receipts; one without a receipt must be prepared again.
 
-[Entity MCP](src/http/entity-mcp.ts) mutation tools return proposals, and its `decide_change` tool applies the person's decision. A client that passes a `requestId` can retry a mutation tool without preparing a second proposal.
+[The studio's MCP server](src/http/mcp-server.ts) has one approval per change: its tools without `readOnlyHint` change something when called, so the client's approval of that call (the hub assistant's approval card) is the person's decision. Its change tools ([`entity-mcp.ts`](src/http/entity-mcp.ts)) prepare through the coordinator and decide at once, so they keep every check above; a write refused or found stale is cancelled rather than left pending. `preview_change` describes a change as preparing it would and stores nothing, and `decide_change` decides a proposal waiting from elsewhere. A client that passes a `requestId` can retry a change tool and get the first outcome.
 
 ## Events flow through one queue
 
@@ -576,7 +576,7 @@ An ask-first action's DM, sent before roles were removed, has **Approve** and **
 - [`src/entities/`](src/entities/store.ts) owns entity models, approved templates, subscriptions, the entity-store contract and type adapter, and automations' rules on top. The memory store runs the same store code over [an in-memory entity-store](src/entities/entity-store-fake.ts).
 - [`src/connections/registry.ts`](src/connections/registry.ts) describes operations without executing them. The planner, checker, and UI share it. [`runner.ts`](src/connections/runner.ts) executes those operations; [`slack.ts`](src/connections/slack.ts) posts to Slack with a bot token, and [`email.ts`](src/connections/email.ts) is the email sender's contract, which [the Cloudflare adapter](src/platform/cloudflare/email.ts) fills with Email Service.
 - [`src/ai/pi.ts`](src/ai/pi.ts) defines the `PiAgent` conversation contract and tools; [`trace.ts`](src/ai/trace.ts) defines traces. The Cloudflare implementation wraps Promise-based pi-ai and pi-durable in Effect and stores conversations in Durable Object SQLite. [`src/ai/classifier.ts`](src/ai/classifier.ts) defines the clef classifier that picks progress phrases and makes decide steps' decisions. [`workers-ai.ts`](src/platform/cloudflare/workers-ai.ts) selects the pi, classifier and naming models; evals reuse it.
-- [`src/http/entity-mcp.ts`](src/http/entity-mcp.ts) exposes the entity store over stateless MCP JSON-RPC. Handlers run within the request so they retain access to D1 and entity-store; the assistant uses application tools directly, not MCP.
+- [`src/http/mcp-server.ts`](src/http/mcp-server.ts) exposes the studio over stateless MCP JSON-RPC: the catalog's tools ([`entity-mcp.ts`](src/http/entity-mcp.ts)) and the automations' ([`automation-mcp.ts`](src/http/automation-mcp.ts)), which read automations and runs and delegate design to the planner through `Automations.chat`. `/api/mcp` serves it over HTTP, and `Api`'s `mcp(body, headers)` RPC method serves it to the hub's assistant in the agents stack, acting for the person its `cf-access-authenticated-user-email` header names. Handlers run within the request or RPC call so they retain access to D1 and entity-store; the studio assistant uses application tools directly, not MCP.
 
 | Use                                 | Model                                                                       |
 | ----------------------------------- | --------------------------------------------------------------------------- |

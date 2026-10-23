@@ -8,7 +8,7 @@ Most modules open with a comment saying what they own.
 
 - `alchemy.run.ts`: re-exports `src/platform/cloudflare/stack.ts`: the `Studio` website with Access and the test service token, and `StudioEnv`.
 - `src/platform/cloudflare/`: every Cloudflare implementation: the private `Api` Worker (`api.ts`), the `AutomationAgent`, `StudioAssistant` and `ChangeCoordinator` Durable Objects, the entity-store binding and its change queue (`entity-store.ts`), the D1 adapters, Workers AI models (`workers-ai.ts`), pi (`pi.ts`, `pi-storage.ts`), the events and Slack actions queues, the Email Service sender (`email.ts`), the Slack `Channels` Worker, and the Studio Worker's entry (`edge.ts`).
-- `src/http/`: platform-independent routes, composed in `api.ts`: automations and the overview, entities and templates (`catalog.ts`), changes, events, the assistant, dictation (`transcription.ts`), and entity MCP (`entity-mcp.ts`). `response.ts` shares boundary decoding and responses.
+- `src/http/`: platform-independent routes, composed in `api.ts`: automations and the overview, entities and templates (`catalog.ts`), changes, events, the assistant, dictation (`transcription.ts`), and the studio's MCP server (`mcp-server.ts`, over the catalog's tools in `entity-mcp.ts` and the automations' in `automation-mcp.ts`, served at `/api/mcp` by `mcp.ts` and as `Api`'s `mcp` RPC). `response.ts` shares boundary decoding and responses.
 - `src/automation/`: one automation. `application.ts` joins `design-session.ts` (chat, pending replies, drafts) and `runs.ts` (runs, tasks, triggers), which share `workflow-store.ts` (snapshots and save) and `run-store.ts` (run records). `host.ts` is its storage and jobs contract, `service.ts` addresses an automation, and `index.ts` is the D1 directory.
 - `src/agents/planner/`, `src/automation/planning.ts`: the planner: its instructions and `planDraft` (`planner.ts`), the working copy (`plan.ts`) its tools (`tools.ts`) edit, progress phrases, and the stored working copy and questions (`planning.ts`).
 - `src/agents/namer/`, `src/automation/creation.ts`: creating an automation from a description, named by a fast model, which also titles assistant threads.
@@ -33,7 +33,7 @@ Most modules open with a comment saying what they own.
 - Code that reads or writes entities depends on `EntityStore`, never on D1 or entity-store's binding. Yield `EntityStoreLive` and `AutomationIndexD1` in the outer Effect, since they bind D1 and entity-store, and provide the layers they return per request or per instance, since they need a `RuntimeContext`.
 - `src/platform/cloudflare/workers-ai.ts` imports no Alchemy, so the evals reuse it.
 - `src/platform/cloudflare/edge.ts` only forwards `/api/*` to `Api`. Keep logic out of it.
-- Entity MCP handlers run inside the request, over its `EntityStore` and `Changes`. Don't switch to Effect's `McpServer`: it keeps sessions in memory and runs handlers on a fiber outside the request, where D1 and entity-store can't be reached.
+- MCP handlers run inside the request (or the `mcp` RPC call), over its `EntityStore`, `Changes` and `Automations`. Don't switch to Effect's `McpServer`: it keeps sessions in memory and runs handlers on a fiber outside the request, where D1 and entity-store can't be reached.
 - pi tools are one extension that only the root conversation selects, so agent steps never see them. Build them before opening pi, so an answer resumed after a restart still has them.
 
 ## Design sessions and the planner
@@ -66,9 +66,18 @@ Most modules open with a comment saying what they own.
 - Stopping ends the turn in storage before it aborts pi or stops a delegated planner (`stopChat`), so late work finds the turn over. Keep `updateTurn` for writes made while a turn runs, and never let `put` or `finish` reopen a receipt that has a result. A change the person already decided is settled, not dropped.
 - The assistant reads through `EntityStore`, writes only through `Changes`, and delegates drafts to `Automations.chat` with a stable request ID. It never saves or runs workflows. Its host commits storage and reply scheduling together, and its tools are installed before pi resumes.
 - There is one live `ChangeCoordinator` for the tenant. Never instantiate separate coordinators for different writers. entity-store and proposal storage cannot share a transaction, so every entity write from `Changes` is conditioned on the reviewed revision (`expectedRev`, 0 for a new entity) and carries the proposal's ID in `meta.changeId`; recovery reads the change at the write's revision to tell whether it landed. Never write an entity unconditionally from `Changes`. A proposal reads only what its action touches; never snapshot the whole store. Entity previews use entity-store's `checkEntity` dry run, so they refuse what entity-store will. A refusal at apply time, of any action, settles the proposal (pending for a person, cancelled for a command); never leave it applying. A change recovery can't read is unknown: fail closed.
-- Entity, type and template writes over HTTP go through `/api/changes` and `/api/changes/:id/decision`. MCP mutation tools return proposals, and `decide_change` applies the person's decision.
+- Entity, type and template writes over HTTP go through `/api/changes` and `/api/changes/:id/decision`.
 - Entity notifications carry `entity-store:<seq>` from the change feed through every adapter to deterministic run IDs.
 - Questions and action confirmations are separate. Never treat free text as approval.
+
+## MCP and the hub's assistant
+
+- `Api`'s default entrypoint has an RPC method `mcp(body, headers)` (the platform contract in agents' `docs/hub-shell.md`): one JSON-RPC message, answered `{ status, body }` exactly as `/api/mcp` would. Never route it over HTTP: holding the binding is the authorization. It acts for the person `cf-access-authenticated-user-email` names, trusted like Access; with no person every tool that changes something refuses (`NoPerson`). It never falls back to `local` or `DEV_USER_EMAIL`.
+- The server is stateless: `tools/list` and `tools/call` need no `initialize`, and every protocol revision it speaks (2024-11-05 to 2025-11-25) is answered alike, so `mcp-protocol-version` needs no checking.
+- One approval per change. A tool annotated `readOnlyHint: true` changes nothing (`preview_change` stores no proposal). Every other tool changes something when called, so the client's approval of that exact call (the hub's approval card) is the person's decision: change tools prepare through `Changes` and decide at once (`applyChange`), keeping the coordinator's checks, `expectedRev` and recovery. A write refused or stale at apply is cancelled, not left pending; one that settles as applied anyway is reported applied. Never add a tool that proposes and then needs a second gated call, and never mark a tool that writes anything read-only.
+- `decide_change` stays for proposals waiting for this person from elsewhere (the studio's forms). Change tools' `requestId` makes a retry return the first outcome (`mcp:<requestId>`).
+- The design tools (`create_automation`, `draft_automation`) only delegate to the planner through `Automations.chat` (`mcp:<requestId>` when given) or `answer` while it asks, and wait at most `PlannerWait` for it. No MCP tool saves, starts, or answers a run's task. `get_run` never returns a task's token.
+- Keep tool names, descriptions and schemas clear for a small model, and outputs small: agents cuts a result at 8,000 characters.
 
 ## Runs and events
 
@@ -112,7 +121,7 @@ curl -s "$STUDIO_URL/api/entities/types"                 # entity types
 curl -s "$STUDIO_URL/api/entities/<type>"                # a type's entities
 ```
 
-Stick to these `GET` routes unless the user asks for more. `chat` calls Workers AI and replaces the draft, `save` and `start` change what runs, answering a task moves a run on, and approving a `/api/changes` proposal (or MCP's `decide_change`) can write/delete data and start runs. Preparing a proposal writes no entity/template data.
+Stick to these `GET` routes unless the user asks for more. `chat` calls Workers AI and replaces the draft, `save` and `start` change what runs, answering a task moves a run on, and approving a `/api/changes` proposal (or MCP's `decide_change`, or any MCP tool without `readOnlyHint`) can write/delete data and start runs. Preparing a proposal writes no entity/template data.
 
 ## Effect
 
@@ -159,7 +168,7 @@ Stick to these `GET` routes unless the user asks for more. `chat` calls Workers 
 - Under local development only, `Api` takes `DEV_USER_EMAIL` as the request's identity when Access sent none (`src/platform/cloudflare/access.ts`). Never read it on a deployed stage.
 - Development-only controls, such as resuming a wait now, check `LocalDevelopment` in both `Api` and the Automation object. Only `localDevelopment` in `src/platform/cloudflare/local-development.ts` sets it, from `ALCHEMY_DEV` on a `dev_` stage, so deployed stages never have it. Don't provide it from anything else.
 - `/api` keeps a 32 KB request-body limit and returns `{ "error": string }` on failure. The UI relies on that shape.
-- `Api` stays private. Only the Access-protected Studio Worker can reach it. The `Channels` Worker is the only other public entry, and it serves only Slack's webhooks and interactivity requests, each of which must carry a valid signature.
+- `Api` stays private. Only the Access-protected Studio Worker reaches its routes; agents' Worker binds it only to call the `mcp` RPC method. The `Channels` Worker is the only other public entry, and it serves only Slack's webhooks and interactivity requests, each of which must carry a valid signature.
 
 ## The hub shell
 

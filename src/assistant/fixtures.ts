@@ -88,6 +88,14 @@ export const assistantFixture = Effect.gen(function* () {
   const decisions = new Map<string, { status: "applied" | "cancelled"; result: null }>();
   const mutations: Array<ChangeAction> = [];
   const changes = Changes.of({
+    preview: (action) =>
+      Effect.succeed({
+        action,
+        title: `Review ${action.kind}`,
+        details: [],
+        consequences: [],
+        confirmLabel: "Apply",
+      }),
     prepare: (_owner, action, requestId) =>
       Effect.sync(() => {
         const id = requestId ?? crypto.randomUUID();

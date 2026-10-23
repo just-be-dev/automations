@@ -204,6 +204,99 @@ export const makeChanges = Effect.fn("Changes.make")(function* (storage: ChangeS
     }
   });
 
+  /** A proposal's description, from what its look read: what it changes and what follows. */
+  const describe = (action: ChangeAction, preview: Look): Omit<ChangeProposal, "id"> => {
+    const name =
+      "id" in action
+        ? `${action.type} ${action.id}`
+        : "template" in action
+          ? action.template.name
+          : action.kind === "putType"
+            ? action.type.name
+            : action.name;
+    const deleting = action.kind.startsWith("delete");
+    const details: ChangeProposal["details"][number][] = [];
+    const walk = (left: unknown, right: unknown, label: string) => {
+      if (same(left, right)) return;
+      if (Array.isArray(left) || Array.isArray(right)) {
+        const a = Array.isArray(left) ? left : [];
+        const b = Array.isArray(right) ? right : [];
+        for (let i = 0; i < Math.max(a.length, b.length); i++)
+          walk(a[i], b[i], `${label} · ${i + 1}`);
+      } else if ((left && typeof left === "object") || (right && typeof right === "object")) {
+        const a = (left ?? {}) as { readonly [key: string]: unknown };
+        const b = (right ?? {}) as { readonly [key: string]: unknown };
+        for (const key of new Set([...Object.keys(a), ...Object.keys(b)]))
+          walk(a[key], b[key], label ? `${label} · ${key}` : key);
+      } else
+        details.push({
+          label,
+          before:
+            left === undefined ? "Not set" : typeof left === "string" ? left : JSON.stringify(left),
+          after:
+            right === undefined
+              ? "Removed"
+              : typeof right === "string"
+                ? right
+                : JSON.stringify(right),
+        });
+    };
+    walk(preview.before.target ?? undefined, preview.after ?? undefined, "");
+    const subscribers =
+      action.kind === "putEntity"
+        ? ((preview.before.context as { readonly subscribers: ReadonlyArray<string> })
+            .subscribers ?? [])
+        : [];
+    const consequences =
+      action.kind === "putEntity"
+        ? [
+            `This edit may start matching saved automations watching ${action.type}: ${subscribers.join(", ") || "none currently subscribed"}.`,
+            "This edit emits entity.created or entity.updated and may start automations listening for it.",
+          ]
+        : action.kind === "deleteEntity"
+          ? ["Deletion emits entity.deleted and may start automations listening for it."]
+          : action.kind === "deleteType"
+            ? [
+                "This empty type will no longer be available to drafts or new runs. Existing runs keep their snapshots.",
+              ]
+            : action.kind === "putType"
+              ? [
+                  "This saves a new version of the type in entity-store. Stored entities keep their data and are read in the new version; new runs must fit it.",
+                ]
+              : [
+                  deleting
+                    ? "New runs of saved automations using this template will fail validation until fixed. Runs already in flight keep their expanded wording."
+                    : "New saved runs use this wording. Runs already in flight keep their expanded wording.",
+                ];
+    if (action.kind === "putTemplate" || action.kind === "deleteTemplate") {
+      const used = (preview.before.context as { readonly uses: Schema.Json }).uses as Array<{
+        id: string;
+        saved?: string[];
+        draft?: string[];
+        unchecked?: string;
+      }>;
+      for (const item of used) {
+        if (item.unchecked)
+          consequences.push(`${item.id}: impact could not be checked (${item.unchecked}).`);
+        else {
+          if (item.saved?.includes(name))
+            consequences.push(`${item.id}: saved workflow uses this template.`);
+          if (item.draft?.includes(name))
+            consequences.push(
+              `${item.id}: draft uses this template; it must be checked before saving.`,
+            );
+        }
+      }
+    }
+    return {
+      action,
+      title: `${deleting ? "Delete" : "Save"} ${name}`,
+      details,
+      consequences,
+      confirmLabel: deleting ? "Delete" : "Save",
+    };
+  };
+
   /**
    * The proposal's own write, if it landed: the change at one of `revs` that carries the
    * proposal's ID. The revisions are the one the write makes, and the entity's current one.
@@ -428,6 +521,11 @@ export const makeChanges = Effect.fn("Changes.make")(function* (storage: ChangeS
     error instanceof ChangeError;
 
   return Changes.of({
+    /** Checks and describes an action as `prepare` would, and stores nothing. */
+    preview: Effect.fn("Changes.preview")(function* (input: ChangeAction) {
+      const action = yield* Schema.decodeEffect(ChangeAction)(input);
+      return describe(action, yield* look(action, true));
+    }),
     prepare: Effect.fn("Changes.prepare")(
       function* (owner: string, input: ChangeAction, requestId?: string, sourceEvent?: Event) {
         const action = yield* Schema.decodeEffect(ChangeAction)(input);
@@ -455,100 +553,7 @@ export const makeChanges = Effect.fn("Changes.make")(function* (storage: ChangeS
             return `change-${count + 1}`;
           }),
         );
-        const name =
-          "id" in action
-            ? `${action.type} ${action.id}`
-            : "template" in action
-              ? action.template.name
-              : action.kind === "putType"
-                ? action.type.name
-                : action.name;
-        const deleting = action.kind.startsWith("delete");
-        const details: ChangeProposal["details"][number][] = [];
-        const walk = (left: unknown, right: unknown, label: string) => {
-          if (same(left, right)) return;
-          if (Array.isArray(left) || Array.isArray(right)) {
-            const a = Array.isArray(left) ? left : [];
-            const b = Array.isArray(right) ? right : [];
-            for (let i = 0; i < Math.max(a.length, b.length); i++)
-              walk(a[i], b[i], `${label} · ${i + 1}`);
-          } else if ((left && typeof left === "object") || (right && typeof right === "object")) {
-            const a = (left ?? {}) as { readonly [key: string]: unknown };
-            const b = (right ?? {}) as { readonly [key: string]: unknown };
-            for (const key of new Set([...Object.keys(a), ...Object.keys(b)]))
-              walk(a[key], b[key], label ? `${label} · ${key}` : key);
-          } else
-            details.push({
-              label,
-              before:
-                left === undefined
-                  ? "Not set"
-                  : typeof left === "string"
-                    ? left
-                    : JSON.stringify(left),
-              after:
-                right === undefined
-                  ? "Removed"
-                  : typeof right === "string"
-                    ? right
-                    : JSON.stringify(right),
-            });
-        };
-        walk(preview.before.target ?? undefined, preview.after ?? undefined, "");
-        const subscribers =
-          action.kind === "putEntity"
-            ? ((preview.before.context as { readonly subscribers: ReadonlyArray<string> })
-                .subscribers ?? [])
-            : [];
-        const consequences =
-          action.kind === "putEntity"
-            ? [
-                `This edit may start matching saved automations watching ${action.type}: ${subscribers.join(", ") || "none currently subscribed"}.`,
-                "This edit emits entity.created or entity.updated and may start automations listening for it.",
-              ]
-            : action.kind === "deleteEntity"
-              ? ["Deletion emits entity.deleted and may start automations listening for it."]
-              : action.kind === "deleteType"
-                ? [
-                    "This empty type will no longer be available to drafts or new runs. Existing runs keep their snapshots.",
-                  ]
-                : action.kind === "putType"
-                  ? [
-                      "This saves a new version of the type in entity-store. Stored entities keep their data and are read in the new version; new runs must fit it.",
-                    ]
-                  : [
-                      deleting
-                        ? "New runs of saved automations using this template will fail validation until fixed. Runs already in flight keep their expanded wording."
-                        : "New saved runs use this wording. Runs already in flight keep their expanded wording.",
-                    ];
-        if (action.kind === "putTemplate" || action.kind === "deleteTemplate") {
-          const used = (preview.before.context as { readonly uses: Schema.Json }).uses as Array<{
-            id: string;
-            saved?: string[];
-            draft?: string[];
-            unchecked?: string;
-          }>;
-          for (const item of used) {
-            if (item.unchecked)
-              consequences.push(`${item.id}: impact could not be checked (${item.unchecked}).`);
-            else {
-              if (item.saved?.includes(name))
-                consequences.push(`${item.id}: saved workflow uses this template.`);
-              if (item.draft?.includes(name))
-                consequences.push(
-                  `${item.id}: draft uses this template; it must be checked before saving.`,
-                );
-            }
-          }
-        }
-        const proposal: ChangeProposal = {
-          id,
-          action,
-          title: `${deleting ? "Delete" : "Save"} ${name}`,
-          details,
-          consequences,
-          confirmLabel: deleting ? "Delete" : "Save",
-        };
+        const proposal: ChangeProposal = { id, ...describe(action, preview) };
         yield* write({
           version: 2,
           owner,

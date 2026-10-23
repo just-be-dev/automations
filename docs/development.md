@@ -267,7 +267,7 @@ Manage templates on the studio's **Templates** page (`/templates`), which also l
 | `GET /api/entities/:type`, `GET /api/entities/:type/:id`     | Read entities                                                                                                                                             |
 | `POST /api/changes`                                          | Prepare `{ "action": ... }`: `putEntity`, `deleteEntity`, `putType`, `deleteType`, `putTemplate`, or `deleteTemplate`                                     |
 | `POST /api/changes/:id/decision`                             | Confirm or cancel the stored proposal with `{ "approved": true }` or `false`                                                                              |
-| `POST /api/mcp`                                              | The entity store as an MCP server                                                                                                                         |
+| `POST /api/mcp`                                              | The studio as an MCP server; see [MCP](#mcp)                                                                                                              |
 | `GET /api/templates`, `GET /api/templates/:name`             | List or read templates                                                                                                                                    |
 | `GET /api/templates/:name/automations`                       | The automations whose saved workflow or draft use a template                                                                                              |
 | `GET /api/assistant`                                         | List your assistant threads, archived ones included, most recently used first (`{ "threads": [...] }`)                                                    |
@@ -292,10 +292,31 @@ Each assistant thread response is an `AssistantState`; while it is `working`, po
 
 `/entities` in the studio (**Entity store** in the sidebar, under Templates) is a debug page for the entity store, which lives in entity-store. Define entity types field by field, then create, edit, and delete their entities. Saving an entity is an ordinary entity write, so it starts the saved automations that watch its type, a moment after the save.
 
-`/api/mcp` serves the same store to agents over MCP's Streamable HTTP transport. Its tools are `list_entity_types`, `define_entity_type`, `delete_entity_type`, `list_entities`, `get_entity`, `put_entity`, `delete_entity`, and `decide_change`. Entity/type mutation tools return a proposal without writing. They take an optional `requestId`: retrying a call with the same one returns the same proposal instead of preparing another. Present it to the person before calling `decide_change` with its `proposalId` and `approved` decision. The built-in assistant uses application tools directly, not MCP. The server is stateless: it assigns no session, answers in JSON, and supports protocol revisions 2024-11-05 through 2025-11-25. With `mise run dev`:
+### MCP
+
+`/api/mcp` serves the studio to agents over MCP's Streamable HTTP transport, and the private `Api` Worker serves the same server to other stacks as an RPC method, `mcp(body, headers)`: one JSON-RPC message in, `{ status, body }` out, exactly what `/api/mcp` would answer (202 with no body for a notification). The platform's assistant in the hub shell calls it through agents' `call_app_tool`. Holding a binding to `Api` is the authorization; RPC methods aren't routed over HTTP. An RPC call acts for the person in its `cf-access-authenticated-user-email` header, trusted like Access's; without one it acts for no one, and every tool that changes something refuses. Over HTTP a call acts for the Access email, or the shared `local` owner.
+
+The server is stateless: it assigns no session, so `tools/list` and `tools/call` need no `initialize`; it answers in JSON, and speaks protocol revisions 2024-11-05 through 2025-11-25 alike, so `mcp-protocol-version` (agents sends `2025-06-18`) needs no checking.
+
+| Tool                                                                                                         | Reads only | What it does                                                                                                      |
+| ------------------------------------------------------------------------------------------------------------ | ---------- | ----------------------------------------------------------------------------------------------------------------- |
+| `list_automations`                                                                                           | ✓          | Every automation with its saved trigger, next scheduled run, runs in flight and latest run                        |
+| `get_automation`                                                                                             | ✓          | One automation's draft and saved workflow as YAML, its planner (questions included), conversation and latest runs |
+| `get_run`                                                                                                    | ✓          | One run's status, steps and tasks (without the tokens that answer them)                                           |
+| `list_entity_types`, `list_entities`, `get_entity`                                                           | ✓          | The catalog's types and entities                                                                                  |
+| `list_templates`                                                                                             | ✓          | Approved wording templates                                                                                        |
+| `preview_change`                                                                                             | ✓          | Checks a change as preparing it would, and says what it changes and what follows; stores nothing                  |
+| `create_automation`                                                                                          |            | Names and lists a new automation and sends its description to the planner                                         |
+| `draft_automation`                                                                                           |            | Sends the planner a message, or the person's answer to its questions                                              |
+| `put_entity`, `delete_entity`, `define_entity_type`, `delete_entity_type`, `put_template`, `delete_template` |            | Applies the change                                                                                                |
+| `decide_change`                                                                                              |            | Approves or cancels a proposal waiting for this person, such as one prepared in the studio                        |
+
+Every tool without `readOnlyHint` changes something when it's called, so the call is the person's approval: a client asks the person before each one, as the hub's assistant does with its approval card. That makes one approval per change. A change tool prepares the change through `Changes` and decides it at once, so it is checked and conditioned on the revision it read like every change, and a refused or stale write is cancelled rather than left waiting. `preview_change` shows the person the details and consequences first. Change tools take an optional `requestId`: retrying a call with the same one returns the first call's outcome instead of writing again. The design tools never save or run a workflow; they wait about 25 seconds for the planner's reply and otherwise answer `working`, to be read later with `get_automation`. A `draft_automation` message sent while the planner asks questions answers them.
+
+With `mise run dev`:
 
 ```sh
-claude mcp add --transport http entity-store "$STUDIO_URL/api/mcp"
+claude mcp add --transport http automations "$STUDIO_URL/api/mcp"
 ```
 
 Deployed stages sit behind Access, so send the service token as headers (`--header "CF-Access-Client-Id: …" --header "CF-Access-Client-Secret: …"`).
