@@ -4,8 +4,8 @@ import * as Option from "effect/Option";
 import type { Update } from "foldkit";
 import { modifyFields } from "foldkit/struct";
 import { type PendingChat, STOPPED_CHAT, subjectType, type Workflow } from "../../workflow.ts";
-import { LoadAutomations, LoadSubjects, PollAutomation } from "../command.ts";
-import type { Message } from "../message.ts";
+import { LoadAutomations, LoadSubjects, PollAutomation, WatchAutomation } from "../command.ts";
+import type { LoadedAutomation, Message } from "../message.ts";
 import { Activity, type Model, SubjectChoices } from "../model.ts";
 
 export const fail = (model: Model, error: string) => ({
@@ -20,14 +20,27 @@ export const isAnswering = (pending: PendingChat) => pending.status === "working
 
 // People using the studio don't build software, so a failed reply never shows the technical error.
 // `GET /api/automations/:id` still returns it for debugging.
-const unfinishedReply =
-  "The planner couldn't finish this draft. Ask the studio agent to try again.";
+const unfinishedReply = "The planner couldn't finish this draft. Ask the assistant to try again.";
+
+/**
+ * Looks again in a few seconds while the planner is idle: the hub's assistant designs from its
+ * drawer, and nothing tells the page when it sends the planner a message. A page change bumps
+ * `revision`, which drops the watch.
+ */
+const watch = (model: Model) =>
+  WatchAutomation({
+    automationId: model.automationId.trim(),
+    revision: model.revision,
+    watch: model.automationWatch,
+  });
 
 export const loadedAutomation = (
-  model: Model,
+  loaded: Model,
   options: { readonly wasWaiting: boolean; readonly idleNotice: string },
-): Update.Return<Model, Message> =>
-  Option.match(model.maybePendingChat, {
+): Update.Return<Model, Message> => {
+  // A load starts a new watch chain; any older one's replies are dropped.
+  const model = modifyFields(loaded, { automationWatch: (watch) => watch + 1 });
+  return Option.match(model.maybePendingChat, {
     onNone: () =>
       options.wasWaiting
         ? {
@@ -35,21 +48,24 @@ export const loadedAutomation = (
               activity: () =>
                 Activity.Ready({ notice: "Draft updated. Review the graph before saving." }),
             }),
-            commands: [LoadAutomations()],
+            commands: [LoadAutomations(), watch(model)],
           }
         : {
             model: modifyFields(model, {
               activity: () => Activity.Ready({ notice: options.idleNotice }),
             }),
+            commands: [watch(model)],
           },
     onSome: (pending) =>
       Match.value(pending).pipe(
         Match.discriminatorsExhaustive("status")({
-          // The person answers in the studio agent's panel, so keep watching for the planner to resume.
+          // The person answers in the hub's assistant, so keep watching for the planner to resume.
           asking: () => ({
             model: modifyFields(model, {
               activity: () =>
-                Activity.Ready({ notice: "The studio agent is waiting for your answers." }),
+                Activity.Ready({
+                  notice: "The planner is waiting for your answers. Answer them in the assistant.",
+                }),
             }),
             commands: [
               PollAutomation({ automationId: model.automationId.trim(), revision: model.revision }),
@@ -68,10 +84,33 @@ export const loadedAutomation = (
                   ? Activity.Ready({ notice: "The planner was stopped. The draft is unchanged." })
                   : Activity.Failed({ error: unfinishedReply }),
             }),
+            commands: [watch(model)],
           }),
         }),
       ),
   });
+};
+
+/** Whether a watch found the automation as the page already shows it. */
+export const unchangedAutomation = (model: Model, loaded: LoadedAutomation) =>
+  JSON.stringify([
+    Option.getOrNull(model.maybeDraft),
+    Option.getOrNull(model.maybeSaved),
+    Option.getOrNull(model.maybePendingChat),
+    model.runs,
+  ]) ===
+  JSON.stringify([
+    Option.getOrNull(loaded.maybeDraft),
+    Option.getOrNull(loaded.maybeSaved),
+    Option.getOrNull(loaded.maybePendingChat),
+    loaded.runs,
+  ]);
+
+/** Keeps watching an idle automation, in the same chain. */
+export const watchAgain = (model: Model): Update.Return<Model, Message> => ({
+  model,
+  commands: [watch(model)],
+});
 
 export const savedSubjectType = (maybeSaved: Option.Option<Workflow>) =>
   Option.flatMap(maybeSaved, (saved) => Option.fromNullishOr(subjectType(saved.trigger)));

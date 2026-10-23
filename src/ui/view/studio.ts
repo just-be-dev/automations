@@ -29,6 +29,7 @@ import {
   SubjectChoices,
   type WorkflowDisplay,
 } from "../model.ts";
+import { AssistantPrompt } from "../domain/index.ts";
 import { runHref } from "../route.ts";
 import { permissionsView } from "./permissions.ts";
 import { eyebrowClass, panelTitleView } from "./shared.ts";
@@ -132,7 +133,7 @@ const draftView = (model: Model, h: HtmlBuilder<Message>) =>
     [componentName("draft"), h.Class("flex flex-col gap-10")],
     [
       Option.match(model.maybeDraft, {
-        onNone: () => emptyWorkflowView(h),
+        onNone: () => emptyWorkflowView(model.automationId, h),
         onSome: (workflow) =>
           model.workflowDisplay === "Json"
             ? workflowJsonView(workflow, h)
@@ -237,7 +238,7 @@ const workflowJsonView = (workflow: Workflow, h: HtmlBuilder<Message>) =>
     [JSON.stringify(workflow, null, 2)],
   );
 
-const emptyWorkflowView = (h: HtmlBuilder<Message>) =>
+const emptyWorkflowView = (automationId: string, h: HtmlBuilder<Message>) =>
   Empty(
     {
       className: "max-w-xl rounded-[10px] bg-card shadow-card",
@@ -252,8 +253,22 @@ const emptyWorkflowView = (h: HtmlBuilder<Message>) =>
           Empty.description(
             {},
             [
-              "Ask the studio agent to draft this automation. Steps show up here as it works. They run top to bottom, started by hand or when a record such as an employee changes.",
+              "Ask the assistant to draft this automation. Steps show up here as it works. They run top to bottom, started by hand or when a record such as an employee changes.",
             ],
+            h,
+          ),
+        ],
+        h,
+      ),
+      Empty.content(
+        {},
+        [
+          button(
+            {
+              onClick: Message.ClickedAskAssistant({ prompt: AssistantPrompt.draft(automationId) }),
+              size: "sm",
+            },
+            "Ask the assistant",
             h,
           ),
         ],

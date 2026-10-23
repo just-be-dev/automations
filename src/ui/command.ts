@@ -17,7 +17,7 @@ import {
 } from "../workflow.ts";
 import { errorText, loadEventInput, loadSubjectOptions, requestJson } from "./api.ts";
 import { TaskAnswer } from "./domain/index.ts";
-import { Message } from "./message.ts";
+import { LoadedAutomation, Message } from "./message.ts";
 import { AutomationSummary } from "./model.ts";
 import { applyTheme, Theme } from "./theme.ts";
 
@@ -46,10 +46,10 @@ const AutomationState = Schema.Struct({
   progress: Schema.OptionFromOptional(Schema.String),
 });
 
-const loadAutomation = (automationId: string, revision: number) =>
+const fetchAutomation = (automationId: string, revision: number) =>
   request(automationId, "", AutomationState).pipe(
     Effect.map((state) =>
-      Message.SucceededLoadAutomation({
+      LoadedAutomation.make({
         revision,
         maybeDraft: state.draft,
         maybeSaved: state.saved,
@@ -62,8 +62,13 @@ const loadAutomation = (automationId: string, revision: number) =>
         maybeProgress: state.progress,
       }),
     ),
-    recoverRequest(revision),
     Effect.provide(Http.layer),
+  );
+
+const loadAutomation = (automationId: string, revision: number) =>
+  fetchAutomation(automationId, revision).pipe(
+    Effect.map((loaded) => Message.SucceededLoadAutomation(loaded)),
+    recoverRequest(revision),
   );
 
 export const LoadAutomation = Command.define("LoadAutomation", {
@@ -78,6 +83,21 @@ export const PollAutomation = Command.define("PollAutomation", {
   messages: [Message.SucceededLoadAutomation, Message.FailedRequest],
   execute: ({ automationId, revision }) =>
     Effect.sleep("1500 millis").pipe(Effect.andThen(loadAutomation(automationId, revision))),
+});
+
+/**
+ * Reloads the automation after a longer pause while nothing is in progress, so a message the hub's
+ * assistant sends its planner from the drawer shows up on the open studio page.
+ */
+export const WatchAutomation = Command.define("WatchAutomation", {
+  args: { ...requestArgs, watch: Schema.Int },
+  messages: [Message.WatchedAutomation, Message.FailedWatchAutomation],
+  execute: ({ automationId, revision, watch }) =>
+    Effect.sleep("5 seconds").pipe(
+      Effect.andThen(fetchAutomation(automationId, revision)),
+      Effect.map((loaded) => Message.WatchedAutomation({ watch, loaded })),
+      Effect.catch(() => Effect.succeed(Message.FailedWatchAutomation({ revision, watch }))),
+    ),
 });
 
 export const LoadAutomations = Command.define("LoadAutomations", {
@@ -168,6 +188,20 @@ export const NavigateInternal = Command.define("NavigateInternal", {
   args: { url: Schema.String },
   messages: [Message.CompletedNavigateInternal],
   execute: ({ url }) => pushUrl(url).pipe(Effect.as(Message.CompletedNavigateInternal())),
+});
+
+/**
+ * Opens the platform's assistant, the hub shell's drawer, on a new chat with `prompt` in its
+ * composer, unsent. The shell listens for `hub:open` on every app (agents' docs/hub-shell.md); a
+ * page without the shell, such as `alchemy dev`, ignores it.
+ */
+export const OpenAssistant = Command.define("OpenAssistant", {
+  args: { prompt: Schema.String },
+  messages: [Message.CompletedOpenAssistant],
+  execute: ({ prompt }) =>
+    Effect.sync(() => {
+      window.dispatchEvent(new CustomEvent("hub:open", { detail: { prompt } }));
+    }).pipe(Effect.as(Message.CompletedOpenAssistant())),
 });
 
 export const LoadExternal = Command.define("LoadExternal", {

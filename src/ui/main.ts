@@ -8,9 +8,6 @@ import { Activity, Directory, Model, Page, SubjectChoices } from "./model.ts";
 import { AppRoute, routeFromUrl } from "./route.ts";
 import type { Flags } from "./theme.ts";
 import { showPage } from "./update/index.ts";
-import * as Assistant from "./assistant/index.ts";
-import { toAssistantMessage } from "./message.ts";
-import { Command } from "foldkit";
 
 export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flags, url) => {
   const route = routeFromUrl(url);
@@ -23,8 +20,6 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
     Run: (run) => run.automationId,
   });
   const model = Model.make({
-    assistant: Assistant.initial,
-    maybeFollowHref: Option.none(),
     maybeNavigationNotice: Option.none(),
     page: Page.Studio(),
     automationId,
@@ -39,6 +34,7 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
     runs: [],
     maybeRunPanel: Option.none(),
     runPoll: 0,
+    automationWatch: 0,
     subjectChoices: SubjectChoices.NotNeeded(),
     maybeSubjectId: Option.none(),
     maybeEventInput: Option.none(),
@@ -46,7 +42,6 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
     expandedStepIds: [],
     workflowDisplay: "Steps",
     theme: flags.theme,
-    shortcutModifier: flags.shortcutModifier,
     activity: AutomationId.isValid(automationId)
       ? Activity.Working({ notice: "Loading automation…" })
       : Activity.Failed({ error: AutomationId.invalidError }),
@@ -54,12 +49,6 @@ export const init: Runtime.RoutingApplicationInit<Model, Message, Flags> = (flag
   const page = showPage(model, route);
   return {
     model: page.model,
-    commands: [
-      ...(page.commands ?? []),
-      LoadAutomations(),
-      LoadConnections(),
-      LoadDevelopment(),
-      ...Command.mapMessages([Assistant.RestoreAssistant()], toAssistantMessage),
-    ],
+    commands: [...(page.commands ?? []), LoadAutomations(), LoadConnections(), LoadDevelopment()],
   };
 };

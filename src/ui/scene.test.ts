@@ -1,5 +1,5 @@
 /** Exercises visible studio and run interactions, including planner progress, permissions, and safe rendering.
- * Covers the shared shell's run panels, the studio agent's entry points, and the other pages. */
+ * Covers the shared shell's run panels, the hub assistant's entry points, and the other pages. */
 import { test } from "bun:test";
 import * as Option from "effect/Option";
 import { UrlRequest } from "foldkit/navigation";
@@ -44,8 +44,7 @@ import {
   summaryOf,
 } from "./fixtures.ts";
 import { init } from "./main.ts";
-import * as Assistant from "./assistant/index.ts";
-import { CreateThread, FocusInput, PersistCollapsed } from "./assistant/command.ts";
+import { OpenAssistant } from "./command.ts";
 import { Message, toOverviewMessage } from "./message.ts";
 import type { Model } from "./model.ts";
 import { EventInput } from "./domain/index.ts";
@@ -68,7 +67,7 @@ const automationLoaded = (
   });
 
 const loaded = update(
-  init({ theme: "System", shortcutModifier: "Meta" }, studioUrl("automation=my-automation")).model,
+  init({ theme: "System" }, studioUrl("automation=my-automation")).model,
   automationLoaded(),
 ).model;
 
@@ -102,7 +101,7 @@ const applied = (start: Model, messages: ReadonlyArray<Message>) =>
   messages.reduce((current, next) => update(current, next).model, start);
 
 const withOpenRun = (run: ReturnType<typeof runOf>) =>
-  applied(init({ theme: "System", shortcutModifier: "Meta" }, runUrl(run.id)).model, [
+  applied(init({ theme: "System" }, runUrl(run.id)).model, [
     runLoaded({ revision: 0, poll: 1, run }),
   ]);
 
@@ -115,7 +114,7 @@ test("the studio shows the planner's progress, then safely renders the draft it 
     expect(role("banner")).toContainText("my-automation"),
     expect(role("region", { name: "Conversation" })).not.toExist(),
     expect(label("Your message")).not.toExist(),
-    expect(text(/Ask the studio agent to draft this automation/)).toExist(),
+    expect(text(/Ask the assistant to draft this automation/)).toExist(),
     expect(status).toHaveText("Thinking…"),
     expect(role("button", { name: "Save draft" })).toBeDisabled(),
   );
@@ -147,7 +146,9 @@ test("the studio shows the planner's progress, then safely renders the draft it 
         }),
       ).model,
     ),
-    expect(status).toHaveText("The studio agent is waiting for your answers."),
+    expect(status).toHaveText(
+      "The planner is waiting for your answers. Answer them in the assistant.",
+    ),
   );
   scene(
     { update, view },
@@ -317,41 +318,31 @@ test("the sidebar links to every automation and marks the open one", () => {
   );
 });
 
-const newSessionId = "3f1c2d4e-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
-const threadCreated = Assistant.Message.CompletedCreateThread({
-  sessionId: newSessionId,
-  input: "Draft an automation that ",
-});
-/** What a new thread asks for once it opens: its first read, and focus on the composer. */
-const threadOpened = Command.resolveAll(
-  [
-    Assistant.RequestAssistant,
-    Assistant.Message.FailedRequest({ sessionId: newSessionId, sequence: 1, error: "Offline" }),
-  ],
-  [FocusInput, Assistant.Message.CompletedFocusInput()],
-);
-
-test("+ opens a new studio agent thread with a request to draft an automation", () => {
-  const collapsed = modifyFields(loaded, {
-    assistant: (assistant) => modifyFields(assistant, { collapsed: () => true }),
-  });
+test("an automation without a draft asks the hub's assistant to draft it, by ID", () => {
   scene(
     { update, view },
-    given(collapsed),
-    expect(label("Message assistant")).not.toExist(),
-    click(role("button", { name: "New automation" })),
-    Command.resolve(PersistCollapsed, Assistant.Message.CompletedPersistCollapsed()),
-    Command.resolve(CreateThread, threadCreated),
-    threadOpened,
-    expect(label("Message assistant")).toHaveValue("Draft an automation that "),
+    given(update(loaded, automationLoaded({})).model),
+    click(role("button", { name: "Ask the assistant" })),
+    Command.expectHas(OpenAssistant({ prompt: "Draft the automation my-automation so that " })),
+    Command.resolve(OpenAssistant, Message.CompletedOpenAssistant()),
   );
 });
 
-test("the empty overview's New automation button opens a new studio agent thread", () => {
+test("+ opens the hub's assistant with a request to draft an automation", () => {
+  scene(
+    { update, view },
+    given(loaded),
+    click(role("button", { name: "New automation" })),
+    Command.expectHas(OpenAssistant({ prompt: "Create a new automation that " })),
+    Command.resolve(OpenAssistant, Message.CompletedOpenAssistant()),
+  );
+});
+
+test("the empty overview's New automation button opens the hub's assistant", () => {
   scene(
     { update, view },
     given(
-      applied(init({ theme: "System", shortcutModifier: "Meta" }, studioUrl()).model, [
+      applied(init({ theme: "System" }, studioUrl()).model, [
         toOverviewMessage(
           Overview.Message.SucceededLoadOverview({ session: 0, poll: 0, automations: [] }),
         ),
@@ -360,9 +351,8 @@ test("the empty overview's New automation button opens a new studio agent thread
     ),
     expect(text("No automations yet")).toExist(),
     click(within(role("main"), role("button", { name: "New automation" }))),
-    Command.resolve(CreateThread, threadCreated),
-    threadOpened,
-    expect(label("Message assistant")).toHaveValue("Draft an automation that "),
+    Command.expectHas(OpenAssistant({ prompt: "Create a new automation that " })),
+    Command.resolve(OpenAssistant, Message.CompletedOpenAssistant()),
   );
 });
 
@@ -1303,7 +1293,7 @@ test("a form task is prefilled from its defaults and submits typed values", () =
 test("the sidebar's overview link marks the overview page", () => {
   scene(
     { update, view },
-    given(init({ theme: "System", shortcutModifier: "Meta" }, studioUrl()).model),
+    given(init({ theme: "System" }, studioUrl()).model),
     expect(role("link", { name: "Overview" })).toHaveAttr("href", "/"),
     expect(role("link", { name: "Overview" })).toHaveAttr("aria-current", "page"),
     expect(text("Runs and automations")).toExist(),
@@ -1553,10 +1543,9 @@ test("a waiting wait says when it resumes, and only local development offers to 
       check_in: { status: "done", record: { approved: true } },
     },
   });
-  const opened = applied(
-    init({ theme: "System", shortcutModifier: "Meta" }, runUrl("run-1")).model,
-    [runLoaded({ revision: 0, poll: 1, run: settling, resumesAt: { settle: settleResumesAt } })],
-  );
+  const opened = applied(init({ theme: "System" }, runUrl("run-1")).model, [
+    runLoaded({ revision: 0, poll: 1, run: settling, resumesAt: { settle: settleResumesAt } }),
+  ]);
   const resumeButton = role("button", { name: "Resume Give them three days to settle in now" });
   scene(
     { update, view },

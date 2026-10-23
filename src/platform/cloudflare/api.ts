@@ -28,13 +28,9 @@ import { localDevelopment } from "./local-development.ts";
 import Automation from "./automation.ts";
 import { automationsLayer } from "./automations.ts";
 import { AutomationIndexD1 } from "./automation-index-d1.ts";
-import { AssistantThreadsD1 } from "./assistant-threads-d1.ts";
 import { EntityStoreChangesQueue, EntityStoreLive } from "./entity-store.ts";
 import { workersAiNamer } from "./workers-ai.ts";
-import StudioAssistant, { assistantsLayer } from "./assistant.ts";
 import ChangeCoordinator, { changesLayer } from "./changes.ts";
-import { Transcription } from "../../http/transcription.ts";
-import { workersAiTranscription } from "./transcription.ts";
 import { EventQueue, EventsQueue, FailedEventQueue, failedEventQueueName } from "./events.ts";
 import { SlackActionQueue } from "./slack-actions.ts";
 
@@ -52,11 +48,9 @@ export default class Api extends Cloudflare.Worker<Api>()(
   },
   Effect.gen(function* () {
     const namespace = yield* Automation;
-    const assistantNamespace = yield* StudioAssistant;
     const changeNamespace = yield* ChangeCoordinator;
     const ai = yield* Cloudflare.Workers.AI();
     const index = yield* AutomationIndexD1;
-    const threads = yield* AssistantThreadsD1;
     const entities = yield* EntityStoreLive;
     const events = yield* EventsQueue;
     // The Automation objects this Worker hosts send with the same credentials; see automation.ts.
@@ -95,14 +89,11 @@ export default class Api extends Cloudflare.Worker<Api>()(
     // Everything a request's handlers use, except who the request acts for.
     const shared = Layer.mergeAll(
       index,
-      threads,
       events,
       entities,
       automations,
       namer,
-      assistantsLayer(assistantNamespace),
       changesLayer(changeNamespace),
-      Layer.effect(Transcription, Effect.map(ai.raw, workersAiTranscription)),
       Layer.succeed(LiveConnections, live),
       Layer.succeed(LocalDevelopment, local),
     );

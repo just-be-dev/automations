@@ -2,13 +2,13 @@
 
 Automations studio separates **designing a workflow** from **executing a saved version**. Models help assemble and interpret plans, but they do not get unrestricted execution: workflows are schema-checked, checked against the current catalog, and run through a fixed set of operations.
 
-This is a single-tenant Cloudflare application. [Development and operations](docs/development.md) covers setup and the HTTP/MCP interfaces; [Workflow DSL](docs/workflow-dsl.md) defines the workflow format. [Workflow engine](docs/workflow-engine.md) and [Studio assistant](docs/assistant.md) trace those two subsystems through the code in more detail. This document covers how the parts fit together:
+This is a single-tenant Cloudflare application. [Development and operations](docs/development.md) covers setup and the HTTP/MCP interfaces; [Workflow DSL](docs/workflow-dsl.md) defines the workflow format. [Workflow engine](docs/workflow-engine.md) traces the engine through the code in more detail. This document covers how the parts fit together:
 
 1. [Deployment](#cloudflare-hosts-the-application-not-its-business-rules): Workers, Durable Objects, storage and queues.
 2. [Code layout](#code-is-layered-by-ownership): layers and which module owns each lifetime.
 3. [Automations and the planner](#an-automation-is-one-durable-object): how a conversation becomes a saved workflow.
 4. [The workflow engine](#the-workflow-engine-replays-a-run-from-its-journal): how a run executes, suspends and resumes.
-5. [The studio assistant](#the-studio-assistant-proposes-it-never-applies): the studio-wide agent.
+5. [The hub's assistant](#the-hubs-assistant-works-through-mcp): the platform's agent, and the MCP server it uses.
 6. [Entities](#entity-store-is-the-system-of-record-for-entities), [changes](#every-data-change-goes-through-one-coordinator) and [events](#events-flow-through-one-queue): where entities live, confirmed writes, and the event pipeline.
 7. [Browser](#browser-state-and-server-state-have-separate-lifecycles), [limits](#guarantees-have-deliberate-limits) and [principles](#principles-for-changes).
 
@@ -39,15 +39,15 @@ This is a single-tenant Cloudflare application. [Development and operations](doc
            │ Durable Object RPC      │
            ▼                         │
 ┌────────────────────────────────────┴────────────────────────────────────┐
-│ AutomationAgent         StudioAssistant           ChangeCoordinator     │
-│ one per automation      one per owner + thread    one, named "studio"   │
-│ drafts, runs, journal   conversation, receipts    proposals, receipts   │
+│ AutomationAgent                                   ChangeCoordinator     │
+│ one per automation                                one, named "studio"   │
+│ drafts, runs, journal                             proposals, receipts   │
 └───────────────────────────────────┬─────────────────────────────────────┘
                                     ▼
 ┌───────────────────────┐ ┌───────────────────────┐ ┌───────────────────────┐
 │ entity-store          │ │ D1                    │ │ Workers AI            │
 │ its own stack · types │ │ directory, templates  │ │ pi models, namer,     │
-│ entities              │ │ + subscriptions       │ │ clef, dictation       │
+│ entities              │ │ + subscriptions       │ │ clef                  │
 └───────────┬───────────┘ └───────────────────────┘ └───────────────────────┘
             │ change queue: every committed entity write, consumed by Api
             ▼
@@ -58,17 +58,16 @@ This is a single-tenant Cloudflare application. [Development and operations](doc
 
 The Durable Objects call each other, so the tier in the diagram is not flat:
 
-| Host                | D1   | Workers AI | Publishes events | Calls over RPC                                                    |
-| ------------------- | ---- | ---------- | ---------------- | ----------------------------------------------------------------- |
-| `Api` Worker        | ✓    | ✓          | ✓ (and consumes) | AutomationAgent, StudioAssistant, ChangeCoordinator, entity-store |
-| `AutomationAgent`   | ✓    | ✓          | ✓                | entity-store                                                      |
-| `StudioAssistant`   | ✓    | ✓          | none             | AutomationAgent, ChangeCoordinator, entity-store                  |
-| `ChangeCoordinator` | ✓    | none       | none             | AutomationAgent (template uses), entity-store                     |
-| `ChannelMailbox`    | none | none       | ✓                | none                                                              |
+| Host                | D1   | Workers AI | Publishes events | Calls over RPC                                   |
+| ------------------- | ---- | ---------- | ---------------- | ------------------------------------------------ |
+| `Api` Worker        | ✓    | ✓          | ✓ (and consumes) | AutomationAgent, ChangeCoordinator, entity-store |
+| `AutomationAgent`   | ✓    | ✓          | ✓                | entity-store                                     |
+| `ChangeCoordinator` | ✓    | none       | none             | AutomationAgent (template uses), entity-store    |
+| `ChannelMailbox`    | none | none       | ✓                | none                                             |
 
 When Slack is configured, a third Worker, [`Channels`](src/platform/cloudflare/channels.ts), takes Slack's webhooks through [effect-channels](https://github.com/humanlayer/effect-channels), and clicks on an approval DM's buttons. It is public because Slack must reach it, and it serves only signature-checked Slack routes. [Events](#events-flow-through-one-queue) describes what it publishes, and [approving from Slack](#approvals-from-slack-go-through-respond) where clicks go.
 
-[The API host](src/platform/cloudflare/api.ts) rebuilds its service layers for each request, because they capture the request's runtime context and Access identity. Besides `fetch`, its default entrypoint has one RPC method, `mcp`, for the hub's assistant in the agents stack ([MCP](docs/development.md#mcp)). [HTTP routes](src/http/api.ts) decode inputs, call one application operation, and encode results. They do not know about D1 bindings or Durable Object namespaces. JSON routes cap bodies at 32 KB and return `{ "error": string }` on failure; MCP returns JSON-RPC errors and dictation is a WebSocket.
+[The API host](src/platform/cloudflare/api.ts) rebuilds its service layers for each request, because they capture the request's runtime context and Access identity. Besides `fetch`, its default entrypoint has one RPC method, `mcp`, for the hub's assistant in the agents stack ([MCP](docs/development.md#mcp)). [HTTP routes](src/http/api.ts) decode inputs, call one application operation, and encode results. They do not know about D1 bindings or Durable Object namespaces. JSON routes cap bodies at 32 KB and return `{ "error": string }` on failure; MCP returns JSON-RPC errors.
 
 ## Code is layered by ownership
 
@@ -86,7 +85,7 @@ When Slack is configured, a third Worker, [`Channels`](src/platform/cloudflare/c
 ┌────────────────────────────────────▼────────────────────────────────────┐
 │ src/http/  routes, RequestIdentity, the studio's MCP server             │
 ├─────────────────────────────────────────────────────────────────────────┤
-│ application: automation/, agents/, assistant/, changes/, events/,       │
+│ application: automation/, agents/, changes/, events/,                   │
 │ channels/                                                               │
 ├─────────────────────────────────────────────────────────────────────────┤
 │ domain and contracts: workflow/, entities/, connections/, ai/,          │
@@ -103,12 +102,12 @@ Dependencies point from the Cloudflare adapters into the application and domain 
 | Automation                | Design session, saved snapshot, runs, durable callbacks, pi conversations    | [`src/automation/`](src/automation/application.ts), [`automation.ts`](src/platform/cloudflare/automation.ts) |
 | Planner and namer         | Planner instructions, working copy and tools; naming new automations         | [`src/agents/`](src/agents/planner/planner.ts), [`planning.ts`](src/automation/planning.ts)                  |
 | Workflow execution        | Replay journal, completed activities, clocks, deferred answers               | [`durable-engine.ts`](src/workflow/durable-engine.ts), [`interpreter.ts`](src/workflow/interpreter.ts)       |
-| Assistant session         | Conversation, typed tools, questions, confirmations, delegated design        | [`src/assistant/`](src/assistant/session.ts), [`assistant.ts`](src/platform/cloudflare/assistant.ts)         |
+| MCP server                | The studio's tools for the hub's assistant and other MCP clients             | [`mcp-server.ts`](src/http/mcp-server.ts), [`api.ts`](src/platform/cloudflare/api.ts)                        |
 | Tenant change coordinator | Validated proposals, stale-decision checks, recovery, receipts               | [`src/changes/`](src/changes/application.ts), [`changes.ts`](src/platform/cloudflare/changes.ts)             |
 | Tenant catalog            | Entity types and records (entity-store); templates, subscriptions, directory | [`EntityStore`](src/entities/store.ts), [`AutomationIndex`](src/automation/index.ts), adapters               |
 | Events                    | Event model, publishing, queue delivery, Slack ingress                       | [`src/events/`](src/events/delivery.ts), [`src/channels/`](src/channels/slack.ts)                            |
 
-`AutomationHost` treats persistence and durable job scheduling as one capability: writes and scheduling commit or roll back together. `AssistantHost` requires the same guarantee for its turns, confirmations and answers. Application tests substitute an in-memory host and scripted `PiAgent`; production hosts supply SQLite storage, Alchemy callbacks, and Workers AI.
+`AutomationHost` treats persistence and durable job scheduling as one capability: writes and scheduling commit or roll back together. Application tests substitute an in-memory host and scripted `PiAgent`; production hosts supply SQLite storage, Alchemy callbacks, and Workers AI.
 
 ## An automation is one Durable Object
 
@@ -153,12 +152,12 @@ Each automation's Durable Object holds its draft, saved workflow, chat exchanges
 
 ### Creation names the automation, then sends the first message
 
-The studio designs automations only through [the studio assistant](#the-studio-assistant-proposes-it-never-applies): **New automation** opens a fresh assistant thread, whose `draft_automation` tool lists the automation and sends the planner its first message, and the studio page shows the draft without a chat of its own. `POST /api/automations` remains for API clients and the demo reset. It runs in the Api Worker. [A fast model](src/agents/namer/namer.ts) names the automation from its description, falling back to the description's opening words, so creation never fails on naming. [Creation](src/automation/creation.ts) claims a slug ID in the directory, then sends the description as the first chat message. If that send fails, the automation stays listed without a pending chat.
+The studio designs automations only through [the hub's assistant](#the-hubs-assistant-works-through-mcp): **New automation** opens its drawer with a prompt, its `create_automation` tool runs the creation below, and the studio page shows the draft without a chat of its own. `POST /api/automations` runs the same creation for API clients and the demo reset. It runs in the Api Worker. [A fast model](src/agents/namer/namer.ts) names the automation from its description, falling back to the description's opening words, so creation never fails on naming. [Creation](src/automation/creation.ts) claims a slug ID in the directory, then sends the description as the first chat message. If that send fails, the automation stays listed without a pending chat.
 
 ### Conversation produces a draft, not a running program
 
 ```diagram
- POST chat, or Automations.chat from the assistant with a request ID
+ POST chat, or Automations.chat from MCP's draft tools with a request ID
           │
           ▼
 ┌──────────────────────────────────┐  questions open?
@@ -208,7 +207,7 @@ The studio designs automations only through [the studio assistant](#the-studio-a
      directory name, best effort
 ```
 
-`chat` only stores the message and schedules `planReply`, so a reload mid-answer loses nothing. A second message while one is working is refused, and a message sent while questions are open answers them. The assistant passes a request ID, which makes its delegated chat idempotent.
+`chat` only stores the message and schedules `planReply`, so a reload mid-answer loses nothing. A second message while one is working is refused, and a message sent while questions are open answers them. MCP's `draft_automation` may pass a request ID, which makes its delegated chat idempotent.
 
 The planner's instructions come from the current entity types, templates, and connection registry, rebuilt on each turn and resent only when they change. [Planner tools](src/agents/planner/tools.ts) edit [a flat working copy](src/agents/planner/plan.ts): each step is stored once, and container steps name their children by ID. Tools set or replace values so replaying a call does not apply the edit twice. The planner reads workflow content as YAML; tool arguments remain JSON.
 
@@ -381,98 +380,38 @@ Steps that read refs resolve them first in Activity `<step>/refs`. A step whose 
 
 Callbacks are delivered at least once. Agent Activities reuse a pi request ID within one attempt, and a retry asks again under a new one. Decide steps call a classifier that keeps no conversation, so asking again repeats nothing. Action steps use a key that stays the same across retries: `http.post` sends it as `Idempotency-Key`, and `events.emit` uses it as the event ID. Receivers must handle duplicate delivery. Callback names, Activity names, deferred names, and storage keys are persisted contracts: changing them can make a waiting run repeat work.
 
-## The studio assistant proposes; it never applies
+## The hub's assistant works through MCP
 
 ```diagram
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ Browser assistant panel · outside the page lifecycle                    │
-│ open thread's UUID in localStorage · own request sequence · polls       │
-│ history of threads · new · clear · archive · stop                       │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │ /api/assistant[/:sessionId]
-                                     │ GET · chat · confirmation · answers
-                                     ▼
+│ Browser · Studio page + hub shell (rail, assistant drawer)              │
+│ New automation · Ask the assistant: hub:open { prompt }                 │
+└─────────────┬──────────────────────────────────────────┬────────────────┘
+              │ /api/*                                   │ /_hub/api/*, email only when
+              ▼                                          ▼ Access's JWT vouches for it
+┌───────────────────────────┐              ┌──────────────────────────────┐
+│ Api Worker · routes       │◀──── mcp ────│ agents · platform assistant  │
+│ mcp(body, headers) RPC    │  (binding)   │ app_tools · call_app_tool    │
+│ acts for the person named │              │ approval card before every   │
+│ in the email header       │              │ call without readOnlyHint    │
+└─────────────┬─────────────┘              └──────────────────────────────┘
+              │ StudioTools: one stateless MCP server, also at /api/mcp
+              ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│ Api Worker · owner = Access email, or "local"                           │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │ DO RPC, named [owner, sessionId]
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│ StudioAssistant Durable Object                                          │
-│ ┌─────────────────────────────┐   ┌───────────────────────────────────┐ │
-│ │ AssistantSession            │──▶│ AnswerHub · in memory             │ │
-│ │ chat · confirm · answer ·   │   └───────────────────────────────────┘ │
-│ │ reply                       │   ┌───────────────────────────────────┐ │
-│ │                             │──▶│ PiAgent · pi-durable in SQLite    │ │
-│ │ tools:                      │   │ tools installed before resume     │ │
-│ │   read_studio               │   └───────────────────────────────────┘ │
-│ │   propose_change            │   ┌───────────────────────────────────┐ │
-│ │   draft_automation          │──▶│ AssistantHost · identity,         │ │
-│ │   ask_question              │   │ assistant, tool:<callId> receipts │ │
-│ └─────────────────────────────┘   │ callback assistantReply(turnId)   │ │
-│                                   └───────────────────────────────────┘ │
-└───────┬──────────────────┬────────────────────┬──────────────────┬──────┘
-        │ model            │ read               │ propose, decide  │ delegate
-        ▼                  ▼                    ▼                  ▼
-┌──────────────┐  ┌─────────────────┐  ┌──────────────────┐  ┌──────────────────┐
-│ Workers AI   │  │ D1: EntityStore │  │ ChangeCoordinator│  │ AutomationAgent  │
-│              │  │ AutomationIndex │  │                  │  │ chat · answer ·  │
-│              │  │                 │  │                  │  │ inspectWorkflow  │
-└──────────────┘  └─────────────────┘  └──────────────────┘  └──────────────────┘
+│ reads:   list_automations · get_automation · get_run · list_entity_types│
+│          list_entities · get_entity · list_templates · preview_change   │
+│          list_pending_changes                                           │
+│ changes: put/delete entity, type, template → Changes.prepare + decide   │
+│          decide_change (a proposal waiting from elsewhere)              │
+│ design:  create_automation · draft_automation → Automations.chat/answer │
+└─────────────────────────────────────────────────────────────────────────┘
 ```
 
-[The studio assistant](src/assistant/session.ts) is one agent per person and thread, separate from every automation's planner conversation. A person can start new threads, reopen past ones, archive them, clear one in place, or stop a turn; a D1 table lists each person's threads, because Durable Objects can't be listed, and a fast model titles each thread from its first message. It has four tools:
+automations has one assistant: the platform's, in the hub shell's drawer, served by the agents project. It reaches the studio only through [the studio's MCP server](src/http/mcp-server.ts), which `Api` serves to agents' Worker as the `mcp(body, headers)` RPC method. A call acts for the person `cf-access-authenticated-user-email` names; with no person, every tool that changes something refuses.
 
-- **`read_studio`** reads the catalog, entities, the directory, or one automation's draft and runs. It writes no receipt.
-- **`propose_change`** prepares a change proposal and parks until the person confirms or declines it.
-- **`draft_automation`** delegates design to an automation's planner through `Automations.chat`: a new automation, or the one the person has open. It creates a directory entry for a new automation, relays the planner's questions as its own, and returns the planner's reply with the draft.
-- **`ask_question`** asks the person a structured question and parks until they answer.
+Every tool that isn't marked read-only changes something when it's called, and agents asks the person in an approval card before each such call, so the card is the person's one decision per change. A change tool prepares the change through the coordinator and decides it at once, keeping every check below; a write refused or found stale at apply is cancelled rather than left pending. `preview_change` shows the details and consequences first and stores nothing, and `list_pending_changes` finds proposals waiting from elsewhere for `decide_change`. The design tools hand the person's words to the automation's planner (`create_automation` through [creation](src/automation/creation.ts), `draft_automation` through `Automations.chat`, or `answer` while the planner asks) and wait up to about 25 seconds for its reply. No tool saves, starts, or answers a run's task: the person does that in the studio.
 
-It never saves or runs a workflow, and it never applies a change itself.
-
-```diagram
-┌────────────────────────────────────────────────────────────────────────┐
-│ chat: one transaction                                                  │
-│   require idle or failed · new turnId · append the message             │
-│   status working · schedule assistantReply(turnId)                     │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│ reply(turnId)                                                          │
-│ 1 settle this turn's open receipts:                                    │
-│     approved change recorded → Changes.decide → finish receipt         │
-│     draft submitted → inspect the planner:                             │
-│       asking: relay its questions, status asking, return               │
-│       working: check again in 1 s, return                              │
-│       done: finish the receipt with the draft                          │
-│ 2 asking or confirming? return                                         │
-│ 3 pi prompt assistant:<turnId>, raced against "parked"                 │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│ tool call: one open receipt per turn, keyed tool:<callId>              │
-│   write the receipt before the effect, reuse it on replay              │
-│   park: open an answer slot, signal parked, reply returns              │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│ person confirms or answers                                             │
-│   transaction: record the decision or answer + schedule reply          │
-│   confirmation: Changes.decide, finish the receipt, wake the tool      │
-└───────────────────────────────────┬────────────────────────────────────┘
-                                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│ next reply: pi resumes the same request ID; the tool reads its receipt │
-│ final transaction: store the reply, status idle                        │
-│ failure: fail open receipts, status failed, release waiting tools      │
-└────────────────────────────────────────────────────────────────────────┘
-```
-
-Every cross-service effect uses the stable request ID `<sessionId>:<callId>`. `Changes.prepare` and `Automations.chat` both deduplicate on it, so a redelivered tool call does not prepare a second proposal or send a second chat. On cold start the session opens pi with its tools installed, then resumes. A replayed tool call finds its receipt and either returns the stored result or parks again.
-
-A confirmation is recorded before `Changes.decide` runs. If the object restarts in between, the next `reply` finishes the decision. Free text is never approval.
-
-Stopping writes the turn's end first: decided changes are settled, waiting proposals cancelled, open receipts finished as stopped, and the turn set idle in one transaction. Only then does it stop a delegated planner (`Automations.stopChat`) and abort pi, so anything that finishes late finds the turn over and writes nothing. Clearing stops the turn, then erases the object like removing an automation does. [Studio assistant](docs/assistant.md) traces both.
+The studio had its own agent before, a `StudioAssistant` Durable Object per person and thread with a panel on every page. The hub's assistant replaced it: its class was deleted with its conversations, and its thread directory dropped.
 
 ## entity-store is the system of record for entities
 
@@ -480,15 +419,15 @@ Entity types and entities live in entity-store, a separate Alchemy stack with it
 
 [The type adapter](src/entities/entity-store-types.ts) reads an entity-store type at its latest version as automations' `EntityType`: `string` is text (or a date or datetime by its format), `enum` is text, `link` is a ref, and `nullable` is what it holds. `array`, `object` and `json` fields, and names that aren't snake_case, are left out, so checks, paths and entity data never see them, and writes leave them alone. Saving a type from automations creates it, or adds a version whose lens adds and removes fields; a field whose kind changes is refused, because only entity-store can author the lens that converts it.
 
-entity-store records a change row with every write, in the same batch, and delivers it at least once, in no particular order, to its change queue. [The Api consumes it](src/entities/change-feed.ts): for each message it reads the change, publishes `entity.created`, `entity.updated` or `entity.deleted` as `entity-store:<seq>`, and notifies the automations watching the type under the same key. Keys use the change's `seq` rather than the entity and revision: deleting a type purges its deleted entities, so an ID can come back at revision 1. A message whose change is gone, or whose data can't be presented at its type's latest version (`ProjectionFailed`), is dropped with a warning rather than retried. Every entity write therefore starts automations, whoever made it: the studio, the assistant, MCP, a workflow's `entity.put`, or entity-store's own UI and API. Writes made by automations carry `meta` `{ depth, sourceEventId?, changeId? }`, which entity-store stores without reading, so an event chain keeps its depth across the boundary. Under `alchemy dev`, where a reference can't reach another checkout's stack, [a Durable Object](src/platform/cloudflare/entity-store-dev.ts) stands in for entity-store behind the same RPC methods and feeds a local change queue.
+entity-store records a change row with every write, in the same batch, and delivers it at least once, in no particular order, to its change queue. [The Api consumes it](src/entities/change-feed.ts): for each message it reads the change, publishes `entity.created`, `entity.updated` or `entity.deleted` as `entity-store:<seq>`, and notifies the automations watching the type under the same key. Keys use the change's `seq` rather than the entity and revision: deleting a type purges its deleted entities, so an ID can come back at revision 1. A message whose change is gone, or whose data can't be presented at its type's latest version (`ProjectionFailed`), is dropped with a warning rather than retried. Every entity write therefore starts automations, whoever made it: the studio, MCP (the hub's assistant included), a workflow's `entity.put`, or entity-store's own UI and API. Writes made by automations carry `meta` `{ depth, sourceEventId?, changeId? }`, which entity-store stores without reading, so an event chain keeps its depth across the boundary. Under `alchemy dev`, where a reference can't reach another checkout's stack, [a Durable Object](src/platform/cloudflare/entity-store-dev.ts) stands in for entity-store behind the same RPC methods and feeds a local change queue.
 
 ## Every data change goes through one coordinator
 
-Manual forms, assistant tools, MCP entity and type tools, and `entity.put` events all use the tenant's single [`ChangeCoordinator`](src/changes/application.ts). It serializes `prepare` and `decide`, and stores proposals under `proposal:<id>`.
+Manual forms, MCP tools, and `entity.put` events all use the tenant's single [`ChangeCoordinator`](src/changes/application.ts). It serializes `prepare` and `decide`, and stores proposals under `proposal:<id>`.
 
 ```diagram
   prepare(owner, action, requestId?)                prepare(..., sourceEvent)
-  manual UI · assistant · MCP                       applyEvent for entity.put
+  manual UI · MCP                                   applyEvent for entity.put
            │                                                   │
            ▼                                                   │
 ┌────────────────────────────┐                                 │
@@ -576,15 +515,14 @@ An ask-first action's DM, sent before roles were removed, has **Approve** and **
 - [`src/entities/`](src/entities/store.ts) owns entity models, approved templates, subscriptions, the entity-store contract and type adapter, and automations' rules on top. The memory store runs the same store code over [an in-memory entity-store](src/entities/entity-store-fake.ts).
 - [`src/connections/registry.ts`](src/connections/registry.ts) describes operations without executing them. The planner, checker, and UI share it. [`runner.ts`](src/connections/runner.ts) executes those operations; [`slack.ts`](src/connections/slack.ts) posts to Slack with a bot token, and [`email.ts`](src/connections/email.ts) is the email sender's contract, which [the Cloudflare adapter](src/platform/cloudflare/email.ts) fills with Email Service.
 - [`src/ai/pi.ts`](src/ai/pi.ts) defines the `PiAgent` conversation contract and tools; [`trace.ts`](src/ai/trace.ts) defines traces. The Cloudflare implementation wraps Promise-based pi-ai and pi-durable in Effect and stores conversations in Durable Object SQLite. [`src/ai/classifier.ts`](src/ai/classifier.ts) defines the clef classifier that picks progress phrases and makes decide steps' decisions. [`workers-ai.ts`](src/platform/cloudflare/workers-ai.ts) selects the pi, classifier and naming models; evals reuse it.
-- [`src/http/mcp-server.ts`](src/http/mcp-server.ts) exposes the studio over stateless MCP JSON-RPC: the catalog's tools ([`entity-mcp.ts`](src/http/entity-mcp.ts)) and the automations' ([`automation-mcp.ts`](src/http/automation-mcp.ts)), which read automations and runs and delegate design to the planner through `Automations.chat`. `/api/mcp` serves it over HTTP, and `Api`'s `mcp(body, headers)` RPC method serves it to the hub's assistant in the agents stack, acting for the person its `cf-access-authenticated-user-email` header names. Handlers run within the request or RPC call so they retain access to D1 and entity-store; the studio assistant uses application tools directly, not MCP.
+- [`src/http/mcp-server.ts`](src/http/mcp-server.ts) exposes the studio over stateless MCP JSON-RPC: the catalog's tools ([`entity-mcp.ts`](src/http/entity-mcp.ts)) and the automations' ([`automation-mcp.ts`](src/http/automation-mcp.ts)), which read automations and runs and delegate design to the planner through `Automations.chat`. `/api/mcp` serves it over HTTP, and `Api`'s `mcp(body, headers)` RPC method serves it to the hub's assistant in the agents stack, acting for the person its `cf-access-authenticated-user-email` header names. Handlers run within the request or RPC call so they retain access to D1 and entity-store.
 
 | Use                                 | Model                                                                       |
 | ----------------------------------- | --------------------------------------------------------------------------- |
-| Planner, assistant, agent steps     | `claude-sonnet-5-5` at medium thinking, through AI Gateway `default` (BYOK) |
+| Planner, agent steps                | `claude-sonnet-5-5` at medium thinking, through AI Gateway `default` (BYOK) |
 | Progress phrases                    | `@cf/cloudflare/clef-flash`                                                 |
 | Decide steps, by the step's `model` | `@cf/cloudflare/clef-flash` or `@cf/cloudflare/clef`                        |
-| Naming automations and threads      | `@cf/meta/llama-3.1-8b-instruct-fp8`                                        |
-| Dictation                           | `@cf/deepgram/nova-3`                                                       |
+| Naming automations                  | `@cf/meta/llama-3.1-8b-instruct-fp8`                                        |
 
 ## Browser state and server state have separate lifecycles
 
@@ -592,7 +530,7 @@ An ask-first action's DM, sent before roles were removed, has **Approve** and **
 
 Routes preserve the open automation and run in the URL. Page changes increment a revision so old requests and polls cannot overwrite the new page; the open run and the overview keep their own counters. Polling is driven by Commands and stops when there is nothing in flight.
 
-The global assistant sits outside the page lifecycle and uses its own request sequence. Follow-along navigates to the assistant's latest activity link, but never over dirty forms or an unsent message. Navigating by hand turns follow-along off.
+The hub's assistant lives in the shell's drawer, outside the app. The studio opens it with a prompt (`hub:open`) and learns of its work by watching: an idle studio page reloads the open automation every few seconds in its own chain, and follows the planner as soon as a message reaches it.
 
 The draft marks what the latest reply changed that isn't saved yet: it compares the reply's recorded changes with the saved version, so saving clears the marks and a reload keeps them. Steps the reply added or changed get a box and a badge, old values are struck through, the rest is dimmed, and one line names removed steps and other changes.
 

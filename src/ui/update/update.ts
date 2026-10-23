@@ -21,7 +21,7 @@ import {
   SetPermission,
   StartRun,
 } from "../command.ts";
-import { AutomationId, EventInput, TaskAnswer } from "../domain/index.ts";
+import { AssistantPrompt, AutomationId, EventInput, TaskAnswer } from "../domain/index.ts";
 import {
   Message,
   toEntitiesMessage,
@@ -43,7 +43,7 @@ import { Entities, Overview, Templates, Traces } from "../page/index.ts";
 import { routeFromUrl, runHref } from "../route.ts";
 import { nextTheme } from "../theme.ts";
 import { followRoute, openRunPanel, opensInPanel } from "./navigation.ts";
-import { dirtyForms, foldAssistant, pageHref, startAssistantThread } from "./assistant.ts";
+import { askAssistant, dirtyForms, pageHref } from "./assistant.ts";
 import {
   answerTask,
   chooseRunSubjects,
@@ -63,6 +63,8 @@ import {
   isAnswering,
   loadedAutomation,
   savedSubjectType,
+  unchangedAutomation,
+  watchAgain,
 } from "./studio.ts";
 
 const foldEntities = Update.foldChild({
@@ -92,9 +94,8 @@ const foldTraces = Update.foldChild({
   toParentMessage: toTracesMessage,
 });
 
-/** New automations are drafted by the studio agent, on a fresh thread it opens for them. */
-const draftNewAutomation = (model: Model) =>
-  startAssistantThread(model, "Draft an automation that ");
+/** New automations are drafted by the hub's assistant, on a new chat it opens for them. */
+const draftNewAutomation = (model: Model) => askAssistant(model, AssistantPrompt.newAutomation);
 
 const foldOverview = Update.foldChild({
   update: Overview.update,
@@ -109,55 +110,47 @@ const foldOverview = Update.foldChild({
     }),
 });
 
-export const update = (model: Model, message: Message) =>
+export const update = (model: Model, message: Message): Update.Return<Model, Message> =>
   Message.match<Update.Return<Model, Message>>(message, {
-    GotAssistantMessage: ({ message }) => foldAssistant(model, message),
     ClickedLink: ({ request }) =>
       UrlRequest.match<Update.Return<Model, Message>>(request, {
         Internal: ({ url }) => {
-          const paused = modifyFields(model, {
-            assistant: (assistant) => modifyFields(assistant, { follow: () => false }),
-          });
           if (dirtyForms(model)) {
             return {
-              model: modifyFields(paused, {
+              model: modifyFields(model, {
                 maybeNavigationNotice: () =>
                   Option.some("Save or cancel your open form before leaving this page."),
               }),
             };
           }
-          return Option.match(opensInPanel(paused, routeFromUrl(url)), {
+          return Option.match(opensInPanel(model, routeFromUrl(url)), {
             onNone: () => ({
-              model: modifyFields(paused, { maybeNavigationNotice: () => Option.none() }),
+              model: modifyFields(model, { maybeNavigationNotice: () => Option.none() }),
               commands: [NavigateInternal({ url: urlToString(url) })],
             }),
-            onSome: ({ automationId, runId }) => openRunPanel(paused, automationId, runId),
+            onSome: ({ automationId, runId }) => openRunPanel(model, automationId, runId),
           });
         },
         External: ({ href }) => ({ model, commands: [LoadExternal({ href })] }),
       }),
     ChangedUrl: ({ url }) => {
       const href = `${url.pathname}${Option.match(url.search, { onNone: () => "", onSome: (search) => `?${search}` })}`;
-      const automatic = Option.contains(model.maybeFollowHref, href);
-      const paused = modifyFields(model, {
-        assistant: (assistant) =>
-          automatic ? assistant : modifyFields(assistant, { follow: () => false }),
-        maybeFollowHref: () => Option.none(),
-      });
       if (dirtyForms(model) && href !== pageHref(model)) {
         return {
-          model: modifyFields(paused, {
+          model: modifyFields(model, {
             maybeNavigationNotice: () =>
               Option.some("Save or cancel your open form before leaving this page."),
           }),
           commands: [NavigateInternal({ url: pageHref(model) })],
         };
       }
-      return followRoute(paused, routeFromUrl(url));
+      return followRoute(model, routeFromUrl(url));
     },
     CompletedNavigateInternal: () => ({ model }),
     CompletedLoadExternal: () => ({ model }),
     ClickedNewAutomation: () => draftNewAutomation(model),
+    ClickedAskAssistant: ({ prompt }) => askAssistant(model, prompt),
+    CompletedOpenAssistant: () => ({ model }),
     ToggledStepDetails: ({ stepId, isOpen }) => ({
       model: modifyFields(model, {
         expandedStepIds: (stepIds) => {
@@ -369,6 +362,18 @@ export const update = (model: Model, message: Message) =>
               chooseSubjects,
             ],
           ),
+    // An idle watch shows what changed elsewhere, such as a draft the hub's assistant asked for,
+    // without replacing a notice or an action in progress when nothing did.
+    WatchedAutomation: ({ watch, loaded }) =>
+      loaded.revision !== model.revision || watch !== model.automationWatch
+        ? { model }
+        : model.activity._tag === "Working" || unchangedAutomation(model, loaded)
+          ? watchAgain(model)
+          : update(model, Message.SucceededLoadAutomation(loaded)),
+    FailedWatchAutomation: ({ revision, watch }) =>
+      revision !== model.revision || watch !== model.automationWatch
+        ? { model }
+        : watchAgain(model),
     SucceededSaveDraft: ({ revision, saved }) =>
       revision !== model.revision
         ? { model }

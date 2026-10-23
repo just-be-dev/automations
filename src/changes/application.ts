@@ -526,6 +526,17 @@ export const makeChanges = Effect.fn("Changes.make")(function* (storage: ChangeS
       const action = yield* Schema.decodeEffect(ChangeAction)(input);
       return describe(action, yield* look(action, true));
     }),
+    pending: Effect.fn("Changes.pending")(function* (owner: string) {
+      const waiting = (yield* records).filter(
+        (record): record is Stored =>
+          isCurrent(record) &&
+          record.owner === owner &&
+          record.state === "pending" &&
+          record.receipt === undefined,
+      );
+      const order = (record: Stored) => Number(record.proposal.id.replace(/^change-/, "")) || 0;
+      return waiting.sort((a, b) => order(a) - order(b)).map((record) => record.proposal);
+    }),
     prepare: Effect.fn("Changes.prepare")(
       function* (owner: string, input: ChangeAction, requestId?: string, sourceEvent?: Event) {
         const action = yield* Schema.decodeEffect(ChangeAction)(input);

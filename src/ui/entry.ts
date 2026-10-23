@@ -6,7 +6,6 @@ import { Model } from "./model.ts";
 import { Flags, loadFlags } from "./theme.ts";
 import { update } from "./update/index.ts";
 import { view } from "./view/index.ts";
-import { subscriptions } from "./subscriptions.ts";
 import "@fontsource-variable/inter";
 import "@fontsource/ibm-plex-mono/400.css";
 import "@fontsource/ibm-plex-mono/500.css";
@@ -18,7 +17,6 @@ const application = Runtime.makeApplication({
   init,
   update,
   view,
-  subscriptions,
   routing: {
     onUrlRequest: (request) => Message.ClickedLink({ request }),
     onUrlChange: (url) => Message.ChangedUrl({ url }),

@@ -1,13 +1,13 @@
 # Workflow engine
 
-Agents write a workflow, the DSL holds it, and an interpreter runs a saved snapshot of it. One `AutomationAgent` Durable Object per automation hosts the planner, the saved workflow, and the interpreter. The studio agent ([the assistant](assistant.md)) hands each design request to it. [The architecture overview](../ARCHITECTURE.md) explains how the parts fit together, and [the Workflow DSL reference](workflow-dsl.md) defines every field. This page shows how the parts connect.
+Agents write a workflow, the DSL holds it, and an interpreter runs a saved snapshot of it. One `AutomationAgent` Durable Object per automation hosts the planner, the saved workflow, and the interpreter. The platform's assistant in the hub shell hands each design request to it, through the studio's MCP tools. [The architecture overview](../ARCHITECTURE.md) explains how the parts fit together, and [the Workflow DSL reference](workflow-dsl.md) defines every field. This page shows how the parts connect.
 
 ## Every hand-off is checked against the catalog
 
 ```diagram
 ┌───────────────────┐        ┌───────────────────┐        ┌───────────────────┐
 │ Generation        │        │ DSL               │        │ Execution         │
-│ studio agent asks;│ draft  │ Workflow: name,   │ saved  │ beginRun starts a │
+│ the assistant     │ draft  │ Workflow: name,   │ saved  │ beginRun starts a │
 │ planner edits a   │───────▶│ trigger, steps,   │───────▶│ run; the          │
 │ working copy      │        │ permissions       │        │ interpreter       │
 │ through pi tools  │        │                   │        │ replays its walk  │
@@ -31,12 +31,12 @@ Agents write a workflow, the DSL holds it, and an interpreter runs a saved snaps
 
 ```diagram
 ┌────────────────────────────────┐
-│ studio agent: draft_automation │
-│ new: ID from its name,         │
-│ index.recordIfMissing          │
+│ MCP: create_automation (named, │
+│ listed by createAutomation) or │
+│ draft_automation               │
 └───────────────┬────────────────┘
-                │ Automations.chat(id, description,
-                │   <sessionId>:<receiptId>)
+                │ Automations.chat(id, message,
+                │   mcp:<requestId>?)
                 ▼
 ┌────────────────────────────────┐ ◀── API clients: POST /:id/chat,
 │ chat: one transaction stores   │     or POST /api/automations
@@ -82,9 +82,9 @@ Agents write a workflow, the DSL holds it, and an interpreter runs a saved snaps
      AutomationIndex.record, best effort
 ```
 
-- The studio designs only through the studio agent. Its [`draft_automation`](../src/assistant/session.ts) tool names a new automation itself, derives the ID from the name with a random suffix, lists it with `recordIfMissing`, and sends the description as the first chat message. For API clients and the demo, [`createAutomation`](../src/automation/creation.ts) does the same in the Api Worker, named by [`nameAutomation`](../src/agents/namer/namer.ts), which never fails: a slow, failed, or empty answer falls back to the description's opening words. The namer otherwise only titles assistant threads.
-- [`chat`](../src/automation/design-session.ts) only stores `pendingChat` and schedules `planReply`; while questions are open it answers them instead. The reply runs later in the object's alarm, so a reload mid-answer loses nothing. A message is 1–10,000 characters, and one sent while another is still being answered is refused. With a request ID, which the studio agent always passes, the chat ID is that ID and the request is stored as `chatRequest:<requestId>` in the same transaction, so sending it again returns the same `pendingChat`.
-- `stop` (`stopChat`) ends a reply in storage first: one transaction marks `pendingChat` failed with `Stopped` and deletes `plan`. Only then does it abort pi, ignoring a failure, so a `planReply` delivered later finds nothing pending and writes nothing. The studio agent calls it when its turn is stopped, including a stop that lands while the message is still on its way.
+- The studio designs only through the hub's assistant, over [MCP](../src/http/automation-mcp.ts). Its `create_automation` tool, like `POST /api/automations` for API clients and the demo, runs [`createAutomation`](../src/automation/creation.ts) in the Api Worker: [`nameAutomation`](../src/agents/namer/namer.ts) names it and never fails (a slow, failed, or empty answer falls back to the description's opening words), the directory lists it under an ID from the name, and the description becomes the first chat message. `draft_automation` sends an existing automation's planner a message.
+- [`chat`](../src/automation/design-session.ts) only stores `pendingChat` and schedules `planReply`; while questions are open it answers them instead. The reply runs later in the object's alarm, so a reload mid-answer loses nothing. A message is 1–10,000 characters, and one sent while another is still being answered is refused. With a request ID, which MCP's `draft_automation` passes when given one (`mcp:<requestId>`), the chat ID is that ID and the request is stored as `chatRequest:<requestId>` in the same transaction, so sending it again returns the same `pendingChat`.
+- `stop` (`stopChat`) ends a reply in storage first: one transaction marks `pendingChat` failed with `Stopped` and deletes `plan`. Only then does it abort pi, ignoring a failure, so a `planReply` delivered later finds nothing pending and writes nothing. Nothing calls it since the studio's own agent went away; the hub's assistant can't stop a planner yet.
 - [`planDraft`](../src/agents/planner/planner.ts) sets the instructions, generated from the catalog, as the root pi conversation's system prompt on every turn. pi resends them only when they change.
 - [The tools](../src/agents/planner/tools.ts) edit [the `Plan`](../src/agents/planner/plan.ts) stored under `plan`. Each step lives once in `stepsById`, and container steps name their children by ID. Every edit sets or replaces by ID, so a call pi reruns after a restart changes nothing more.
 - Settling compares the working copy with where it started (`samePlan`) before assembling it. `assemblePlan` reports missing, repeated, and unplaced steps before `decodeWorkflow` and `checkWorkflow` run. pi failures are not retried.
@@ -136,7 +136,7 @@ Caller        design-session.ts          planning.ts            pi root turn
   │                   │ exchange with asked   │                       │
 ```
 
-The caller is the studio agent, which reads the planner's questions with `inspectWorkflow`, asks them as its own, and passes the person's answers back with `answer`, all over Durable Object RPC. API clients do the same with `POST /:id/chat`, `GET /:id` and `POST /:id/answers`.
+The caller is MCP's design tools, for the hub's assistant: `get_automation` and the design tools' answers carry the planner's questions, which the assistant asks the person, and `draft_automation` passes the answer back with `answer`. API clients do the same with `POST /:id/chat`, `GET /:id` and `POST /:id/answers`.
 
 [`ask_question`](../src/ai/ask-question/tool.ts) checks every question (`questionnaireProblems`) before showing any, then calls the host's `Ask`. [`planning.ts`](../src/automation/planning.ts) stores the questions in `plan` under pi's call ID and tells [`AnswerHub`](../src/ai/ask-question/answer-hub.ts) the turn has parked. `planReply` races the turn against that signal and returns without writing: callbacks run one at a time, and a parked turn may wait for days.
 

@@ -1,4 +1,4 @@
-/** Arranges the application shell around the selected page, shared navigation, run preview, and the studio agent. */
+/** Arranges the application shell around the selected page, shared navigation, and run preview. */
 import * as Option from "effect/Option";
 import type { Document, HtmlBuilder } from "foldkit/html";
 import { Monitor, Moon, Sun } from "lucide";
@@ -7,7 +7,6 @@ import { componentName } from "@/lib/component";
 import { icon } from "@/lib/icons";
 import {
   Message,
-  toAssistantMessage,
   toEntitiesMessage,
   toOverviewMessage,
   toTemplatesMessage,
@@ -19,7 +18,6 @@ import { nextTheme, type Theme } from "../theme.ts";
 import { runPageView, runPanelView } from "./run.ts";
 import { sidebarView } from "./sidebar.ts";
 import { workflowPanelView } from "./studio.ts";
-import * as Assistant from "../assistant/index.ts";
 
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   title: "Automations studio",
@@ -42,13 +40,6 @@ export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
               Option.match(model.maybeRunPanel, {
                 onNone: () => h.empty,
                 onSome: (openRun) => runPanelView(model, openRun, h),
-              }),
-              h.submodel({
-                slotId: "assistant",
-                model: model.assistant,
-                view: Assistant.view,
-                viewInputs: { shortcutModifier: model.shortcutModifier },
-                toParentMessage: toAssistantMessage,
               }),
             ],
           ),

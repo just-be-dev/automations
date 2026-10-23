@@ -15,15 +15,27 @@ import { SubjectOption } from "./api.ts";
 import { EventInput } from "./domain/index.ts";
 import { AutomationSummary, WorkflowDisplay } from "./model.ts";
 import { Entities, Overview, Templates, Traces } from "./page/index.ts";
-import * as Assistant from "./assistant/index.ts";
+
+/** The open automation as `GET /api/automations/:id` describes it, for one page revision. */
+export const LoadedAutomation = Schema.Struct({
+  revision: Schema.Int,
+  maybeDraft: Schema.Option(Workflow),
+  maybeSaved: Schema.Option(Workflow),
+  maybeLatestChanges: Schema.Option(WorkflowChanges),
+  maybePendingChat: Schema.Option(PendingChat),
+  runs: Schema.Array(RunSummary),
+  maybeProgress: Schema.Option(Schema.String),
+});
+export type LoadedAutomation = typeof LoadedAutomation.Type;
 
 export const Message = defineMessageUnion({
-  GotAssistantMessage: { message: Assistant.Message },
   ClickedLink: { request: UrlRequest },
   ChangedUrl: { url: Url },
   CompletedNavigateInternal: {},
   CompletedLoadExternal: {},
   ClickedNewAutomation: {},
+  ClickedAskAssistant: { prompt: Schema.String },
+  CompletedOpenAssistant: {},
   ToggledStepDetails: { stepId: Schema.String, isOpen: Schema.Boolean },
   SelectedWorkflowDisplay: { display: WorkflowDisplay },
   ClickedThemeToggle: {},
@@ -45,15 +57,9 @@ export const Message = defineMessageUnion({
   ClickedResumeNow: { step: Schema.String },
   SelectedRunSubject: { subjectId: Schema.String },
   ClickedRunSavedVersion: {},
-  SucceededLoadAutomation: {
-    revision: Schema.Int,
-    maybeDraft: Schema.Option(Workflow),
-    maybeSaved: Schema.Option(Workflow),
-    maybeLatestChanges: Schema.Option(WorkflowChanges),
-    maybePendingChat: Schema.Option(PendingChat),
-    runs: Schema.Array(RunSummary),
-    maybeProgress: Schema.Option(Schema.String),
-  },
+  SucceededLoadAutomation: LoadedAutomation.fields,
+  WatchedAutomation: { watch: Schema.Int, loaded: LoadedAutomation },
+  FailedWatchAutomation: { revision: Schema.Int, watch: Schema.Int },
   SucceededLoadAutomations: { automations: Schema.Array(AutomationSummary) },
   FailedLoadAutomations: { error: Schema.String },
   SucceededLoadConnections: { live: Schema.Array(Schema.String) },
@@ -105,9 +111,6 @@ export const Message = defineMessageUnion({
   GotTracesMessage: { message: Traces.Message },
 });
 export type Message = typeof Message.Type;
-
-export const toAssistantMessage = (message: Assistant.Message) =>
-  Message.GotAssistantMessage({ message });
 
 export const toOverviewMessage = (message: Overview.Message) =>
   Message.GotOverviewMessage({ message });

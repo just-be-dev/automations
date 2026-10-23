@@ -63,6 +63,7 @@ export default class ChangeCoordinator extends Cloudflare.DurableObject<ChangeCo
         }),
         preview: (action: unknown) =>
           Schema.decodeUnknownEffect(ChangeAction)(action).pipe(Effect.flatMap(changes.preview)),
+        pending: (owner: string) => changes.pending(owner),
         prepare: (owner: string, action: unknown, requestId?: string) =>
           Schema.decodeUnknownEffect(ChangeAction)(action).pipe(
             Effect.flatMap((decoded) => changes.prepare(owner, decoded, requestId)),
@@ -91,6 +92,7 @@ export const changesLayer = (namespace: Effect.Success<typeof ChangeCoordinator>
         Effect.provideService(effect, Alchemy.RuntimeContext, runtime);
       return Changes.of({
         preview: (action) => remote(stub.preview(action)),
+        pending: (owner) => remote(stub.pending(owner)),
         prepare: (owner, action, requestId) => remote(stub.prepare(owner, action, requestId)),
         decide: (...args) => remote(stub.decide(...args)),
       });

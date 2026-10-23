@@ -1,4 +1,4 @@
-/** Shared proposals and decisions for manual and assistant-driven studio changes. */
+/** Shared proposals and decisions for studio changes, made in the studio's forms or over MCP. */
 import * as Schema from "effect/Schema";
 import { EntityData, EntityId, EntityName, EntityType } from "../entities/model.ts";
 import { Template } from "../entities/templates.ts";

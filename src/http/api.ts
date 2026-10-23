@@ -6,9 +6,7 @@ import { catalogRoutes } from "./catalog.ts";
 import { entityRoutes } from "./entities.ts";
 import { mcpRoutes } from "./mcp.ts";
 import { json } from "./response.ts";
-import { assistantRoutes } from "./assistant.ts";
 import { changeRoutes } from "./changes.ts";
-import { transcriptionRoutes } from "./transcription.ts";
 import { eventRoutes } from "./events.ts";
 import { developmentRoutes } from "./development.ts";
 
@@ -18,9 +16,7 @@ export const apiRoutes = Layer.mergeAll(
   entityRoutes,
   catalogRoutes,
   mcpRoutes,
-  assistantRoutes,
   changeRoutes,
-  transcriptionRoutes,
   eventRoutes,
   developmentRoutes,
   HttpRouter.add("*", "*", json({ error: "Not found" }, 404)),

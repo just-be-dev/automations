@@ -7,7 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Tool from "effect/ai/Tool";
 import * as Toolkit from "effect/ai/Toolkit";
-import { ChangeAction, ChangeDecision, ChangeDetail } from "../changes/model.ts";
+import { ChangeAction, ChangeDecision, ChangeDetail, ChangeProposal } from "../changes/model.ts";
 import { ChangeError, Changes } from "../changes/service.ts";
 import {
   EntityData,
@@ -169,9 +169,18 @@ const DeleteTemplate = Tool.make("delete_template", {
   .annotate(Tool.Title, "Delete template")
   .annotate(Tool.Destructive, true);
 
+const ListPendingChanges = Tool.make("list_pending_changes", {
+  description:
+    "Lists this person's change proposals still waiting for a decision, such as ones prepared in the studio and never confirmed: each one's id, title, details, and consequences. Decide one with decide_change.",
+  success: Schema.Struct({ proposals: Schema.Array(ChangeProposal) }),
+  failure: EntityFailure,
+})
+  .annotate(Tool.Title, "List waiting changes")
+  .annotate(Tool.Readonly, true);
+
 const DecideChange = Tool.make("decide_change", {
   description:
-    "Approves or cancels a change proposal that is waiting for this person, such as one prepared in the studio. The tools here that make changes apply them directly and never leave one waiting. Returns the stored decision.",
+    "Approves or cancels a change proposal waiting for this person (see list_pending_changes). The tools here that make changes apply them directly and never leave one waiting. Returns the stored decision.",
   parameters: Schema.Struct({ proposalId: Schema.String, approved: Schema.Boolean }),
   success: ChangeDecision,
   failure: EntityFailure,
@@ -185,6 +194,7 @@ export const EntityTools = Toolkit.make(
   GetEntity,
   ListTemplates,
   PreviewChange,
+  ListPendingChanges,
   DefineEntityType,
   DeleteEntityType,
   PutEntity,
@@ -263,6 +273,11 @@ export const entityToolHandlers = Effect.gen(function* () {
       write({ kind: "deleteEntity", type, id }, requestId),
     put_template: ({ template, requestId }) => write({ kind: "putTemplate", template }, requestId),
     delete_template: ({ name, requestId }) => write({ kind: "deleteTemplate", name }, requestId),
+    list_pending_changes: () =>
+      Effect.gen(function* () {
+        const owner = yield* caller.person;
+        return { proposals: yield* changes.pending(owner).pipe(Effect.mapError(changeFailure)) };
+      }),
     decide_change: ({ proposalId, approved }) =>
       Effect.gen(function* () {
         const owner = yield* caller.person;

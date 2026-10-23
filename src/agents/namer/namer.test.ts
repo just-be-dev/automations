@@ -9,8 +9,6 @@ import {
   nameFromReply,
   NamerError,
   nameRequest,
-  nameThread,
-  threadNameRequest,
 } from "./namer.ts";
 
 test("a reply's name drops the labels, quotes, and markup small models add", () => {
@@ -68,21 +66,4 @@ test("naming falls back when the model fails or answers with nothing", async () 
   expect(await name(() => Effect.fail(new NamerError({ message: "Down" })))).toBe(
     "Ping the team daily",
   );
-});
-
-test("a thread is titled from its first message, falling back to its opening words", async () => {
-  const title = (complete: Namer["Service"]["complete"]) =>
-    Effect.runPromise(
-      nameThread("help me draft an onboarding automation").pipe(
-        Effect.provideService(Namer, { complete }),
-      ),
-    );
-  expect(await title(() => Effect.succeed('Title: "Onboarding Automation"'))).toBe(
-    "Onboarding automation",
-  );
-  expect(await title(() => Effect.fail(new NamerError({ message: "Down" })))).toBe(
-    "Help me draft an onboarding automation",
-  );
-  expect(threadNameRequest("hi").messages.at(-1)?.content).toBe("<message>\nhi\n</message>");
-  expect(fallbackName("  ", "New thread")).toBe("New thread");
 });

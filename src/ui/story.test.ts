@@ -22,10 +22,10 @@ import {
   SaveDraft,
   StartRun,
   StartSavedRun,
+  WatchAutomation,
 } from "./command.ts";
 import { init } from "./main.ts";
-import * as Assistant from "./assistant/index.ts";
-import { Message, toAssistantMessage } from "./message.ts";
+import { Message } from "./message.ts";
 import type { Model } from "./model.ts";
 import { Overview } from "./page/index.ts";
 import { update } from "./update/index.ts";
@@ -55,10 +55,7 @@ const automationLoaded = (
   });
 
 const loaded = (search = "automation=my-automation") =>
-  update(
-    init({ theme: "System", shortcutModifier: "Meta" }, studioUrl(search)).model,
-    automationLoaded(),
-  ).model;
+  update(init({ theme: "System" }, studioUrl(search)).model, automationLoaded()).model;
 
 const runUrl = (runId: string) => studioUrl(`automation=my-automation&run=${runId}`);
 
@@ -96,9 +93,10 @@ const workflow: Workflow = {
 
 const changes = diffWorkflows(workflow, { ...workflow, name: "Daily order summary" });
 
-const newSessionId = "3f1c2d4e-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
-
 const working = { id: "chat-1", prompt: "Summarize orders", status: "working" } as const;
+
+/** Ends an idle watch chain: a reply for an older page, which the studio drops. */
+const staleWatch = Message.FailedWatchAutomation({ revision: -1, watch: -1 });
 
 /** The studio with a draft, so Save sends a request. */
 const withDraft = () =>
@@ -115,8 +113,7 @@ const runLoaded = (fields: {
   Message.SucceededLoadRun({ resumesAt: {}, ...fields, maybeSubjectTitle: Option.some("Ari Cho") });
 
 /** The run page as a link opens it: at revision 0, with its first load in flight as poll 1. */
-const openingRun = (runId: string) =>
-  init({ theme: "System", shortcutModifier: "Meta" }, runUrl(runId)).model;
+const openingRun = (runId: string) => init({ theme: "System" }, runUrl(runId)).model;
 
 const withOpenRun = (run: ReturnType<typeof runOf>) =>
   update(openingRun(run.id), runLoaded({ revision: 0, poll: 1, run })).model;
@@ -140,7 +137,7 @@ const loadedRun = (run: ReturnType<typeof runOf>) => ({
   resumesAt: {},
 });
 
-test("the studio follows the planner the studio agent started, shows its draft, and saves it", () => {
+test("the studio follows the planner the hub's assistant started, shows its draft, and saves it", () => {
   story(
     update,
     given(loaded("automation=orders")),
@@ -159,6 +156,8 @@ test("the studio follows the planner the studio agent started, shows its draft, 
     Command.expectExact(PollAutomation({ automationId: "orders", revision: 0 })),
     Command.resolve(PollAutomation, automationLoaded({ maybeDraft: Option.some(workflow) })),
     Command.resolve(LoadAutomations, Message.SucceededLoadAutomations({ automations: [] })),
+    // Idle again, the studio watches for the assistant's next message to the planner.
+    Command.resolve(WatchAutomation, staleWatch),
     model((current) => {
       expect(current.maybeDraft).toEqual(Option.some(workflow));
       expect(current.maybePendingChat).toEqual(Option.none());
@@ -191,9 +190,41 @@ test("the studio follows the planner the studio agent started, shows its draft, 
   );
 });
 
+test("an idle studio watches for the hub's assistant to start the planner, then follows it", () => {
+  const idle = update(loaded("automation=orders"), automationLoaded({}));
+  const watch = idle.model.automationWatch;
+  expect(idle.commands?.map((command) => command.args)).toEqual([
+    { automationId: "orders", revision: 0, watch },
+  ]);
+  const loadedAgain = automationLoaded({});
+  if (loadedAgain._tag !== "SucceededLoadAutomation") throw new Error("Unexpected message");
+  const { _tag, ...unchanged } = loadedAgain;
+  // Nothing changed: the same chain looks again, and the notice stays.
+  const quiet = update(idle.model, Message.WatchedAutomation({ watch, loaded: unchanged }));
+  expect(quiet.model).toBe(idle.model);
+  expect(quiet.commands?.map((command) => command.args)).toEqual([
+    { automationId: "orders", revision: 0, watch },
+  ]);
+  // An older chain's reply is dropped.
+  expect(
+    update(idle.model, Message.WatchedAutomation({ watch: watch - 1, loaded: unchanged }))
+      .commands ?? [],
+  ).toEqual([]);
+  // The assistant sent the planner a message: the studio follows it as it does its own.
+  const started = update(
+    idle.model,
+    Message.WatchedAutomation({
+      watch,
+      loaded: { ...unchanged, maybePendingChat: Option.some(working) },
+    }),
+  );
+  expect(started.model.activity._tag).toBe("Working");
+  expect(started.commands?.map((command) => command.name)).toEqual(["PollAutomation"]);
+});
+
 test("reopening an automation while the agent is answering keeps waiting for the reply", () => {
   const reopened = update(
-    init({ theme: "System", shortcutModifier: "Meta" }, studioUrl("automation=orders")).model,
+    init({ theme: "System" }, studioUrl("automation=orders")).model,
     automationLoaded({ maybePendingChat: Option.some(working) }),
   );
   expect(reopened.model.activity._tag).toBe("Working");
@@ -201,7 +232,7 @@ test("reopening an automation while the agent is answering keeps waiting for the
   expect(reopened.commands?.map((command) => command.name)).toEqual(["PollAutomation"]);
 });
 
-test("while the planner waits on questions, the studio points to the studio agent", () => {
+test("while the planner waits on questions, the studio points to the assistant", () => {
   const asking = {
     id: "chat-1",
     prompt: "Summarize orders",
@@ -209,14 +240,14 @@ test("while the planner waits on questions, the studio points to the studio agen
     questions: [],
   } as const;
   const reopened = update(
-    init({ theme: "System", shortcutModifier: "Meta" }, studioUrl("automation=orders")).model,
+    init({ theme: "System" }, studioUrl("automation=orders")).model,
     automationLoaded({ maybePendingChat: Option.some(asking) }),
   );
   expect(reopened.model.activity).toEqual({
     _tag: "Ready",
-    notice: "The studio agent is waiting for your answers.",
+    notice: "The planner is waiting for your answers. Answer them in the assistant.",
   });
-  // The person answers in the studio agent's panel, so the studio keeps watching for the planner.
+  // The person answers in the hub's assistant, so the studio keeps watching for the planner.
   expect(reopened.commands?.map((command) => command.name)).toEqual(["PollAutomation"]);
 });
 
@@ -228,7 +259,7 @@ test("a planner the person stopped says the draft is unchanged, not that it fail
     error: "Stopped",
   } as const;
   const reopened = update(
-    init({ theme: "System", shortcutModifier: "Meta" }, studioUrl("automation=orders")).model,
+    init({ theme: "System" }, studioUrl("automation=orders")).model,
     automationLoaded({ maybePendingChat: Option.some(stopped) }),
   );
   expect(reopened.model.activity).toEqual({
@@ -240,14 +271,14 @@ test("a planner the person stopped says the draft is unchanged, not that it fail
 test("a draft the planner couldn't finish says so without its technical error", () => {
   const failed = { ...working, status: "failed", error: "Agent did not answer" } as const;
   const reopened = update(
-    init({ theme: "System", shortcutModifier: "Meta" }, studioUrl("automation=orders")).model,
+    init({ theme: "System" }, studioUrl("automation=orders")).model,
     automationLoaded({ maybePendingChat: Option.some(failed) }),
   );
   expect(reopened.model.activity).toEqual({
     _tag: "Failed",
-    error: "The planner couldn't finish this draft. Ask the studio agent to try again.",
+    error: "The planner couldn't finish this draft. Ask the assistant to try again.",
   });
-  expect(reopened.commands ?? []).toEqual([]);
+  expect(reopened.commands?.map((command) => command.name)).toEqual(["WatchAutomation"]);
 });
 
 test("a saved workflow about an employee loads employees, and a run starts for the one picked", () => {
@@ -261,7 +292,11 @@ test("a saved workflow about an employee loads employees, and a run starts for t
         maybeSaved: Option.some(onboarding),
       }),
     ),
-    Command.expectExact(LoadSubjects({ revision: 0, entityType: "employee" })),
+    Command.expectExact(
+      WatchAutomation({ ...requestArgs, watch: 2 }),
+      LoadSubjects({ revision: 0, entityType: "employee" }),
+    ),
+    Command.resolve(WatchAutomation, staleWatch),
     Command.resolve(
       LoadSubjects,
       Message.SucceededLoadSubjects({
@@ -470,7 +505,7 @@ test("a run link in the studio opens the run beside the draft, which follows its
 test("a run link on the overview opens that automation's run beside it", () => {
   const waiting = runOf({ steps: { approve: { status: "waiting" } }, tasks: [approvalTask] });
   const clicked = update(
-    init({ theme: "System", shortcutModifier: "Meta" }, studioUrl()).model,
+    init({ theme: "System" }, studioUrl()).model,
     clickedLink("automation=orders&run=run-1"),
   );
   expect(clicked.model.page._tag).toBe("Overview");
@@ -651,10 +686,7 @@ test("invalid IDs and saving without a draft return errors without requests", ()
 });
 
 test("the URL picks which automation opens and loads it with the automation list", () => {
-  const opened = init(
-    { theme: "System", shortcutModifier: "Meta" },
-    studioUrl("automation=orders"),
-  );
+  const opened = init({ theme: "System" }, studioUrl("automation=orders"));
   expect(opened.model.automationId).toBe("orders");
   expect(opened.model.activity._tag).toBe("Working");
   expect(opened.commands?.map((command) => command.name)).toEqual([
@@ -662,50 +694,31 @@ test("the URL picks which automation opens and loads it with the automation list
     "LoadAutomations",
     "LoadConnections",
     "LoadDevelopment",
-    "RestoreAssistant",
   ]);
 
-  const overview = init({ theme: "System", shortcutModifier: "Meta" }, studioUrl());
+  const overview = init({ theme: "System" }, studioUrl());
   expect(overview.model.page._tag).toBe("Overview");
   expect(overview.commands?.map((command) => command.name)).toEqual([
     "LoadOverview",
     "LoadAutomations",
     "LoadConnections",
     "LoadDevelopment",
-    "RestoreAssistant",
   ]);
-  expect(
-    init({ theme: "System", shortcutModifier: "Meta" }, studioUrl("automation=bad%2Fid")).model
-      .activity._tag,
-  ).toBe("Failed");
+  expect(init({ theme: "System" }, studioUrl("automation=bad%2Fid")).model.activity._tag).toBe(
+    "Failed",
+  );
 });
 
-test("New automation opens a new studio agent thread with a draft request in its composer", () => {
-  const collapsed = modifyFields(loaded(), {
-    assistant: (assistant) => modifyFields(assistant, { collapsed: () => true }),
-  });
-  const draftRequest = "Draft an automation that ";
-  const opened = update(collapsed, Message.ClickedNewAutomation());
-  expect(opened.model.assistant.collapsed).toBe(false);
-  expect(opened.commands?.map((command) => command.name)).toEqual([
-    "CreateThread",
-    "PersistCollapsed",
-  ]);
-  expect(opened.commands?.[0]?.args).toEqual({ input: draftRequest });
-  const created = update(
-    opened.model,
-    toAssistantMessage(
-      Assistant.Message.CompletedCreateThread({ sessionId: newSessionId, input: draftRequest }),
-    ),
-  );
-  expect(created.model.assistant.sessionId).toBe(newSessionId);
-  expect(created.model.assistant.input).toBe(draftRequest);
+test("New automation opens the hub's assistant with a request to finish in its composer", () => {
+  const opened = update(loaded(), Message.ClickedNewAutomation());
+  expect(opened.commands?.map((command) => command.name)).toEqual(["OpenAssistant"]);
+  expect(opened.commands?.[0]?.args).toEqual({ prompt: "Create a new automation that " });
 
   const fromOverview = update(
-    init({ theme: "System", shortcutModifier: "Meta" }, studioUrl()).model,
+    init({ theme: "System" }, studioUrl()).model,
     Message.GotOverviewMessage({ message: Overview.Message.ClickedNewAutomation() }),
   );
-  expect(fromOverview.commands?.[0]?.args).toEqual({ input: draftRequest });
+  expect(fromOverview.commands?.[0]?.args).toEqual({ prompt: "Create a new automation that " });
 });
 
 test("a URL change loads that automation, restores what its latest reply changed, and leaves the run", () => {
@@ -729,6 +742,7 @@ test("a URL change loads that automation, restores what its latest reply changed
         runs: [summaryOf(runOf({ status: "completed" }))],
       }),
     ),
+    Command.resolve(WatchAutomation, staleWatch),
     model((current) => {
       expect(current.maybeDraft).toEqual(Option.some(workflow));
       expect(current.runs).toHaveLength(1);
@@ -757,7 +771,7 @@ test("the theme toggle steps through system, light, and dark, applying each choi
 });
 
 test("the studio boots with the saved theme", () => {
-  expect(init({ theme: "Dark", shortcutModifier: "Meta" }, studioUrl()).model.theme).toBe("Dark");
+  expect(init({ theme: "Dark" }, studioUrl()).model.theme).toBe("Dark");
 });
 
 test("the overview drops the studio's late replies, and a run link from it opens that run", () => {

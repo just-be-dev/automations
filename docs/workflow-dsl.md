@@ -272,7 +272,7 @@ automations reads each type at its latest version in entity-store: a `string` is
 | `POST /api/changes`              | Prepare a change: `{ "action": { "kind": "putType", "type": … } }`, `deleteType`, `putEntity`, or `deleteEntity` |
 | `POST /api/changes/:id/decision` | Confirm or cancel the prepared change with `{ "approved": true }` or `false`                                     |
 
-Entity writes are proposals: preparing one writes nothing, and confirming it applies it. `putEntity` (`{ "kind": "putEntity", "type", "id", "data" }`) merges `data` over the entity (`null` clears a field) and checks it against its type. Confirming writes it only if the entity is still at the revision you reviewed; otherwise it fails as stale and writes nothing. The runs the change triggers start shortly after, from entity-store's change queue, so the decision's result is the entity, not its runs. The assistant and the MCP server propose changes the same way.
+Entity writes are proposals: preparing one writes nothing, and confirming it applies it. `putEntity` (`{ "kind": "putEntity", "type", "id", "data" }`) merges `data` over the entity (`null` clears a field) and checks it against its type. Confirming writes it only if the entity is still at the revision you reviewed; otherwise it fails as stale and writes nothing. The runs the change triggers start shortly after, from entity-store's change queue, so the decision's result is the entity, not its runs. MCP's change tools prepare and confirm a change in one call, which the client asks the person to approve first.
 
 ## Refs
 
@@ -446,7 +446,7 @@ Calendar is **simulated**: there are no credentials yet, so its operations conta
 
 `events.emit` really publishes to the durable queue. For example, `with: { "name": "order.fulfilled", "data": "{{event.data}}" }` passes the payload through unchanged. Literal data is JSON text, such as `"{\"total\":137}"`; an exact ref preserves objects, arrays, numbers and strings without parsing them again. The current run subject travels with the publication. Its ID is stable across retries, and the action succeeds on queue acceptance, not on downstream execution. It uses the usual operation permission and approval tasks.
 
-The built-in command `entity.put` merges a validated update through the same tenant-wide change coordinator used by manual, assistant and MCP edits:
+The built-in command `entity.put` merges a validated update through the same tenant-wide change coordinator used by manual and MCP edits:
 
 ```json
 {

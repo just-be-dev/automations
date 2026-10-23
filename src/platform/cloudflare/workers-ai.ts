@@ -4,7 +4,7 @@ import { Namer, NamerError } from "../../agents/namer/namer.ts";
 import { Classifier, ClassifierError, type ClassifierModel } from "../../ai/classifier.ts";
 
 /**
- * The planner, the assistant, and agent steps, through pi: Claude Sonnet 5.5 through AI Gateway,
+ * The planner and agent steps, through pi: Claude Sonnet 5.5 through AI Gateway,
  * authenticated with the Anthropic key stored on the gateway (BYOK; see `AI_GATEWAY_ID` in `pi.ts`).
  */
 export const PLANNER_MODEL = "anthropic/claude-sonnet-5-5";

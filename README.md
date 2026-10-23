@@ -4,7 +4,7 @@ This project is an experiment in exploring how to make repeatable, agent driven 
 
 ## Build repeatable automations through conversation
 
-1. Describe to the assistant agent a process that you'd like to automate and watch while it builds you a workflow.
+1. Describe a process you'd like to automate to the platform's assistant, in the drawer beside every app, and watch while it builds you a workflow.
 2. Review what permissions it would need, what services it touches, and what actions would be taken. Iterate on it as needed.
 3. Start by hand, react to a record changing, run on a schedule, or start relative to a date. Watch each run’s results and answer its open tasks in the studio.
 
@@ -24,7 +24,7 @@ The [example workflow](docs/examples/first-week.json) uses the sample employee t
 
 ![The studio agent drafting and then refining a new-hire onboarding automation, beside the rendered draft: a welcome email chosen by role, a manager meeting, and a Slack heads-up running in parallel, a three-day wait, and a check-in form for the manager. Steps the last reply added or changed are marked.](docs/images/first-week.png)
 
-_Both requests sent to the studio agent in a local studio. The draft marks what the second reply added or changed. Calendar is simulated, and Email and Slack are too unless you connect them._
+_Both requests sent to the studio's former built-in agent in a local studio; the platform's assistant now takes them. The draft marks what the second reply added or changed. Calendar is simulated, and Email and Slack are too unless you connect them._
 
 ## Workflows with people in the loop
 
@@ -32,7 +32,7 @@ _Both requests sent to the studio agent in a local studio. The draft marks what 
 - **Reuse approved wording.** Templates keep standard messages consistent while filling in the right details for each record. New runs pick up template edits; runs already going keep their original wording.
 - **Ask before acting.** An approval task shows what an operation will send and who can approve it. Human steps can also collect structured answers, not just a yes or no.
 - **Keep track of the whole process.** The overview shows runs in flight and how each automation last went. Open a run beside the workflow to review results or answer a task without leaving your draft.
-- **Get help across the studio.** The Assistant can prepare changes to records and templates, then delegate workflow design to the planner. Its conversation survives navigation and reload. Proposed data changes require your explicit confirmation; the assistant never saves or runs workflows for you.
+- **Get help across the platform.** The platform's assistant, in the hub shell's drawer, reads automations, runs and records, changes records and templates, and hands workflow design to the planner, all through the studio's MCP tools. It asks you to approve each change before making it, and it never saves or runs workflows for you.
 
 ## Prototype status
 
@@ -65,7 +65,6 @@ mise run check                      # all checks, including real-model evals
 - [Development and operations](docs/development.md) — setup, deployment with `mise run deploy`, evals, debugging, and the HTTP/MCP interfaces.
 - [Workflow DSL](docs/workflow-dsl.md) — triggers, steps, references, templates, and permissions.
 - [Workflow engine](docs/workflow-engine.md) — diagrams of how agents generate a workflow and how runs execute it.
-- [Studio assistant](docs/assistant.md) — diagrams of the assistant's hosting, turns, tools, and confirmations.
 
 ## Inspiration
 

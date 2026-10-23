@@ -1,4 +1,4 @@
-/** Manual and assistant confirmations share the persisted Changes capability. */
+/** The studio's forms prepare and confirm changes through the persisted Changes capability. */
 import * as Effect from "effect/Effect";
 import * as HttpRouter from "effect/http/HttpRouter";
 import * as Schema from "effect/Schema";

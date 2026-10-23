@@ -409,7 +409,7 @@ export const runPanelView = (model: Model, openRun: OpenRun, h: HtmlBuilder<Mess
       componentName("run-panel"),
       h.AriaLabel("Run preview"),
       h.Class(
-        `flex flex-col border-t bg-background animate-in fade-in slide-in-from-right-2 duration-200 lg:fixed lg:top-12 lg:bottom-0 lg:z-30 lg:w-[22rem] lg:shrink-0 lg:border-t-0 lg:border-l lg:shadow-xl 2xl:static 2xl:min-h-0 2xl:w-[28rem] 2xl:shadow-none ${model.assistant.collapsed ? "lg:right-14" : "lg:right-[360px]"}`,
+        `flex flex-col border-t bg-background animate-in fade-in slide-in-from-right-2 duration-200 lg:fixed lg:top-12 lg:bottom-0 lg:z-30 lg:w-[22rem] lg:shrink-0 lg:border-t-0 lg:border-l lg:shadow-xl 2xl:static 2xl:min-h-0 2xl:w-[28rem] 2xl:shadow-none lg:right-0`,
       ),
     ],
     [

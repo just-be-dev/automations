@@ -7,7 +7,7 @@ import type { QuestionsAnswer } from "./question.ts";
 
 /**
  * Wakes an agent turn parked on its questions, within one Durable Object instance: an automation's
- * planner or a studio assistant session. Answers are kept in storage, so a turn pi resumes after a
+ * planner. Answers are kept in storage, so a turn pi resumes after a
  * restart finds them there; this only spares a turn still in memory from waiting for a restart,
  * and tells the reply in progress that its turn has parked.
  */

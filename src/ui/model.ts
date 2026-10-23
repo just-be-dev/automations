@@ -17,9 +17,7 @@ import {
 import { SubjectOption } from "./api.ts";
 import { EventInput, TaskAnswer } from "./domain/index.ts";
 import { Entities, Overview, Templates, Traces } from "./page/index.ts";
-import { ShortcutModifier } from "./platform.ts";
 import { Theme } from "./theme.ts";
-import * as Assistant from "./assistant/index.ts";
 
 export const Activity = defineTaggedUnion({
   Ready: { notice: Schema.String },
@@ -130,8 +128,6 @@ export const Page = defineTaggedUnion({
 export type Page = typeof Page.Type;
 
 export const Model = Schema.Struct({
-  assistant: Assistant.Model,
-  maybeFollowHref: Schema.Option(Schema.String),
   maybeNavigationNotice: Schema.Option(Schema.String),
   page: Page,
   automationId: Schema.String,
@@ -145,13 +141,15 @@ export const Model = Schema.Struct({
   maybeLatestChanges: Schema.Option(WorkflowChanges),
   maybeDraft: Schema.Option(Workflow),
   maybeSaved: Schema.Option(Workflow),
-  /** The planner's reply in progress, which the studio agent started and relays questions for. */
+  /** The planner's reply in progress, which the hub's assistant started and relays questions for. */
   maybePendingChat: Schema.Option(PendingChat),
   runs: Schema.Array(RunSummary),
   /** The run open beside the overview or the studio. Changing pages closes it. */
   maybeRunPanel: Schema.Option(OpenRun),
   /** Each load of the open run starts a new chain of polls and drops the replies of older ones. */
   runPoll: Schema.Int,
+  /** Each idle watch of the open automation starts a new chain and drops older ones' replies. */
+  automationWatch: Schema.Int,
   subjectChoices: SubjectChoices,
   maybeSubjectId: Schema.Option(Schema.String),
   maybeEventInput: Schema.Option(EventInput.Model),
@@ -160,7 +158,6 @@ export const Model = Schema.Struct({
   expandedStepIds: Schema.Array(Schema.String),
   workflowDisplay: WorkflowDisplay,
   theme: Theme,
-  shortcutModifier: ShortcutModifier,
   activity: Activity,
 });
 export type Model = typeof Model.Type;

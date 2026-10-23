@@ -202,12 +202,10 @@ describe("the evals in evals/", () => {
     const evals = await Effect.runPromise(loadEvals);
     expect(evals.map((each) => each.name)).toEqual([
       "agent",
-      "assistant",
       "decide",
       "namer",
       "planner",
       "progress",
-      "thread-namer",
     ]);
     for (const each of evals) {
       expect(each.suite.caseNames.length).toBeGreaterThan(0);

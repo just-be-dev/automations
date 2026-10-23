@@ -152,7 +152,7 @@ The other recipients' DMs keep their buttons until someone clicks them. A decisi
 
 The demo's data already fits: Grace Hopper is Ada Lovelace's manager.
 
-1. Point Grace at your own address in the Slack sandbox. Ask the studio's assistant ("Change Grace Hopper's email to you@your-sandbox.example") and confirm the change, or prepare it and approve it:
+1. Point Grace at your own address in the Slack sandbox. Ask the platform's assistant ("Change Grace Hopper's email to you@your-sandbox.example") and approve its change, or prepare it and approve it:
 
    ```sh
    curl -X POST "$STUDIO_URL/api/changes" -H "Content-Type: application/json" \

@@ -6,17 +6,41 @@ import * as Result from "effect/Result";
 import { Classifier } from "../ai/classifier.ts";
 import { answerHubLayer } from "../ai/ask-question/answer-hub.ts";
 import { PiAgent } from "../ai/pi.ts";
-import { assistantFixture } from "../assistant/fixtures.ts";
+import { layerMemory } from "../entities/memory.ts";
 import { EntityStore } from "../entities/store.ts";
 import { makeDesignSession } from "./design-session.ts";
 import { AutomationHost } from "./host.ts";
 import { AutomationIndex } from "./index.ts";
 import { makePlanning } from "./planning.ts";
 
+/** In-memory automation storage and an empty entity store. */
+const memory = Effect.gen(function* () {
+  const data = new Map<string, unknown>();
+  const storage = {
+    get: (key: string) => Effect.sync(() => structuredClone(data.get(key))),
+    put: (key: string, value: unknown) =>
+      Effect.sync(() => void data.set(key, structuredClone(value))),
+    delete: (key: string) => Effect.sync(() => data.delete(key)),
+    list: ({ prefix }: { readonly prefix: string }) =>
+      Effect.sync(
+        () =>
+          new Map(
+            [...data]
+              .filter(([key]) => key.startsWith(prefix))
+              .map(([key, value]) => [key, structuredClone(value)]),
+          ),
+      ),
+  };
+  const entities = yield* Effect.service(EntityStore).pipe(
+    Effect.provide(layerMemory({ types: [] })),
+  );
+  return { host: { storage }, entities };
+});
+
 test("stable chat IDs survive completion and never answer an unrelated planner question", () =>
   Effect.runPromise(
     Effect.gen(function* () {
-      const f = yield* assistantFixture;
+      const f = yield* memory;
       const scheduled: Array<string> = [];
       const host = AutomationHost.of({
         storage: { ...f.host.storage, transaction: (effect) => effect },
@@ -100,7 +124,7 @@ test("stable chat IDs survive completion and never answer an unrelated planner q
 test("stopping a planner turn marks it stopped, drops its working copy, and aborts pi once", () =>
   Effect.runPromise(
     Effect.gen(function* () {
-      const f = yield* assistantFixture;
+      const f = yield* memory;
       const aborted: Array<true> = [];
       const host = AutomationHost.of({
         storage: { ...f.host.storage, transaction: (effect) => effect },

@@ -14,6 +14,8 @@ export class Changes extends Context.Service<
   {
     /** Checks and describes an action as `prepare` does, without storing a proposal. */
     readonly preview: (action: ChangeAction) => Effect.Effect<Omit<ChangeProposal, "id">, unknown>;
+    /** This person's proposals still waiting for a decision, oldest first. */
+    readonly pending: (owner: string) => Effect.Effect<ReadonlyArray<ChangeProposal>, unknown>;
     readonly prepare: (
       owner: string,
       action: ChangeAction,

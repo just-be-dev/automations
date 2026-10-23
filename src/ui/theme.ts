@@ -1,14 +1,13 @@
 /** Restores browser preferences at boot and applies and remembers the user's color-theme choice. */
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import { loadShortcutModifier, ShortcutModifier } from "./platform.ts";
 
 /** The color theme the user picked. `System` follows the OS setting. */
 export const Theme = Schema.Literals(["System", "Light", "Dark"]);
 export type Theme = typeof Theme.Type;
 
-/** What the studio boots with: the theme saved by an earlier visit, and the platform's shortcut key. */
-export const Flags = Schema.Struct({ theme: Theme, shortcutModifier: ShortcutModifier });
+/** What the studio boots with: the theme saved by an earlier visit. */
+export const Flags = Schema.Struct({ theme: Theme });
 export type Flags = typeof Flags.Type;
 
 // NOTE: `public/theme.js` reads this key and these values before the app boots, so the first paint
@@ -34,7 +33,6 @@ const loadTheme: Effect.Effect<Theme> = Effect.try(() => localStorage.getItem(st
 
 export const loadFlags: Effect.Effect<Flags> = Effect.all({
   theme: loadTheme,
-  shortcutModifier: loadShortcutModifier,
 });
 
 /**

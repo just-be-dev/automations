@@ -5,7 +5,6 @@ import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { AssistantThread } from "../src/assistant/model.ts";
 import { AutomationSummary } from "../src/automation/model.ts";
 import { type ChangeAction, ChangeDecision, ChangeProposal } from "../src/changes/model.ts";
 import { EntityRecord, EntityType } from "../src/entities/model.ts";
@@ -29,7 +28,7 @@ import {
  *
  *   mise run demo:reset
  *
- * It deletes every assistant thread and every automation with its runs, restores the sample
+ * It deletes every automation with its runs, restores the sample
  * employee type, the people and the welcome templates, deletes every other entity, type and
  * template, and saves the fallback onboarding workflow. Entity, type and template writes go through
  * `/api/changes`, prepared and then approved, so the studio validates them as it does a person's.
@@ -52,7 +51,6 @@ const Connections = Schema.Struct({ live: Schema.Array(Schema.String) });
 const Removed = Schema.Struct({ removed: Schema.String });
 const Draft = Schema.Struct({ draft: Workflow });
 const Saved = Schema.Struct({ saved: Workflow });
-const Threads = Schema.Struct({ threads: Schema.Array(AssistantThread) });
 const ApiError = Schema.Struct({ error: Schema.String });
 
 const localHosts = new Set(["localhost", "127.0.0.1", "[::1]"]);
@@ -181,17 +179,7 @@ const program = Effect.gen(function* () {
   const { live } = yield* get("/api/connections", Connections);
   yield* Console.log(`Resetting the demo at ${origin}`);
 
-  // Threads go first, so no assistant turn drafts an automation or proposes a change mid-reset.
-  // They're the threads of whoever the reset runs as: `DEV_USER_EMAIL`, as for the browser.
-  const { threads } = yield* get("/api/assistant", Threads);
-  for (const thread of threads) {
-    yield* call("DELETE", `/api/assistant/${thread.id}`, Threads);
-  }
-  if (threads.length > 0) {
-    done.push(`Deleted ${threads.length} assistant thread${threads.length === 1 ? "" : "s"}`);
-  }
-
-  // Automations next: removing one drops its subscription, so the entity writes below start
+  // Automations first: removing one drops its subscription, so the entity writes below start
   // no runs, and nothing watches the types and templates about to be deleted.
   const listed = yield* get("/api/automations", Schema.Array(AutomationSummary));
   const automationIds = [...new Set([...listed.map((each) => each.id), fallbackId])];

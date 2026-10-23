@@ -314,6 +314,7 @@ describe("the studio's MCP server", () => {
           "get_entity",
           "list_templates",
           "preview_change",
+          "list_pending_changes",
           "list_automations",
           "get_automation",
           "get_run",
@@ -481,6 +482,10 @@ describe("catalog tools", () => {
           type: "employee",
           id: "ada",
         });
+        // A proposal nobody decided is findable, so it's never stranded.
+        expect((yield* call("list_pending_changes", {})).result.structuredContent).toMatchObject({
+          proposals: [{ id: proposal.id, title: "Delete employee ada" }],
+        });
         const cancelled = yield* call("decide_change", {
           proposalId: proposal.id,
           approved: false,
@@ -489,6 +494,9 @@ describe("catalog tools", () => {
         expect(yield* call("decide_change", { proposalId: proposal.id, approved: true })).toEqual(
           cancelled,
         );
+        expect((yield* call("list_pending_changes", {})).result.structuredContent).toEqual({
+          proposals: [],
+        });
         const someoneElses = yield* changes.prepare("other@example.com", {
           kind: "deleteEntity",
           type: "employee",
@@ -514,6 +522,7 @@ describe("a write the coordinator refuses when it applies", () => {
     const decisions: Array<boolean> = [];
     const changes = Changes.of({
       preview: unused,
+      pending: unused,
       prepare: () => Effect.succeed(proposal),
       decide: (_owner, _id, approved) =>
         Effect.suspend(() => {

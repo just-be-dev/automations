@@ -1,24 +1,25 @@
 # Demo script
 
-This is the live part of the talk, act two in the [deck](deck/index.html) (`mise run slides`). You dictate every request to the studio agent. Each step lists what to do, where to click, and what the audience should notice.
+This is the live part of the talk, act two in the [deck](deck/index.html) (`mise run slides`). You type every request to the platform's assistant, in the hub shell's drawer. Each step lists what to do, where to click, and what the audience should notice.
+
+> **Needs rework.** The studio's own agent, with its panel and dictation, is gone. The drawer's assistant exists only on deployed stages and acts on that stage's automations, while `mise run demo:reset` and **Resume now** work only on a local studio. Until the demo moves to a deployed stage (with a reset that can reach it), rehearse design on a deployed studio and runs locally, or send the requests to the local studio's `POST /api/automations` and `/chat`.
 
 ## Before going on stage
 
 1. In `.env`, set `DEMO_GRACE_EMAIL` and `DEV_USER_EMAIL` to your own address. With Slack connected, use your Slack sandbox account's address. See [Demo addresses](../development.md#demo-addresses).
 2. Run `mise run dev`, then `mise run demo:reset` in a second terminal. Keep the fallback link the reset prints (`/?automation=first-week`).
-3. Open the studio. In the assistant panel, press **New thread** so the panel starts empty.
-4. Press **Start dictation** (the microphone next to Send) once and allow microphone access, then press **Cancel dictation**. You don't want the browser's permission prompt on stage.
-5. If Slack is connected, open Slack as yourself (Grace) beside the browser.
+3. Open the studio and the assistant's drawer (Ctrl+Shift+K), and start a new chat so it starts empty.
+4. If Slack is connected, open Slack as yourself (Grace) beside the browser.
 
 ## 1. Describe the job
 
-1. In the sidebar, press **New automation** (+). The assistant opens on a new thread with "Draft an automation that " already in the composer. Clear it, since you'll dictate the whole request.
-2. Press **Start dictation** and say:
+1. In the sidebar, press **New automation** (+). The assistant opens on a new chat with "Create a new automation that " already in the composer. Clear it, since you'll type the whole request.
+2. Type:
 
    > When someone new joins, welcome them on Slack, send our welcome email, and book 30 minutes with their manager. Three days in, check how it's going.
 
-3. Press **Stop dictation**. Wait for the words to stop changing, fix any mistakes in the input, then press **Send**.
-4. The agent asks something like: _Should someone review the welcome email before it goes out?_ Choose the answer that has each one approved first, then press **Send answers**.
+3. Press **Send**, and approve the assistant's call to `create_automation` in its card.
+4. The assistant passes on the planner's question, something like: _Should someone review the welcome email before it goes out?_ Answer that each one is approved first, and approve the `draft_automation` call that sends your answer.
 
 **Point out:** the agent asks about a real choice before it drafts anything. While it works, the studio page shows what the planner is doing.
 
@@ -35,11 +36,11 @@ The draft appears in the studio: **Launch a great first week**. Walk it top to b
 
 ## 3. Change one thing by talking
 
-1. Press **Start dictation** and say:
+1. In the assistant, type:
 
    > Not #general, their start isn't announced yet. Welcome engineers in #eng-team instead.
 
-2. Press **Stop dictation**, check the text, and press **Send**.
+2. Press **Send** and approve the `draft_automation` call.
 3. The branch now reads **Welcome them in #eng-team**, marked **Changed**.
 
 **Point out:** the planner changed one step, and the mark shows exactly what moved.
@@ -77,6 +78,5 @@ On **Give them three days to settle in**, press **Resume now** (it's labelled _L
 ## If something goes wrong
 
 - **The planner misbehaves or a Workers AI call is slow:** open `/?automation=first-week` from the reset. It's the plan after the `#eng-team` edit, already saved. Continue from step 5.
-- **Dictation garbles the request:** edit the text in the input before pressing Send, or type it.
-- **The agent stalls:** press **Stop** (it replaces Send while the agent works). The draft stays as it was. Then retry or switch to the fallback.
-- **Between rehearsals:** run `mise run demo:reset` again and press **New thread**.
+- **The planner stalls:** switch to the fallback. The draft stays as it was.
+- **Between rehearsals:** run `mise run demo:reset` again and start a new chat in the drawer.
