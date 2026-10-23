@@ -173,12 +173,24 @@ const DraftAutomation = Tool.make("draft_automation", {
   .annotate(Tool.Title, "Change automation draft")
   .annotate(Tool.Destructive, false);
 
+const StopDraft = Tool.make("stop_draft", {
+  description:
+    "Stops the planner's reply in progress for an automation, while it is working or waiting on questions, so its draft stays as it was before that message. Does nothing when the planner isn't answering anything; a reply it already finished stays. Returns where the planner is.",
+  parameters: Schema.Struct({ automationId: AutomationIdParam }),
+  success: DesignOutcome,
+  failure: Failure,
+})
+  .annotate(Tool.Title, "Stop the planner")
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true);
+
 export const AutomationTools = Toolkit.make(
   ListAutomations,
   GetAutomation,
   GetRun,
   CreateAutomation,
   DraftAutomation,
+  StopDraft,
 );
 
 type Inspection = Effect.Success<ReturnType<AutomationClient["inspectWorkflow"]>>;
@@ -340,6 +352,17 @@ export const automationToolHandlers = Effect.gen(function* () {
           });
         const state = yield* settled(automations.get(created.id));
         return outcome(created.id, created.name, state);
+      }).pipe(Effect.mapError(failure)),
+    // `stopChat` stops only the chat it names, and only while it's unanswered, so a reply that
+    // finished meanwhile, or a later message, is never touched.
+    stop_draft: ({ automationId }) =>
+      Effect.gen(function* () {
+        yield* caller.person;
+        const { client, state, name } = yield* existing(automationId);
+        const pending = state.pendingChat;
+        if (pending !== undefined && pending.status !== "failed")
+          yield* client.stopChat(pending.id);
+        return outcome(automationId, name, yield* client.inspectWorkflow());
       }).pipe(Effect.mapError(failure)),
     draft_automation: ({ automationId, message, requestId }) =>
       Effect.gen(function* () {

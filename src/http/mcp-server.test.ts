@@ -70,6 +70,7 @@ const fakeAutomations = () => {
   const countdown = new Map<string, number>();
   const chats: Array<{ id: string; message: string; requestId: string | undefined }> = [];
   const answers: Array<{ id: string; chatId: string; text: string }> = [];
+  const stops: Array<string> = [];
   const settings = { delay: 2, asks: false };
   const reply = (id: string) => {
     const current = pending.get(id);
@@ -151,7 +152,19 @@ const fakeAutomations = () => {
           : undefined,
       ),
     templateUses: () => Effect.succeed({ saved: [], draft: [] }),
-    stopChat: unused,
+    stopChat: (chatId) =>
+      Effect.sync(() => {
+        stops.push(chatId);
+        const current = pending.get(id);
+        if (current !== undefined && current.id === chatId && current.status !== "failed")
+          pending.set(id, {
+            id: chatId,
+            prompt: current.prompt,
+            status: "failed",
+            error: "Stopped",
+          });
+        return { pendingChat: pending.get(id) };
+      }),
     save: unused,
     start: unused,
     setPermissions: unused,
@@ -180,7 +193,7 @@ const fakeAutomations = () => {
     }),
     Layer.succeed(Namer, { complete: () => Effect.succeed("Chase invoices") }),
   );
-  return { layer, chats, answers, settings, directory, pending, saved };
+  return { layer, chats, answers, stops, settings, directory, pending, saved };
 };
 
 const memoryChanges = Layer.effect(
@@ -329,6 +342,7 @@ describe("the studio's MCP server", () => {
           "decide_change",
           "create_automation",
           "draft_automation",
+          "stop_draft",
         ]);
         for (const tool of tools) {
           expect((tool.inputSchema as { type?: string }).type).toBe("object");
@@ -666,6 +680,46 @@ describe("automation tools", () => {
       }),
     ));
 
+  test("stop the planner's reply in progress once, and leave a finished one alone", () =>
+    withStudio(({ call, automations }) =>
+      Effect.gen(function* () {
+        // Nothing in progress: nothing to stop, and the last reply stays.
+        expect(yield* call("stop_draft", { automationId: "welcome" })).toMatchObject({
+          result: { isError: false, structuredContent: { planner: { status: "idle" } } },
+        });
+        expect(automations.stops).toEqual([]);
+        automations.settings.delay = 1_000_000;
+        yield* call("draft_automation", {
+          automationId: "welcome",
+          message: "Add a wait",
+          requestId: "r2",
+        });
+        const stopped = yield* call("stop_draft", { automationId: "welcome" });
+        expect(stopped.result.structuredContent).toMatchObject({
+          planner: { status: "failed", error: "Stopped", message: "Add a wait" },
+        });
+        expect(automations.stops).toEqual(["mcp:r2"]);
+        // Again: already stopped, so it changes nothing.
+        expect(yield* call("stop_draft", { automationId: "welcome" })).toEqual(stopped);
+        expect(automations.stops).toEqual(["mcp:r2"]);
+        expect(yield* call("stop_draft", { automationId: "missing" })).toMatchObject({
+          result: { isError: true },
+        });
+      }),
+    ));
+
+  test("stop a planner waiting on questions", () =>
+    withStudio(({ call, automations }) =>
+      Effect.gen(function* () {
+        automations.settings.asks = true;
+        yield* call("draft_automation", { automationId: "welcome", message: "Add an approval" });
+        expect(automations.pending.get("welcome")?.status).toBe("asking");
+        expect(
+          (yield* call("stop_draft", { automationId: "welcome" })).result.structuredContent,
+        ).toMatchObject({ planner: { status: "failed", error: "Stopped" } });
+      }),
+    ));
+
   test("answer 'working' when the planner takes longer than the wait", () =>
     withStudio(({ call, automations }) =>
       Effect.gen(function* () {
@@ -750,7 +804,16 @@ describe("the mcp RPC", () => {
             },
           }),
         ).toMatchObject({ body: { result: { isError: true } } });
+        expect(
+          yield* rpc({
+            jsonrpc: "2.0",
+            id: 3,
+            method: "tools/call",
+            params: { name: "stop_draft", arguments: { automationId: "welcome" } },
+          }),
+        ).toMatchObject({ body: { result: { isError: true } } });
         expect(automations.chats).toEqual([]);
+        expect(automations.stops).toEqual([]);
 
         const applied = yield* rpc(put, {
           "cf-access-authenticated-user-email": "ada@just-be.dev",
