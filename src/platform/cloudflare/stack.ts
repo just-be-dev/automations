@@ -8,7 +8,8 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import Api from "./api.ts";
 import Channels from "./channels.ts";
-import { hubBindings, hubPaths } from "./hub.ts";
+import { hubPaths } from "./hub.ts";
+import { hubBindings } from "./hub-bindings.ts";
 import { SLACK_INTERACTIVITY_PATH } from "../../channels/slack-interactivity.ts";
 
 /** The stage served on {@link PRODUCTION_DOMAIN}; other deployed stages stay on workers.dev. */

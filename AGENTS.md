@@ -172,9 +172,11 @@ Stick to these `GET` routes unless the user asks for more. `chat` calls Workers 
 
 ## The hub shell
 
-This app carries the platform's hub shell: the app rail and the assistant drawer, served by the agents project (`docs/hub-shell.md` there). `src/platform/cloudflare/hub.ts` binds agents' prod `Api` and `Embed` Workers on deployed stages and forwards `/_hub/*` to them from the Studio Worker, `index.html` loads `/_hub/shell.js` with `data-app="automations"`, and the CSP allows `frame-src 'self'`. Prod serves the studio on `automations.just-be.dev` (a Custom Domain plus a route, which beats the zone's `*.just-be.dev/*` wildcard).
+This app carries the platform's hub shell: the app rail and the assistant drawer, served by the agents project (`docs/hub-shell.md` there). `src/platform/cloudflare/hub-bindings.ts` binds agents' prod `Api` and `Embed` Workers on deployed stages, `hub.ts` forwards `/_hub/*` to them from the Studio Worker, `index.html` loads `/_hub/shell.js` with `data-app="automations"`, and the CSP allows `frame-src 'self'`. Prod serves the studio on `automations.just-be.dev` (a Custom Domain plus a route, which beats the zone's `*.just-be.dev/*` wildcard).
 
 - The Studio Worker forwards `/_hub/api/*` with the email Access admitted, and agents trusts it. Keep `/_hub/*` behind Access.
+- The email counts only when Access's JWT (`cf-access-jwt-assertion`) verifies (`access-jwt.ts`: the team's keys, the audience workerd reports on `ctx.access`, unexpired) and names the same email; otherwise forward `null`. The Studio's Access application admits the test service token, so never trust the email header alone. The audience comes from `ctx.access` because the Studio enrolls in its own application, so its env can't hold the application's `aud` without a dependency cycle.
+- The edge (`edge.ts`) and everything it imports at runtime (`hub.ts`, `access-jwt.ts`) must not import Alchemy or Effect: under `alchemy dev`, Alchemy in the edge's graph breaks every Studio path. Bindings stay in `hub-bindings.ts`, which only the stack imports. `hub.test.ts` checks the graph.
 - Deploy agents first when the shell's protocol changes; this app only forwards.
 
 ## Deploy and dependencies
