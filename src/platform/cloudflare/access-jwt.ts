@@ -96,12 +96,48 @@ export const verifyAccessJwt = async (
     )
     .catch(() => false);
   if (!verified) return undefined;
+  return claimsOf(claims);
+};
+
+const claimsOf = (claims: Record<string, unknown>): AccessClaims => {
   const email = claims["email"];
   const commonName = claims["common_name"];
   return {
     ...(typeof email === "string" ? { email } : {}),
     ...(typeof commonName === "string" ? { common_name: commonName } : {}),
   };
+};
+
+/**
+ * A JWT's claims read without checking its signature, or undefined when it isn't one. Only for
+ * decisions that take something away, or that Access, which put the JWT on the request, has
+ * already made: never to admit anyone.
+ */
+export const unverifiedClaims = (jwt: string): AccessClaims | undefined => {
+  const parts = jwt.split(".");
+  const claims = parts.length === 3 ? jsonPart(parts[1] ?? "") : undefined;
+  return claims === undefined ? undefined : claimsOf(claims);
+};
+
+/** Whether claims are a service token's: a client id (`common_name`) and no person's email. */
+export const isServiceToken = (claims: AccessClaims): boolean =>
+  (claims.common_name ?? "") !== "" && (claims.email ?? "") === "";
+
+/** What a service token's JWT must show besides {@link AccessJwtCheck}: the token's client id. */
+export interface ServiceTokenCheck extends AccessJwtCheck {
+  readonly clientId: string;
+}
+
+/** Whether `jwt` verifies against `check` as the service token with `check.clientId`. */
+export const verifyServiceTokenJwt = async (
+  jwt: string,
+  check: ServiceTokenCheck,
+  keys: SigningKeys,
+  nowMillis: number,
+): Promise<boolean> => {
+  if (check.clientId === "") return false;
+  const claims = await verifyAccessJwt(jwt, check, keys, nowMillis);
+  return claims !== undefined && isServiceToken(claims) && claims.common_name === check.clientId;
 };
 
 /** Imports a JWKS answer's RSA keys by `kid`, skipping any that aren't usable. */
