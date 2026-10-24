@@ -6,13 +6,12 @@ import { LoadAutomation } from "../command.ts";
 import { AutomationId } from "../domain/index.ts";
 import {
   type Message,
-  toEntitiesMessage,
   toOverviewMessage,
   toTemplatesMessage,
   toTracesMessage,
 } from "../message.ts";
 import { Activity, type Model, Page, RunDetail, SubjectChoices } from "../model.ts";
-import { Entities, Overview, Templates, Traces } from "../page/index.ts";
+import { Overview, Templates, Traces } from "../page/index.ts";
 import { AppRoute } from "../route.ts";
 import { modifyOpenRun, openingRun, reloadOpenRun } from "./open-run.ts";
 import { fail } from "./studio.ts";
@@ -66,15 +65,6 @@ export const showPage = (model: Model, route: AppRoute): Update.Return<Model, Me
           }),
         toParentMessage: toTemplatesMessage,
       }),
-    Entities: ({ maybeTypeName }) =>
-      Update.foldChildInit(Entities.init(maybeTypeName), {
-        toParentModel: (entities) =>
-          modifyFields(model, {
-            page: () => Page.Entities({ entities }),
-            activity: () => Activity.Ready({ notice: "" }),
-          }),
-        toParentMessage: toEntitiesMessage,
-      }),
     Traces: (traces) =>
       Update.foldChildInit(Traces.init(traceSource(traces)), {
         toParentModel: (nextTraces) =>
@@ -115,7 +105,6 @@ const routeAutomationId = (route: AppRoute) =>
   AppRoute.match(route, {
     Overview: () => "",
     Templates: () => "",
-    Entities: () => "",
     Traces: () => "",
     Studio: ({ automationId }) => automationId,
     Run: ({ automationId }) => automationId,
@@ -126,7 +115,6 @@ const isShowing = (model: Model, route: AppRoute) =>
   AppRoute.match(route, {
     Overview: () => false,
     Templates: () => false,
-    Entities: () => false,
     Traces: () => false,
     Studio: () => Page.guards.Studio(model.page),
     Run: ({ runId }) => Page.guards.Run(model.page) && model.page.openRun.runId === runId,
@@ -146,13 +134,6 @@ export const followRoute = (model: Model, route: AppRoute): Update.Return<Model,
         toParentMessage: toTemplatesMessage,
       },
     );
-  }
-  if (AppRoute.guards.Entities(route) && Page.guards.Entities(model.page)) {
-    return Update.foldChildInit(Entities.reflectUrl(model.page.entities, route.maybeTypeName), {
-      toParentModel: (entities): Model =>
-        modifyFields(model, { page: (): Page => Page.Entities({ entities }) }),
-      toParentMessage: toEntitiesMessage,
-    });
   }
   if (AppRoute.guards.Traces(route) && Page.guards.Traces(model.page)) {
     return Update.foldChildInit(Traces.reflectUrl(model.page.traces, traceSource(route)), {
@@ -174,7 +155,6 @@ export const opensInPanel = (model: Model, route: AppRoute) =>
     : AppRoute.match(route, {
         Overview: () => Option.none(),
         Templates: () => Option.none(),
-        Entities: () => Option.none(),
         Traces: () => Option.none(),
         Studio: () => Option.none(),
         Run: ({ automationId, runId }) =>

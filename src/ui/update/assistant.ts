@@ -7,7 +7,7 @@ import type { Update } from "foldkit";
 import { OpenAssistant } from "../command.ts";
 import type { Message } from "../message.ts";
 import { type Model, Page } from "../model.ts";
-import { automationHref, entitiesHref, runHref, templatesHref, tracesHref } from "../route.ts";
+import { automationHref, runHref, templatesHref, tracesHref } from "../route.ts";
 
 export const dirtyForms = (model: Model) =>
   Page.match(model.page, {
@@ -15,10 +15,6 @@ export const dirtyForms = (model: Model) =>
     Run: () => false,
     Studio: () => false,
     Traces: () => false,
-    Entities: ({ entities }) =>
-      entities.typeEditor._tag !== "Closed" ||
-      entities.entityEditor._tag !== "Closed" ||
-      entities.activity._tag === "Working",
     Templates: ({ templates }) =>
       templates.editor._tag !== "Closed" || templates.activity._tag === "Working",
   });
@@ -28,7 +24,6 @@ export const pageHref = (model: Model) =>
     Overview: () => "/",
     Studio: () => automationHref(model.automationId),
     Run: ({ openRun }) => runHref(openRun.automationId, openRun.runId),
-    Entities: ({ entities }) => entitiesHref(entities.maybeTypeName),
     Templates: ({ templates }) => templatesHref(templates.maybeTemplateName),
     Traces: ({ traces }) =>
       Option.match(traces.maybeSource, {

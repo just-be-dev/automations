@@ -1,48 +1,35 @@
-/** Arranges the application shell around the selected page, shared navigation, and run preview. */
+/** Arranges the page under its header, with the run preview beside it. The hub shell draws the sidebar. */
 import * as Option from "effect/Option";
 import type { Document, HtmlBuilder } from "foldkit/html";
 import { Monitor, Moon, Sun } from "lucide";
 import { button } from "@/components/ui/button";
 import { componentName } from "@/lib/component";
 import { icon } from "@/lib/icons";
-import {
-  Message,
-  toEntitiesMessage,
-  toOverviewMessage,
-  toTemplatesMessage,
-  toTracesMessage,
-} from "../message.ts";
+import { Message, toOverviewMessage, toTemplatesMessage, toTracesMessage } from "../message.ts";
 import { listedName, type Model, Page } from "../model.ts";
-import { Entities, Overview, Templates, Traces } from "../page/index.ts";
+import { Overview, Templates, Traces } from "../page/index.ts";
 import { nextTheme, type Theme } from "../theme.ts";
 import { runPageView, runPanelView } from "./run.ts";
-import { sidebarView } from "./sidebar.ts";
 import { workflowPanelView } from "./studio.ts";
 
 export const view = (model: Model, h: HtmlBuilder<Message>): Document => ({
   title: "Automations studio",
   body: h.div(
-    [componentName("app"), h.Class("flex min-h-full flex-col bg-sidebar lg:h-full lg:flex-row")],
+    [componentName("app"), h.Class("flex min-h-full flex-col bg-background lg:h-full")],
     [
-      sidebarView(model, h),
+      headerView(model, h),
+      Option.match(model.maybeNavigationNotice, {
+        onNone: () => h.empty,
+        onSome: (notice) => h.p([h.Role("alert"), h.Class("border-b p-3 text-sm")], [notice]),
+      }),
       h.div(
-        [h.Class("flex min-w-0 flex-1 flex-col bg-background lg:min-h-0 lg:border-l")],
+        [h.Class("flex flex-1 flex-col lg:min-h-0 lg:flex-row")],
         [
-          headerView(model, h),
-          Option.match(model.maybeNavigationNotice, {
+          pageView(model, h),
+          Option.match(model.maybeRunPanel, {
             onNone: () => h.empty,
-            onSome: (notice) => h.p([h.Role("alert"), h.Class("border-b p-3 text-sm")], [notice]),
+            onSome: (openRun) => runPanelView(model, openRun, h),
           }),
-          h.div(
-            [h.Class("flex flex-1 flex-col lg:min-h-0 lg:flex-row")],
-            [
-              pageView(model, h),
-              Option.match(model.maybeRunPanel, {
-                onNone: () => h.empty,
-                onSome: (openRun) => runPanelView(model, openRun, h),
-              }),
-            ],
-          ),
         ],
       ),
     ],
@@ -72,18 +59,6 @@ const pageView = (model: Model, h: HtmlBuilder<Message>) =>
             model: templates,
             view: Templates.view,
             toParentMessage: toTemplatesMessage,
-          }),
-        ],
-      ),
-    Entities: ({ entities }) =>
-      h.main(
-        [componentName("page"), h.Class("flex min-w-0 flex-1 flex-col lg:min-h-0")],
-        [
-          h.submodel({
-            slotId: "entities",
-            model: entities,
-            view: Entities.view,
-            toParentMessage: toEntitiesMessage,
           }),
         ],
       ),
@@ -126,13 +101,6 @@ const headerTitleView = (model: Model, h: HtmlBuilder<Message>) =>
         view: Templates.headerView,
         toParentMessage: toTemplatesMessage,
       }),
-    Entities: ({ entities }) =>
-      h.submodel({
-        slotId: "entities-header",
-        model: entities,
-        view: Entities.headerView,
-        toParentMessage: toEntitiesMessage,
-      }),
     Traces: () => headerLabelView("Agent traces", h),
     Studio: () => automationTitleView(model, h),
     Run: () => automationTitleView(model, h),
@@ -144,7 +112,7 @@ const headerLabelView = (label: string, h: HtmlBuilder<Message>) =>
     [label],
   );
 
-/** The open automation's name, falling back to its ID until the sidebar lists it. */
+/** The open automation's name, falling back to its ID until the directory lists it. */
 const automationTitleView = (model: Model, h: HtmlBuilder<Message>) =>
   h.div(
     [componentName("automation-title"), h.Class("flex min-w-0 items-baseline gap-2")],

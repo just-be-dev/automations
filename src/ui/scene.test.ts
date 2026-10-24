@@ -48,7 +48,7 @@ import { OpenAssistant } from "./command.ts";
 import { Message, toOverviewMessage } from "./message.ts";
 import type { Model } from "./model.ts";
 import { EventInput } from "./domain/index.ts";
-import { Entities, Overview, Templates, Traces } from "./page/index.ts";
+import { Overview, Templates, Traces } from "./page/index.ts";
 import { update } from "./update/index.ts";
 import { view } from "./view/index.ts";
 
@@ -294,46 +294,12 @@ test("a truncated step description expands to show the full text", () => {
   );
 });
 
-test("the sidebar links to every automation and marks the open one", () => {
-  scene(
-    { update, view },
-    given(
-      update(
-        loaded,
-        Message.SucceededLoadAutomations({
-          automations: [
-            { id: "my-automation", name: "Manager onboarding" },
-            { id: "orders", name: "Order summaries" },
-          ],
-        }),
-      ).model,
-    ),
-    expect(role("link", { name: /Manager onboarding/ })).toHaveAttr(
-      "href",
-      "/?automation=my-automation",
-    ),
-    expect(role("link", { name: /Manager onboarding/ })).toHaveAttr("aria-current", "page"),
-    expect(role("link", { name: /Order summaries/ })).toHaveAttr("href", "/?automation=orders"),
-    expect(role("link", { name: /Order summaries/ })).not.toHaveAttr("aria-current"),
-  );
-});
-
 test("an automation without a draft asks the hub's assistant to draft it, by ID", () => {
   scene(
     { update, view },
     given(update(loaded, automationLoaded({})).model),
     click(role("button", { name: "Ask the assistant" })),
     Command.expectHas(OpenAssistant({ prompt: "Draft the automation my-automation so that " })),
-    Command.resolve(OpenAssistant, Message.CompletedOpenAssistant()),
-  );
-});
-
-test("+ opens the hub's assistant with a request to draft an automation", () => {
-  scene(
-    { update, view },
-    given(loaded),
-    click(role("button", { name: "New automation" })),
-    Command.expectHas(OpenAssistant({ prompt: "Create a new automation that " })),
     Command.resolve(OpenAssistant, Message.CompletedOpenAssistant()),
   );
 });
@@ -1290,12 +1256,13 @@ test("a form task is prefilled from its defaults and submits typed values", () =
   );
 });
 
-test("the sidebar's overview link marks the overview page", () => {
+test("the studio draws no sidebar of its own: the hub shell lists its pages", () => {
   scene(
     { update, view },
     given(init({ theme: "System" }, studioUrl()).model),
-    expect(role("link", { name: "Overview" })).toHaveAttr("href", "/"),
-    expect(role("link", { name: "Overview" })).toHaveAttr("aria-current", "page"),
+    expect(role("navigation")).not.toExist(),
+    expect(text("Automations studio")).not.toExist(),
+    expect(role("banner")).toContainText("Overview"),
     expect(text("Runs and automations")).toExist(),
   );
 });
@@ -1384,26 +1351,7 @@ test("a step's result reads as labelled fields, not JSON", () => {
   );
 });
 
-test("the sidebar's entity store link opens the entity store page", () => {
-  scene(
-    { update, view },
-    given(
-      applied(loaded, [
-        Message.ChangedUrl({ url: { ...studioUrl(), pathname: "/entities" } }),
-        Message.GotEntitiesMessage({ message: Entities.Message.SucceededLoadTypes({ types: [] }) }),
-      ]),
-    ),
-    expect(role("link", { name: "Entity store" })).toHaveAttr("aria-current", "page"),
-    expect(role("link", { name: "Entity store" })).toHaveAttr("href", "/entities"),
-    expect(role("banner")).toContainText("Entity store"),
-    expect(text("No entity types yet.")).toExist(),
-    click(within(role("banner"), role("button", { name: "New entity type" }))),
-    expect(role("form", { name: "New entity type" })).toExist(),
-    expect(label("Name")).toHaveValue(""),
-  );
-});
-
-test("the sidebar's templates link opens the templates page", () => {
+test("the templates URL opens the templates page", () => {
   scene(
     { update, view },
     given(
@@ -1414,8 +1362,6 @@ test("the sidebar's templates link opens the templates page", () => {
         }),
       ]),
     ),
-    expect(role("link", { name: "Templates" })).toHaveAttr("aria-current", "page"),
-    expect(role("link", { name: "Templates" })).toHaveAttr("href", "/templates"),
     expect(role("banner")).toContainText("Templates"),
     expect(text("No templates yet.")).toExist(),
     click(within(role("banner"), role("button", { name: "New template" }))),
@@ -1443,8 +1389,7 @@ test("the traces page opens the trace of the run the URL names, and keeps the ru
         }),
       ]),
     ),
-    expect(role("link", { name: "Agent traces" })).toHaveAttr("aria-current", "page"),
-    expect(role("link", { name: "Agent traces" })).toHaveAttr("href", "/traces"),
+    expect(role("banner")).toContainText("Agent traces"),
     expect(role("heading", { name: "Agent steps of run run-9" })).toExist(),
     expect(text("Write a joke about email")).toExist(),
     expect(role("link", { name: "Open run" })).toHaveAttr(

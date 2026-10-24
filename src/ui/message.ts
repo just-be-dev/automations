@@ -14,7 +14,7 @@ import {
 import { SubjectOption } from "./api.ts";
 import { EventInput } from "./domain/index.ts";
 import { AutomationSummary, WorkflowDisplay } from "./model.ts";
-import { Entities, Overview, Templates, Traces } from "./page/index.ts";
+import { Overview, Templates, Traces } from "./page/index.ts";
 
 /** The open automation as `GET /api/automations/:id` describes it, for one page revision. */
 export const LoadedAutomation = Schema.Struct({
@@ -107,7 +107,6 @@ export const Message = defineMessageUnion({
   FailedRequest: { revision: Schema.Int, error: Schema.String },
   GotOverviewMessage: { message: Overview.Message },
   GotTemplatesMessage: { message: Templates.Message },
-  GotEntitiesMessage: { message: Entities.Message },
   GotTracesMessage: { message: Traces.Message },
 });
 export type Message = typeof Message.Type;
@@ -117,8 +116,5 @@ export const toOverviewMessage = (message: Overview.Message) =>
 
 export const toTemplatesMessage = (message: Templates.Message) =>
   Message.GotTemplatesMessage({ message });
-
-export const toEntitiesMessage = (message: Entities.Message) =>
-  Message.GotEntitiesMessage({ message });
 
 export const toTracesMessage = (message: Traces.Message) => Message.GotTracesMessage({ message });

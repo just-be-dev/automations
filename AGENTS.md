@@ -174,6 +174,7 @@ This app carries the platform's hub shell: the app rail and the assistant drawer
 - The Studio Worker forwards `/_hub/api/*` with the email Access admitted, and agents trusts it. Keep `/_hub/*` behind Access.
 - The email counts only when Access's JWT (`cf-access-jwt-assertion`) verifies (`access-jwt.ts`: the team's keys, the audience workerd reports on `ctx.access`, unexpired) and names the same email; otherwise forward `null`. The Studio's Access application admits the test service token, so never trust the email header alone. The audience comes from `ctx.access` because the Studio enrolls in its own application, so its env can't hold the application's `aud` without a dependency cycle.
 - The edge (`edge.ts`) and everything it imports at runtime (`hub.ts`, `access-jwt.ts`) must not import Alchemy or Effect: under `alchemy dev`, Alchemy in the edge's graph breaks every Studio path. Bindings stay in `hub-bindings.ts`, which only the stack imports. `hub.test.ts` checks the graph.
+- The shell draws the platform's one sidebar (`data-layout="sidebar"`); the studio draws none. It tells the shell what to list under Automations with a `HubNav` (`src/ui/hub-nav.ts`) and handles its `hub:action`s. There's one Entities app, entity-store's: the studio has no entities page.
 - Deploy agents first when the shell's protocol changes; this app only forwards.
 
 ## Deploy and dependencies

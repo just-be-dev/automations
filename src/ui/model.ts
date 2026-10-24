@@ -16,7 +16,7 @@ import {
 } from "../workflow.ts";
 import { SubjectOption } from "./api.ts";
 import { EventInput, TaskAnswer } from "./domain/index.ts";
-import { Entities, Overview, Templates, Traces } from "./page/index.ts";
+import { Overview, Templates, Traces } from "./page/index.ts";
 import { Theme } from "./theme.ts";
 
 export const Activity = defineTaggedUnion({
@@ -120,7 +120,6 @@ export type OpenRun = typeof OpenRun.Type;
 export const Page = defineTaggedUnion({
   Overview: { overview: Overview.Model },
   Templates: { templates: Templates.Model },
-  Entities: { entities: Entities.Model },
   Traces: { traces: Traces.Model },
   Studio: {},
   Run: { openRun: OpenRun },

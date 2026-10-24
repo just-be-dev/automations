@@ -22,13 +22,7 @@ import {
   StartRun,
 } from "../command.ts";
 import { AssistantPrompt, AutomationId, EventInput, TaskAnswer } from "../domain/index.ts";
-import {
-  Message,
-  toEntitiesMessage,
-  toOverviewMessage,
-  toTemplatesMessage,
-  toTracesMessage,
-} from "../message.ts";
+import { Message, toOverviewMessage, toTemplatesMessage, toTracesMessage } from "../message.ts";
 import {
   Activity,
   Directory,
@@ -39,7 +33,7 @@ import {
   RunStart,
   SubjectChoices,
 } from "../model.ts";
-import { Entities, Overview, Templates, Traces } from "../page/index.ts";
+import { Overview, Templates, Traces } from "../page/index.ts";
 import { routeFromUrl, runHref } from "../route.ts";
 import { nextTheme } from "../theme.ts";
 import { followRoute, openRunPanel, opensInPanel } from "./navigation.ts";
@@ -66,15 +60,6 @@ import {
   unchangedAutomation,
   watchAgain,
 } from "./studio.ts";
-
-const foldEntities = Update.foldChild({
-  update: Entities.update,
-  read: (model: Model) =>
-    Page.guards.Entities(model.page) ? Option.some(model.page.entities) : Option.none(),
-  write: (model: Model, nextEntities: Entities.Model): Model =>
-    modifyFields(model, { page: (): Page => Page.Entities({ entities: nextEntities }) }),
-  toParentMessage: toEntitiesMessage,
-});
 
 const foldTemplates = Update.foldChild({
   update: Templates.update,
@@ -568,6 +553,5 @@ export const update = (model: Model, message: Message): Update.Return<Model, Mes
       revision !== model.revision ? { model } : fail(model, error),
     GotOverviewMessage: ({ message }) => foldOverview(model, message),
     GotTemplatesMessage: ({ message }) => foldTemplates(model, message),
-    GotEntitiesMessage: ({ message }) => foldEntities(model, message),
     GotTracesMessage: ({ message }) => foldTraces(model, message),
   });
