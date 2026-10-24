@@ -10,6 +10,8 @@ import Api from "./api.ts";
 import Channels from "./channels.ts";
 import { hubPaths } from "./hub.ts";
 import { hubBindings } from "./hub-bindings.ts";
+import { hubFramePrefix, hubToken } from "./hub-frame.ts";
+import { pagePaths } from "./hub-redirect.ts";
 import { StudioAccess } from "./studio-access.ts";
 import { SLACK_INTERACTIVITY_PATH } from "../../channels/slack-interactivity.ts";
 
@@ -25,13 +27,15 @@ export { TestClient } from "./studio-access.ts";
  * The Foldkit UI. Static assets are served directly; `/api/*` runs the Cloudflare edge entry, which forwards
  * to the Api Worker over a service binding. Deployed stages sit behind Cloudflare Access
  * (studio-access.ts), which admits members of the Cloudflare account, the test service token and
- * the hub's. `alchemy dev` runs locally without Access.
+ * the hub's, and run the edge first for the studio's pages too, so a page load on this hostname
+ * goes to the hub (hub-redirect.ts). `alchemy dev` runs locally without Access or the redirect.
  */
 export const Studio = Cloudflare.Website.Foldkit(
   "Studio",
   Effect.gen(function* () {
     const dev = yield* Alchemy.ALCHEMY_DEV.pipe(Effect.orDie);
-    const production = !dev && (yield* Alchemy.Stage) === PRODUCTION_STAGE;
+    const stage = yield* Alchemy.Stage;
+    const production = !dev && stage === PRODUCTION_STAGE;
     return {
       // The zone's `*.just-be.dev/*` route (another project) redirects unknown subdomains, and
       // zone routes run before Custom Domains: the domain gives DNS and a certificate, and the
@@ -41,8 +45,16 @@ export const Studio = Cloudflare.Website.Foldkit(
         ? [{ pattern: `${PRODUCTION_DOMAIN}/*`, zoneName: PRODUCTION_ZONE }]
         : undefined,
       main: "src/platform/cloudflare/edge.ts",
-      env: { API: Api, ...hubBindings(dev) },
-      assets: { runWorkerFirst: ["/api/*", ...hubPaths] },
+      // NOTE: The hub's frame (hub-frame.ts): where this stage lives on hub.just-be.dev, and hub
+      // prod's token client id, whose requests are the frame's and stay here. Empty under
+      // `alchemy dev`, which turns the redirect off.
+      env: {
+        API: Api,
+        HUB_FRAME_PREFIX: dev ? "" : hubFramePrefix(stage),
+        HUB_CLIENT_ID: dev ? "" : hubToken(stage).pipe(Effect.map((token) => token.clientId)),
+        ...hubBindings(dev),
+      },
+      assets: { runWorkerFirst: ["/api/*", ...hubPaths, ...(dev ? [] : pagePaths)] },
       compatibility: { date: "2026-10-04" },
       observability: {
         enabled: true,
