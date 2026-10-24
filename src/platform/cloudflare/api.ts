@@ -23,7 +23,11 @@ import { deliverEntityChange } from "../../entities/change-feed.ts";
 import { EntitySubscribers } from "../../entities/subscribers.ts";
 import { apiRoutes } from "../../http/api.ts";
 import { handleMcp, type McpHeaders } from "../../http/mcp-server.ts";
-import { accessIdentity } from "./access.ts";
+import { accessIdentity, type HubAccess } from "./access.ts";
+import { accessTeamDomain, teamSigningKeys } from "./access-jwt.ts";
+import { hubAudience, hubKey, hubToken } from "./hub-frame.ts";
+import { hubIdentityVerifier } from "./hub-identity.ts";
+import { StudioAccess } from "./studio-access.ts";
 import { localDevelopment } from "./local-development.ts";
 import Automation from "./automation.ts";
 import { automationsLayer } from "./automations.ts";
@@ -37,15 +41,33 @@ import { SlackActionQueue } from "./slack-actions.ts";
 /** Only the Access-protected Studio Worker can reach this private API. */
 export default class Api extends Cloudflare.Worker<Api>()(
   "Api",
-  {
-    main: import.meta.url,
-    compatibility: { date: "2026-10-04" },
-    workersDev: false,
-    observability: {
-      enabled: true,
-      logs: { enabled: true, invocationLogs: true, headSamplingRate: 1, persist: true },
-    },
-  },
+  // NOTE: Deployed stages bind what the Api needs to recognize the hub that frames the studio
+  // (hub-frame.ts): the Studio's Access audience, hub prod's service token client id and identity
+  // public key, and the audience the hub's identity tokens name for this stage. `alchemy dev` has no
+  // Access and binds empty strings, so no hub is recognized there. Alchemy evaluates these props in
+  // the Worker runtime too, where Stage isn't a service and `env` is already bound and ignored.
+  Effect.gen(function* () {
+    const dev = yield* Alchemy.ALCHEMY_DEV.pipe(Effect.orDie);
+    const stage = dev || globalThis.__ALCHEMY_RUNTIME__ ? undefined : yield* Alchemy.Stage;
+    return {
+      main: import.meta.url,
+      compatibility: { date: "2026-10-04" },
+      workersDev: false,
+      observability: {
+        enabled: true,
+        logs: { enabled: true, invocationLogs: true, headSamplingRate: 1, persist: true },
+      },
+      env:
+        stage === undefined
+          ? { ACCESS_AUD: "", HUB_CLIENT_ID: "", HUB_PUBLIC_KEY: "", HUB_AUDIENCE: "" }
+          : {
+              ACCESS_AUD: StudioAccess.pipe(Effect.map((application) => application.aud)),
+              HUB_CLIENT_ID: hubToken(stage).pipe(Effect.map((token) => token.clientId)),
+              HUB_PUBLIC_KEY: hubKey(stage).pipe(Effect.map((key) => key.publicKey)),
+              HUB_AUDIENCE: hubAudience(stage),
+            },
+    };
+  }),
   Effect.gen(function* () {
     const namespace = yield* Automation;
     const changeNamespace = yield* ChangeCoordinator;
@@ -97,7 +119,28 @@ export default class Api extends Cloudflare.Worker<Api>()(
       Layer.succeed(LiveConnections, live),
       Layer.succeed(LocalDevelopment, local),
     );
-    const services = Layer.merge(shared, accessIdentity(localUser));
+    const env = yield* Cloudflare.WorkerEnvironment;
+    // NOTE: Read on the first request, like the rest of the env, and kept for the isolate's
+    // lifetime so the hub's key is imported once.
+    let hub: HubAccess | undefined | null = null;
+    const hubAccess = () => {
+      if (hub !== null) return hub;
+      const audience = String(env["ACCESS_AUD"] ?? "");
+      const clientId = String(env["HUB_CLIENT_ID"] ?? "");
+      const publicKeyPem = String(env["HUB_PUBLIC_KEY"] ?? "");
+      const identityAudience = String(env["HUB_AUDIENCE"] ?? "");
+      hub =
+        audience === "" || clientId === "" || publicKeyPem === "" || identityAudience === ""
+          ? undefined
+          : {
+              check: { teamDomain: accessTeamDomain, audience, clientId },
+              keys: teamSigningKeys,
+              verifyIdentity: hubIdentityVerifier({ publicKeyPem, audience: identityAudience }),
+            };
+      return hub;
+    };
+    const identity = Layer.unwrap(Effect.sync(() => accessIdentity(localUser, hubAccess())));
+    const services = Layer.merge(shared, identity);
     // Consumer settings are plan-time only; Stage is not a service in the Worker runtime.
     const deadLetterQueue = globalThis.__ALCHEMY_RUNTIME__
       ? undefined

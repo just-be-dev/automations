@@ -10,6 +10,7 @@ import Api from "./api.ts";
 import Channels from "./channels.ts";
 import { hubPaths } from "./hub.ts";
 import { hubBindings } from "./hub-bindings.ts";
+import { StudioAccess } from "./studio-access.ts";
 import { SLACK_INTERACTIVITY_PATH } from "../../channels/slack-interactivity.ts";
 
 /** The stage served on {@link PRODUCTION_DOMAIN}; other deployed stages stay on workers.dev. */
@@ -18,33 +19,18 @@ const PRODUCTION_STAGE = "prod";
 export const PRODUCTION_DOMAIN = "automations.just-be.dev";
 const PRODUCTION_ZONE = "just-be.dev";
 
-/** Machine access for smoke tests: send `CF-Access-Client-Id` / `CF-Access-Client-Secret`. */
-export const TestClient = Cloudflare.Access.ServiceToken("TestClient", { duration: "720h" });
+export { TestClient } from "./studio-access.ts";
 
 /**
  * The Foldkit UI. Static assets are served directly; `/api/*` runs the Cloudflare edge entry, which forwards
- * to the Api Worker over a service binding. Deployed stages sit behind Cloudflare Access, which
- * admits members of the Cloudflare account and the test service token. `alchemy dev` runs locally
- * without Access.
+ * to the Api Worker over a service binding. Deployed stages sit behind Cloudflare Access
+ * (studio-access.ts), which admits members of the Cloudflare account, the test service token and
+ * the hub's. `alchemy dev` runs locally without Access.
  */
 export const Studio = Cloudflare.Website.Foldkit(
   "Studio",
   Effect.gen(function* () {
     const dev = yield* Alchemy.ALCHEMY_DEV.pipe(Effect.orDie);
-    const access = dev
-      ? undefined
-      : yield* Effect.map(TestClient, (token) => ({
-          policies: [
-            {
-              decision: "allow" as const,
-              include: [{ cloudflareAccountMember: token.accountId }],
-            },
-            {
-              decision: "non_identity" as const,
-              include: [{ serviceToken: token.serviceTokenId }],
-            },
-          ],
-        }));
     const production = !dev && (yield* Alchemy.Stage) === PRODUCTION_STAGE;
     return {
       // The zone's `*.just-be.dev/*` route (another project) redirects unknown subdomains, and
@@ -63,7 +49,7 @@ export const Studio = Cloudflare.Website.Foldkit(
         logs: { enabled: true, invocationLogs: true, headSamplingRate: 1, persist: true },
         traces: { enabled: true, headSamplingRate: 1, persist: true },
       },
-      access,
+      access: dev ? undefined : yield* StudioAccess,
     };
   }),
 );
