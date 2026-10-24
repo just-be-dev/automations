@@ -152,7 +152,7 @@ mise run deploy
 
 The first deploy offers to bootstrap Alchemy's Cloudflare-hosted state store. Alchemy builds the UI with Vite and deploys two Workers:
 
-- `Studio` serves the UI. It is the only public hostname and sits behind Cloudflare Access, which admits members of your Cloudflare account.
+- `Studio` serves the UI. It is the only public hostname and sits behind Cloudflare Access, which admits members of your Cloudflare account, the test service token, and hub prod's `PlatformToken`. People reach it through [hub.just-be.dev](https://hub.just-be.dev/automations/), which frames it (`/automations@<stage>/` for a preview); a page load on the studio's own hostname is redirected there. The Studio's Access application and the Api read hub prod's token and identity key from the `hub` stack's prod state, so **deploy hub prod first**: until it exists, this stack can't plan.
 - `Api` has no public URL. Studio forwards `/api/*` to it over a service binding.
 - `Channels` takes Slack's webhooks, deployed only when Slack is configured ([Slack](#slack)).
 
@@ -320,7 +320,7 @@ Because the model drafted it, the screenshot's workflow differs from the [first-
 - `email.send` is delivered **at least once**: Cloudflare Email Service takes no idempotency key, so if a run restarts after Cloudflare accepted an email but before the run recorded it, the email sends again.
 - `slack.sendMessage` is delivered **at least once**: Slack takes no idempotency key, so if a run restarts after Slack accepted a message but before the run recorded it, the message posts again.
 - Anyone who can post in a channel the bot is in can start a `slack.*`-triggered automation. Treat `event.data.text` as untrusted input, and set anything such a run sends or changes to ask first.
-- Anyone who can use the studio may answer an approval task. The answer records the email Cloudflare Access sends in `Cf-Access-Authenticated-User-Email`. The Api trusts that header because only the Access-protected Studio Worker reaches it. Verify the Access JWT before production. With the test service token, or under `alchemy dev` without `DEV_USER_EMAIL`, there's no email, so the answer names no one. A click on an approval DM's buttons, sent before roles were removed, always carries the clicker's Slack email.
+- Anyone who can use the studio may answer an approval task. The answer records the email Cloudflare Access sends in `Cf-Access-Authenticated-User-Email`, or, through the hub, the person its signed identity token names. The Api trusts the header for a person Access signed in because only the Access-protected Studio Worker reaches it; it takes the hub's identity token only when Access's JWT verifies as hub prod's service token. With any other service token (the test token, say), or under `alchemy dev` without `DEV_USER_EMAIL`, there's no email, so the answer names no one: an email header sent beside a service token is ignored. A click on an approval DM's buttons, sent before roles were removed, always carries the clicker's Slack email.
 - `http.post` steps are delivered **at least once**, with an `Idempotency-Key` header that stays the same across retries, so receiving endpoints must be idempotent. Don't put secrets in step definitions.
 - Runs replay from a journal. If the Durable Object is evicted mid-step, that step runs again; agent steps reuse their pi request ID instead of prompting twice.
 - Event receipts remain indefinitely in each automation's storage, and dead-lettered events are replayed by hand.

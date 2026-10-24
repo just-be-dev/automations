@@ -54,7 +54,9 @@ This is a single-tenant Cloudflare application. [Development and operations](doc
   Api Worker: entity.* facts to the Events queue, entity triggers
 ```
 
-`alchemy.run.ts` re-exports [the Cloudflare stack](src/platform/cloudflare/stack.ts). Alchemy declares infrastructure and hosts the Effect implementations in one program. The `Studio` Worker serves the browser app behind Cloudflare Access in deployed stages; [its edge entry](src/platform/cloudflare/edge.ts) only forwards `/api/*` to `Api`. `Api` has `workersDev: false` and no public URL.
+`alchemy.run.ts` re-exports [the Cloudflare stack](src/platform/cloudflare/stack.ts). Alchemy declares infrastructure and hosts the Effect implementations in one program. The `Studio` Worker serves the browser app behind Cloudflare Access in deployed stages; [its edge entry](src/platform/cloudflare/edge.ts) only forwards `/api/*` to `Api` and the hub shell's `/_hub/*` to agents. `Api` has `workersDev: false` and no public URL.
+
+People use the studio inside hub.just-be.dev, the platform's one page, which shows it in an iframe at `/automations/` (or `/automations@<stage>/` for a preview) and proxies its requests to the studio's hostname with hub prod's Access service token and a signed identity token naming the person. The Studio's Access application admits that token, and [the Api's identity](src/platform/cloudflare/access.ts) takes the person from the identity token only when Access's JWT is hub prod's and the token verifies for this stage ([`hub-identity.ts`](src/platform/cloudflare/hub-identity.ts)). The same build serves at `/` and under the hub's path, reading its base from `<base>` ([`base-path.ts`](src/ui/base-path.ts)). A page load on the studio's own hostname is redirected to the hub ([`hub-redirect.ts`](src/platform/cloudflare/hub-redirect.ts)), so shared links land in the one page.
 
 The Durable Objects call each other, so the tier in the diagram is not flat:
 
