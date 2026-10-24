@@ -34,6 +34,7 @@ import { runHref } from "../route.ts";
 import { permissionsView } from "./permissions.ts";
 import { eyebrowClass, panelTitleView } from "./shared.ts";
 import { workflowView } from "./workflow.ts";
+import { withAppBase } from "../base-path.ts";
 
 export const workflowPanelView = (model: Model, h: HtmlBuilder<Message>) =>
   h.section(
@@ -317,7 +318,7 @@ const runRowView = (
     [
       h.a(
         [
-          h.Href(runHref(automationId, run.id)),
+          h.Href(withAppBase(runHref(automationId, run.id))),
           ...(isOpen ? [h.AriaCurrent("true")] : []),
           h.Class(
             cn(

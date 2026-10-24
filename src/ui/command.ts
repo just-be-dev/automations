@@ -16,6 +16,7 @@ import {
   WorkflowChanges,
 } from "../workflow.ts";
 import { errorText, loadEventInput, loadSubjectOptions, requestJson } from "./api.ts";
+import { withAppBase } from "./base-path.ts";
 import { TaskAnswer } from "./domain/index.ts";
 import { LoadedAutomation, Message } from "./message.ts";
 import { AutomationSummary } from "./model.ts";
@@ -187,7 +188,8 @@ export const LoadRunSubjects = Command.define("LoadRunSubjects", {
 export const NavigateInternal = Command.define("NavigateInternal", {
   args: { url: Schema.String },
   messages: [Message.CompletedNavigateInternal],
-  execute: ({ url }) => pushUrl(url).pipe(Effect.as(Message.CompletedNavigateInternal())),
+  execute: ({ url }) =>
+    pushUrl(withAppBase(url)).pipe(Effect.as(Message.CompletedNavigateInternal())),
 });
 
 /**

@@ -59,6 +59,7 @@ import {
   tagView,
 } from "./operation.ts";
 import { chipClass, notifyLabel, stepMetaView } from "./shared.ts";
+import { withAppBase } from "../base-path.ts";
 
 /** A step the agent's latest reply added or changed. */
 type ShownChange = Extract<StepChange, { readonly kind: "added" | "changed" }>;
@@ -840,7 +841,7 @@ const templateUseView = (use: TemplateUse, previous: Previous, h: HtmlBuilder<Me
           h.span([h.Class("text-xs text-muted-foreground")], ["Use template"]),
           h.a(
             [
-              h.Href(templatesHref(Option.some(use.use))),
+              h.Href(withAppBase(templatesHref(Option.some(use.use)))),
               h.Title(`Open template: ${use.use}`),
               h.AriaLabel(`Open template: ${labelFromName(use.use)}`),
               h.Class(

@@ -39,6 +39,7 @@ import {
 import { automationHref, runHref } from "../../route.ts";
 import { Message } from "./message.ts";
 import { type Automation, isRunning, Launch, Listing, type Model, Subjects } from "./model.ts";
+import { withAppBase } from "../../base-path.ts";
 
 const eyebrowClass = "text-xs font-medium text-sand-10";
 const noteClass = "text-sm text-muted-foreground";
@@ -115,7 +116,7 @@ const activeRunView = ({ automation, run }: ActiveRun, h: HtmlBuilder<Message>) 
     [
       h.a(
         [
-          h.Href(runHref(automation.id, run.id)),
+          h.Href(withAppBase(runHref(automation.id, run.id))),
           h.Class(
             "flex w-full items-center gap-2.5 rounded-[8px] px-2 py-1.5 text-[13px] transition-colors outline-none hover:bg-hover focus-visible:ring-3 focus-visible:ring-ring/50",
           ),
@@ -253,7 +254,7 @@ const automationView = (automation: Automation, launch: Launch, h: HtmlBuilder<M
             [
               h.a(
                 [
-                  h.Href(automationHref(automation.id)),
+                  h.Href(withAppBase(automationHref(automation.id))),
                   h.Class(
                     "w-fit truncate rounded-sm text-sm font-medium outline-none hover:underline focus-visible:ring-3 focus-visible:ring-ring/50",
                   ),
@@ -328,7 +329,7 @@ const lastRunView = (automation: Automation, h: HtmlBuilder<Message>) =>
           `Last run ${formatTime(run.startedAt)} · `,
           h.a(
             [
-              h.Href(runHref(automation.id, run.id)),
+              h.Href(withAppBase(runHref(automation.id, run.id))),
               h.Class(cn("hover:underline", runStatusClass[run.status])),
             ],
             [runStatusLabel[run.status]],
@@ -405,7 +406,7 @@ const launchView = (automation: Automation, launch: Launch, h: HtmlBuilder<Messa
           "Run started.",
           h.a(
             [
-              h.Href(runHref(automation.id, runId)),
+              h.Href(withAppBase(runHref(automation.id, runId))),
               h.Class(buttonClass({ variant: "link", size: "xs", className: "px-0" })),
             ],
             ["Open run"],

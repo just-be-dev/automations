@@ -6,6 +6,7 @@ import { pushUrl } from "foldkit/navigation";
 import { EntityType, Template } from "../../../entities.ts";
 import { TemplateUsage } from "../../../workflow.ts";
 import { errorText, requestJson } from "../../api.ts";
+import { withAppBase } from "../../base-path.ts";
 import { Message, toChangeMessage } from "./message.ts";
 import * as Change from "../../change/index.ts";
 
@@ -66,5 +67,6 @@ export const DeleteTemplate = Command.define("DeleteTemplate", {
 export const NavigateToTemplates = Command.define("NavigateToTemplates", {
   args: { url: Schema.String },
   messages: [Message.CompletedNavigateToTemplates],
-  execute: ({ url }) => pushUrl(url).pipe(Effect.as(Message.CompletedNavigateToTemplates())),
+  execute: ({ url }) =>
+    pushUrl(withAppBase(url)).pipe(Effect.as(Message.CompletedNavigateToTemplates())),
 });

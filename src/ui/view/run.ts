@@ -27,12 +27,13 @@ import {
 import { automationHref } from "../route.ts";
 import { runChecklistView } from "./run-checklist.ts";
 import { panelTitleView } from "./shared.ts";
+import { withAppBase } from "../base-path.ts";
 
 const editAutomationView = (automationId: string, h: HtmlBuilder<Message>) =>
   h.a(
     [
       componentName("edit-automation"),
-      h.Href(automationHref(automationId)),
+      h.Href(withAppBase(automationHref(automationId))),
       h.DataAttribute("slot", "button"),
       h.Class(buttonClass({ variant: "outline", size: "sm" })),
     ],

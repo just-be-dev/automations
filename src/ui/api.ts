@@ -7,6 +7,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest } from "effect/http";
 import { EntityRecord, EntityType } from "../entities.ts";
 import { Workflow } from "../workflow.ts";
+import { withAppBase } from "./base-path.ts";
 import { EventInput } from "./domain/index.ts";
 
 const ErrorResponse = Schema.Struct({ error: Schema.String });
@@ -17,7 +18,10 @@ export class ApiError extends Schema.TaggedError<ApiError>()("ApiError", {
 
 export type RequestMethod = "GET" | "POST" | "PUT" | "DELETE";
 
-/** Sends `body` as JSON with `method` and decodes the reply. `/api` failures carry `{ error }`. */
+/**
+ * Sends `body` as JSON with `method` and decodes the reply. `/api` failures carry `{ error }`. `url`
+ * is the studio's own path; under the hub it gets the base (base-path.ts).
+ */
 export const sendJson = Effect.fn("studio.sendJson")(function* <T, E>(
   method: RequestMethod,
   url: string,
@@ -25,7 +29,7 @@ export const sendJson = Effect.fn("studio.sendJson")(function* <T, E>(
   body?: unknown,
 ) {
   const client = yield* HttpClient.HttpClient;
-  const bare = HttpClientRequest.make(method)(url);
+  const bare = HttpClientRequest.make(method)(withAppBase(url));
   const httpRequest = body === undefined ? bare : yield* HttpClientRequest.bodyJson(bare, body);
   const response = yield* client.execute(httpRequest);
   const data = yield* response.json;

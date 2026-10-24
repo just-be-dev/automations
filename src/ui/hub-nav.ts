@@ -13,6 +13,7 @@ import {
   ScrollText,
   Workflow as WorkflowIcon,
 } from "lucide";
+import { withAppBase } from "./base-path.ts";
 import { Message } from "./message.ts";
 import { Directory, type Model, Page } from "./model.ts";
 import { automationHref, overviewHref, templatesHref, tracesHref } from "./route.ts";
@@ -22,7 +23,10 @@ export type IconNode = ReadonlyArray<readonly [string, Readonly<Record<string, s
 
 export interface HubNavLink {
   readonly label: string;
-  /** An absolute path on this origin or a full URL. */
+  /**
+   * An absolute path on this origin or a full URL. Paths carry the studio's base (base-path.ts), so
+   * under the hub they are the hub's paths.
+   */
   readonly href: string;
   readonly icon?: IconNode;
   readonly count?: number;
@@ -89,7 +93,7 @@ const link = (
   isCurrent: boolean,
 ): HubNavLink => ({
   label,
-  href,
+  href: withAppBase(href),
   icon: iconOf(icon),
   ...(isCurrent ? { current: true } : {}),
 });

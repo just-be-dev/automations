@@ -40,6 +40,7 @@ import {
   type Source,
   TraceState,
 } from "./model.ts";
+import { withAppBase } from "../../base-path.ts";
 
 const noteClass = "text-sm text-muted-foreground";
 const cardClass = "rounded-[10px] bg-card shadow-card";
@@ -127,7 +128,7 @@ const sourceLinkView = (
   h.a(
     [
       componentName("source-link"),
-      h.Href(href),
+      h.Href(withAppBase(href)),
       ...(isCurrent ? [h.AriaCurrent("page")] : []),
       h.Class(cn(linkClass, isCurrent && "bg-hover text-foreground")),
     ],
@@ -280,10 +281,12 @@ const traceHeaderView = (source: Source, trace: TraceState, h: HtmlBuilder<Messa
           h.a(
             [
               h.Href(
-                Option.match(source.maybeRunId, {
-                  onNone: () => automationHref(source.automationId),
-                  onSome: (runId) => runHref(source.automationId, runId),
-                }),
+                withAppBase(
+                  Option.match(source.maybeRunId, {
+                    onNone: () => automationHref(source.automationId),
+                    onSome: (runId) => runHref(source.automationId, runId),
+                  }),
+                ),
               ),
               h.DataAttribute("slot", "button"),
               h.Class(buttonClass({ variant: "outline", size: "sm" })),
