@@ -75,7 +75,7 @@ export const view = Submodel.defineView<Model, Message>((model, h) =>
         [templateListView(model, h), detailView(model, h)],
       ),
       h.div(
-        [h.Class("flex min-h-12 items-center gap-4 border-t px-6 py-3")],
+        [h.Class("flex min-h-12 items-center gap-4 border-t px-6 py-3 hub-fab:pl-18")],
         [statusView(model, h)],
       ),
       h.submodel({

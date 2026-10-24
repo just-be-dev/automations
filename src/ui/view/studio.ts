@@ -81,7 +81,7 @@ export const workflowPanelView = (model: Model, h: HtmlBuilder<Message>) =>
           }),
       }),
       h.div(
-        [h.Class("flex flex-wrap items-center gap-x-4 gap-y-2 border-t px-6 py-3")],
+        [h.Class("flex flex-wrap items-center gap-x-4 gap-y-2 border-t px-6 py-3 hub-fab:pl-18")],
         [
           statusView(model, h),
           h.div(

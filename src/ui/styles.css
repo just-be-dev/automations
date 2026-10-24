@@ -18,6 +18,20 @@
   }
 }
 
+/* The hub shell's floating button (44px, 12px from the bottom-left corner) shows over the studio
+   below 768px when the shell is in the page, and in the hub's frame while the hub says its layout
+   is "sheet" (`data-hub-layout`, agents' docs/hub-shell.md). `hub-fab:` reserves its lane. */
+@custom-variant hub-fab {
+  @media (width < 48rem) {
+    html:has(hub-shell) & {
+      @slot;
+    }
+  }
+  html[data-hub-layout="sheet"] & {
+    @slot;
+  }
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
